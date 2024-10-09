@@ -5,15 +5,15 @@
 //                                                                   //
 //     This file has been created by the Easy Configurator tool      //
 //                                                                   //
-//     Easy Configurator project teensySensoryMB.prj
+//     Easy Configurator project TeensySlaveMB2.prj
 //                                                                   //
 //-------------------------------------------------------------------//
 
 
 #define CUST_BYTE_NUM_OUT	0
-#define CUST_BYTE_NUM_IN	24
+#define CUST_BYTE_NUM_IN	16
 #define TOT_BYTE_NUM_ROUND_OUT	0
-#define TOT_BYTE_NUM_ROUND_IN	24
+#define TOT_BYTE_NUM_ROUND_IN	16
 
 
 typedef union												//---- output buffer ----
@@ -32,8 +32,8 @@ typedef union												//---- input buffer ----
 	{
 		double      Force1;
 		double      Force2;
-		double      Force3;
 	}Cust;
 } PROCBUFFER_IN;
 
 #endif
+
