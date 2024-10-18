@@ -5,7 +5,6 @@
 #include "PINOUT.h"
 #include "SensorData.h"
 #include "IMU.h"
-#include <TeensyThreads.h>
 
 // Filter - properties: Butterworth, 2nd order, 12 HZ passband--Implemented by Lorenzo  
 const double a[] = {1.0, -1.911197067426073, 0.914975834801433};
@@ -18,79 +17,53 @@ const double             RW_DELAY = 0.50;
 
 const int     READ_TIMER_INTERVAL =  200; // [5kHz]
 const int   FILTER_TIMER_INTERVAL = 1000; // [1kHz]
+const int   IMU_TIMER_INTERVAL = 3333; // [1kHz]
 
 const int             NUM_SENSORS = 4;
 const int             PNTS_TO_AVG = 5;
 unsigned int           ADC_cycles = 0; 
 unsigned long             t_blink = 0;
-bool                   led_status = 0;
+volatile bool                   led_status = 0;
 
 volatile int          raw_encoder = 0;
-volatile float    encoder_reading = 0;
-volatile float        pot_reading = 0;
-volatile float      heel_pressure = 0;
-
-
+volatile float    encoder_current = 0;
+volatile float   encoder_previous = 0;
+volatile float           pot_prev = 0;
+volatile float           pot_curr = 0;
 
 EasyCAT                   EASYCAT(10);
 SensorData       sensors[NUM_SENSORS];   // {potentiometer, encoder, pressure, velocity}
 IntervalTimer        readSensorsTimer; 
 IntervalTimer      filterSensorsTimer;
+IntervalTimer      IMUTimer;
 
 uint8_t nPacketStreamingData = sizeof(structStreamingData);
-boolean reset_imu;
-boolean sig;
+volatile boolean reset_imu;
+volatile boolean sig;
 unsigned long nowTime = 0;
 unsigned long startTime;
-float yaw1, pitch1, roll1;
+volatile float yaw1, pitch1, roll1;
 
-uint16_t p[] = {0, 0, 0, 0, 0, 0, 0, 0};
-uint16_t p_sum[] = {1000, 1000}; // sum all the pressure
-uint16_t p_heel = 0;
-uint16_t p_toe = 0;
-uint16_t p_mball = 0;
-
-
-void readIMUTask() {
-  while (true) {
-    readIMU();
-    threads.yield();
-  }
-}
+volatile uint16_t p[] = {0, 0, 0, 0, 0, 0, 0, 0};
+volatile uint16_t p_sum[] = {1000, 1000}; // sum all the pressure
+volatile uint16_t p_heel = 0;
+volatile uint16_t p_toe = 0;
+volatile uint16_t p_mball = 0;
 
 void  setup() {
   Serial.begin(9600);
   setupLED();
   setupEASYCAT();
+  Serial.println("?dsoad");
   setupSensors();
+  Serial.println("?osadno");
   setupIMU();
+  Serial.println("?osanods");
   setupTimers();
-  threads.addThread(readIMUTask);
-  
+  Serial.println("?erwnojf");
 }
 
-int t = micros();
-
 void  loop() {
-  if (micros() - t > 500) {
-    application();
-    EASYCAT.MainTask();
-    Serial.println(uStreamingDataIMU1.sData.lAcc.az);
-
-    t = millis();
-  }
-
-  Serial.println("?oasdaoi");
-
-  noInterrupts();
-  pot_reading = readADChannel(CH_NUM_LC);
-  encoder_reading = readEncoder();
-  heel_pressure = readPressure(0) + readPressure(2);
-  interrupts();
-  readAllPressure();
-  nowTime = micros() - startTime;
-  updateEstimator();
-  
 }
 
 
@@ -128,6 +101,8 @@ void  setupSensors() {
   // Encoder
   SPI1.begin();
   pinMode(PIN_CS, OUTPUT);
+  encoder_current = readEncoder();
+  encoder_previous = encoder_current;
   
   // Pressure
   pinMode(PIN_A, OUTPUT);
@@ -138,6 +113,8 @@ void  setupSensors() {
 void  setupTimers() {
   readSensorsTimer.begin(readSensors, READ_TIMER_INTERVAL);
   filterSensorsTimer.begin(filterSensors, FILTER_TIMER_INTERVAL);
+  IMUTimer.begin(readIMU, IMU_TIMER_INTERVAL);
+
 }
 
 int   readADChannel(byte ch_number) {
@@ -232,7 +209,14 @@ float readEncoder() {
 
   raw_encoder = raw_encoder & 0b0011111111111111; //removing the top 2 bits (PAR and EF)
 
-  return raw_encoder / 16384.0 * 360.0;
+  encoder_current = raw_encoder;
+  
+  if(abs(encoder_current - encoder_previous) >  100000) {
+    encoder_current = encoder_previous;
+  } else {
+    encoder_previous = encoder_current;
+  }
+  return encoder_current / 16384.0 * 360.0;
 }
 
 int   readPressure(uint8_t num) {
@@ -243,6 +227,12 @@ int   readPressure(uint8_t num) {
 
     delayMicroseconds(4);
     return analogRead(PIN_PRESSURE);
+}
+
+float readVelocity() {
+  pot_prev = pot_curr;
+  pot_curr = readADChannel(CH_NUM_LC);
+  return (pot_curr - pot_prev) / 0.2 / 1000;
 }
 
 
@@ -509,7 +499,7 @@ float fmodC(float a, float b) {
   return c;
 }
 
-void GaitEventDetector_v2(uint16_t * pSum, uint16_t pHeel, uint16_t pToe, uint8_t * GaitState, float omega, float * tFC, float * tLC, float tStar, float AFO, float & AFOc, float & phase_error, float * phase_error_hat, float & 6 whatever_error, float * AFO_phi_error_dot, float dt, float & AFOc_simple, float AFO_phi_error_Kp) {
+void GaitEventDetector_v2(uint16_t * pSum, uint16_t pHeel, uint16_t pToe, uint8_t * GaitState, float omega, float * tFC, float * tLC, float tStar, float AFO, float & AFOc, float & phase_error, float * phase_error_hat, float & AFO_phi_error, float * AFO_phi_error_dot, float dt, float & AFOc_simple, float AFO_phi_error_Kp) {
   AFO = fmodC(AFO, 2 * pi);
   // AFO_corrected updates based on First Contact
   if (pSum[0] <= threshold_pressure_sum && pSum[1] > threshold_pressure_sum)
@@ -605,6 +595,7 @@ void GaitEventDetector_v2(uint16_t * pSum, uint16_t pHeel, uint16_t pToe, uint8_
 }
 
 void setupIMU() {
+  Serial.println("?aisdo");
   IMU1.begin(115200);
   delay(1000);
   IMU1.flush();
@@ -612,12 +603,14 @@ void setupIMU() {
   YEIwriteCommand(IMU1, CMD_STOP_STREAMING);
   IMU1.flush();
   delay(3000);
+  Serial.println("?osakdm");
   YEIwriteCommand(IMU1, CMD_SET_ACCELEROMETER_RANGE, ACCELEROMETER_RANGE_24G);
   YEIwriteCommand(IMU1, CMD_SET_GYROSCOPE_RANGE, GYROSCOPE_RANGE_2000);
   YEIwriteCommand(IMU1, CMD_SET_COMPASS_RANGE, COMPASS_RANGE_1_3);
   YEIwriteCommand(IMU1, CMD_SET_CALIBRATION_MODE, CALIBRATION_MODE_BIAS_SCALE);
   YEIwriteCommand(IMU1, CMD_SET_REFERENCE_VECTOR_MODE, REFERENCE_VECTOR_MULTI_REFERENCE_MODE);
   YEIwriteCommand(IMU1, CMD_SET_COMPASS_ENABLE, FALSE);
+  Serial.println("?aoksdm");
   YEIwriteCommandNoDelay(IMU1, CMD_BEGIN_GYROSCOPE_AUTOCALIBRATION);
   delay(3000);
   YEIwriteCommandNoDelay(IMU1, CMD_RESET_FILTER);
@@ -627,6 +620,7 @@ void setupIMU() {
   sStreamingTime.interval = 2000; //10000; //[us]
   sStreamingTime.duration = 0xFFFFFFFF;
   sStreamingTime.delay = 0;  //[us]
+  Serial.println("?aoksmdc");
   YEIsetStreamingTime(IMU1);
   IMU1.flush();
   reset_imu = FALSE;
@@ -652,6 +646,7 @@ void readIMU() {
                               NO_SLOT);
     YEIwriteCommandNoDelay(IMU1, CMD_TARE_WITH_CURRENT_ORIENTATION);
     IMU1.flush();
+
     YEIsetStreamingTime(IMU1);
     sig = !sig;
   }
@@ -697,9 +692,10 @@ void readAllPressure() {
 }
 
 void  readSensors() {
-  sensors[0].sum += pot_reading;      // read potentiometer
-  sensors[1].sum += encoder_reading;                    // read encoder
-  sensors[2].sum += heel_pressure; // read pressure
+  sensors[0].sum += readADChannel(CH_NUM_LC);      // read potentiometer
+  sensors[1].sum += readEncoder();                    // read encoder
+  sensors[2].sum += readPressure(0) + readPressure(2); // read pressure
+  sensors[3].sum += readVelocity();                   // read velocity
 
   ADC_cycles++;
   if (ADC_cycles == PNTS_TO_AVG) {
@@ -709,10 +705,10 @@ void  readSensors() {
         sensors[i].sum = 0;
     }
   }
-
 }
 
 void  filterSensors() {
+    noInterrupts();
     for (int i = 0; i < NUM_SENSORS; i++) {
         sensors[i].filtered_value = b[0] * sensors[i].value;
         for (int k = 1; k < 3; k++) {
@@ -725,30 +721,49 @@ void  filterSensors() {
         sensors[i].buff_raw[0]  = sensors[i].value;
         sensors[i].buff_filt[0] = sensors[i].filtered_value;
     }
+
+    readAllPressure();
+    nowTime = micros() - startTime;
+    updateEstimator();
+    application();
+    interrupts();
+
+    noInterrupts();
+    EASYCAT.MainTask();
+    interrupts();
 }
 
 void  application() {
-  EASYCAT.BufferIn.Cust.Force1 = sensors[0].value;
-  EASYCAT.BufferIn.Cust.Force2 = sensors[1].value;
-  EASYCAT.BufferIn.Cust.Force3 = sensors[2].value;
-  EASYCAT.BufferIn.Cust.Force4 = sensors[0].filtered_value;
-  EASYCAT.BufferIn.Cust.Force5 = sensors[1].filtered_value;
-  EASYCAT.BufferIn.Cust.Force6 = sensors[2].filtered_value;
-  EASYCAT.BufferIn.Cust.Force7 = VelocityEstimator.SV;
-  EASYCAT.BufferIn.Cust.Force8 = VelocityEstimator.SL;
-  EASYCAT.BufferIn.Cust.Force9 = yaw1;
-  EASYCAT.BufferIn.Cust.Force10 = pitch1;
-  EASYCAT.BufferIn.Cust.Force11 = roll1;
-  EASYCAT.BufferIn.Cust.Force12 = p[0];
-  EASYCAT.BufferIn.Cust.Force13 = p[1];
-  EASYCAT.BufferIn.Cust.Force14 = p[2];
-  EASYCAT.BufferIn.Cust.Force15 = p[3];
-  EASYCAT.BufferIn.Cust.Force16 = p[4];
-  EASYCAT.BufferIn.Cust.Force17 = p[5];
-  EASYCAT.BufferIn.Cust.Force18 = p[6];
-  EASYCAT.BufferIn.Cust.Force19 = p[7];
-  EASYCAT.BufferIn.Cust.Force20 = AFO_corrected/2/pi*100;
-  EASYCAT.BufferIn.Cust.Force21 = uStreamingDataIMU1.sData.lAcc.ax;
-  EASYCAT.BufferIn.Cust.Force22 = uStreamingDataIMU1.sData.lAcc.ay;
-  EASYCAT.BufferIn.Cust.Force23 = uStreamingDataIMU1.sData.lAcc.az;
+    EASYCAT.BufferIn.Cust.Force1 = sensors[0].value;
+    EASYCAT.BufferIn.Cust.Force2 = sensors[1].value;
+    EASYCAT.BufferIn.Cust.Force3 = sensors[2].value;
+    EASYCAT.BufferIn.Cust.Force4 = sensors[0].filtered_value;
+    EASYCAT.BufferIn.Cust.Force5 = sensors[1].filtered_value;
+    EASYCAT.BufferIn.Cust.Force6 = sensors[2].filtered_value;
+    EASYCAT.BufferIn.Cust.Force7 = VelocityEstimator.SV;
+    EASYCAT.BufferIn.Cust.Force8 = VelocityEstimator.SL;
+    EASYCAT.BufferIn.Cust.Force9 = yaw1;
+    EASYCAT.BufferIn.Cust.Force10 = pitch1;
+    EASYCAT.BufferIn.Cust.Force11 = roll1;
+    EASYCAT.BufferIn.Cust.Force12 = p[0];
+    EASYCAT.BufferIn.Cust.Force13 = p[1];
+    EASYCAT.BufferIn.Cust.Force14 = p[2];
+    EASYCAT.BufferIn.Cust.Force15 = p[3];
+    EASYCAT.BufferIn.Cust.Force16 = p[4];
+    EASYCAT.BufferIn.Cust.Force17 = p[5];
+    EASYCAT.BufferIn.Cust.Force18 = p[6];
+    EASYCAT.BufferIn.Cust.Force19 = p[7];
+    EASYCAT.BufferIn.Cust.Force20 = AFO_corrected/2/pi*100;
+    EASYCAT.BufferIn.Cust.Force21 = uStreamingDataIMU1.sData.lAcc.ax;
+    EASYCAT.BufferIn.Cust.Force22 = uStreamingDataIMU1.sData.lAcc.ay;
+    EASYCAT.BufferIn.Cust.Force23 = uStreamingDataIMU1.sData.lAcc.az;
+
+
+
+//    EASYCAT.BufferIn.Cust.Force4 = sensors[3].filtered_value;
+  //  for (int i = 0; i < 8; i++) {
+  //      Serial.print(p[i]);
+  //      Serial.print("\t");
+  // //  }
+  Serial.println(EASYCAT.BufferIn.Cust.Force23);
 }
