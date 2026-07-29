@@ -72,6 +72,15 @@ boolean sig;
 unsigned long lastIMUDataTime = 0;
 const unsigned long IMU_TIMEOUT_US = 200000UL;   // 0.2 s
 
+// Non-blocking re-init state machine: readIMU() advances one step per call,
+// gated on elapsed time instead of delay(), so loop() keeps servicing
+// EASYCAT.MainTask() (and the EtherCAT data keeps updating) while the IMU
+// link recovers.
+uint8_t imu_reinit_state = 0;                              // 0 = send STOP next; advances 0 -> 1 -> 2 -> done
+unsigned long imu_reinit_t0 = 0;                           // time of the previous re-init step [us]
+const unsigned long IMU_REINIT_DRAIN_DELAY_US  = 20000UL;  // STOP -> drain: let the in-flight reply land
+const unsigned long IMU_REINIT_SETTLE_DELAY_US = 100000UL; // slot -> timing settle (was the blocking delay(100))
+
 unsigned long nowTime = 0;
 unsigned long startTime;
 float yaw1, pitch1, roll1;
@@ -118,8 +127,10 @@ float ax_curr = -100;
 void  loop() {
   // IMU watchdog: if no valid packet for > IMU_TIMEOUT_US, request a fast
   // re-init so a disconnected then reconnected IMU resumes streaming on its own.
-  if (micros() - lastIMUDataTime > IMU_TIMEOUT_US) {
-    reset_imu = false;            // next readIMU() runs the fast re-init path
+  // reset_imu stays false until the re-init state machine completes, so the
+  // watchdog cannot re-trigger while a re-init is already in progress.
+  if (reset_imu && micros() - lastIMUDataTime > IMU_TIMEOUT_US) {
+    reset_imu = false;            // next readIMU() starts the non-blocking re-init
     lastIMUDataTime = micros();   // don't re-trigger every iteration
   }
 
@@ -487,29 +498,50 @@ void readIMU() {
     // Fast re-init path (triggered by the watchdog after an IMU dropout).
     // No re-calibration and no re-tare here, so the committed reference
     // orientation is preserved across a disconnect/reconnect.
-    reset_imu = true;
+    //
+    // Spread over several calls (one step per call, gated on elapsed time)
+    // instead of blocking with delay(): the old blocking version held up
+    // loop() for ~100 ms per dropout, starving EASYCAT.MainTask() and
+    // freezing every DAQ channel on the EtherCAT bus, not just the IMU.
+    switch (imu_reinit_state) {
 
-    YEIwriteCommandNoDelay(IMU1, CMD_STOP_STREAMING);
-    IMU1.flush();
+      case 0:   // stop the stream, then give the in-flight reply time to land
+        YEIwriteCommandNoDelay(IMU1, CMD_STOP_STREAMING);
+        imu_reinit_t0 = micros();
+        imu_reinit_state = 1;
+        break;
 
-    // Discard any stale/partial bytes still sitting in the RX buffer from
-    // before the dropout.  IMU1.flush() only drains the TX side, so without
-    // this the first batch after a reconnect can be byte-misaligned.
-    while (IMU1.available()) { IMU1.read(); }
+      case 1:   // drain stale bytes, then reconfigure the streaming slots
+        if (micros() - imu_reinit_t0 >= IMU_REINIT_DRAIN_DELAY_US) {
+          // Discard any stale/partial bytes left from before the dropout.
+          // IMU1.flush() only drains the TX side, so without this the first
+          // batch after a reconnect can be byte-misaligned.
+          while (IMU1.available()) { IMU1.read(); }
 
-    // Stream full payload to match structStreamingData (quat + lin acc + gyro + raw acc)
-    YEIsetStreamingMode(IMU1, READ_TARED_ORIENTATION_AS_QUATERNION, READ_CORRECTED_LINEAR_ACCELERATION, READ_CORRECTED_GYROSCOPE_VECTOR, READ_CORRECTED_ACCELEROMETER_VECTOR, NO_SLOT, NO_SLOT, NO_SLOT, NO_SLOT);
-    IMU1.flush();
-    YEIsetStreamingTime(IMU1);
+          // Stream full payload to match structStreamingData (quat + lin acc + gyro + raw acc)
+          YEIsetStreamingModeNoDelay(IMU1, READ_TARED_ORIENTATION_AS_QUATERNION, READ_CORRECTED_LINEAR_ACCELERATION, READ_CORRECTED_GYROSCOPE_VECTOR, READ_CORRECTED_ACCELEROMETER_VECTOR, NO_SLOT, NO_SLOT, NO_SLOT, NO_SLOT);
+          imu_reinit_t0 = micros();
+          imu_reinit_state = 2;
+        }
+        break;
 
-    // Clear the on-demand request latch.  YEIgetStreamingBatch() only sends a
-    // new CMD_GET_STREAMING_BATCH when this is 0; a dropout leaves it stuck at
-    // 1 (request sent, reply never arrived), so without this reset no further
-    // requests go out and the IMU never resumes after reconnect.
-    write_command_sent = 0;
+      case 2:   // after the settle time, restore timing and resume streaming
+        if (micros() - imu_reinit_t0 >= IMU_REINIT_SETTLE_DELAY_US) {
+          YEIsetStreamingTime(IMU1);
 
-    lastIMUDataTime = micros();   // give the link time to come back before re-triggering
-    sig = !sig;
+          // Clear the on-demand request latch.  YEIgetStreamingBatch() only sends a
+          // new CMD_GET_STREAMING_BATCH when this is 0; a dropout leaves it stuck at
+          // 1 (request sent, reply never arrived), so without this reset no further
+          // requests go out and the IMU never resumes after reconnect.
+          write_command_sent = 0;
+
+          imu_reinit_state = 0;
+          reset_imu = true;             // re-init finished; back to streaming reads
+          lastIMUDataTime = micros();   // give the link time to come back before re-triggering
+          sig = !sig;
+        }
+        break;
+    }
   }
   else
   {
@@ -618,7 +650,6 @@ void  application() {
     // Serial.print(0);
     // Serial.print(" -> ");
     // Serial.println(micros());
-    Serial.println(readEncoder());
     
     // for (int i = 0; i < 8; i++) {
     //   Serial.print("p" + String(i) + ": " + String(p[i]) + "  \t");

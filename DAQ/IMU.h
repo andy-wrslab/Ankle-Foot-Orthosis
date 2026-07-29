@@ -407,7 +407,7 @@ void YEIsetStreamingTime(HardwareSerial& serial)
   //delay(YEI_DELAY_AFTER_COMMAND);
 }
 
-void YEIsetStreamingMode(HardwareSerial& serial, uint8_t slot1, uint8_t slot2, uint8_t slot3, uint8_t slot4, uint8_t slot5, uint8_t slot6, uint8_t slot7, uint8_t slot8)
+void YEIsetStreamingModeNoDelay(HardwareSerial& serial, uint8_t slot1, uint8_t slot2, uint8_t slot3, uint8_t slot4, uint8_t slot5, uint8_t slot6, uint8_t slot7, uint8_t slot8)
 {
   // Setting Streaming Mode
   YEIdataPacket[0] = START_NO_RESP_HEADER;
@@ -424,7 +424,11 @@ void YEIsetStreamingMode(HardwareSerial& serial, uint8_t slot1, uint8_t slot2, u
 
   YEIdataPacket[10] = calcCRC256(YEIdataPacket, 10);
   serial.write(YEIdataPacket, 11);
+}
 
+void YEIsetStreamingMode(HardwareSerial& serial, uint8_t slot1, uint8_t slot2, uint8_t slot3, uint8_t slot4, uint8_t slot5, uint8_t slot6, uint8_t slot7, uint8_t slot8)
+{
+  YEIsetStreamingModeNoDelay(serial, slot1, slot2, slot3, slot4, slot5, slot6, slot7, slot8);
   delay(YEI_DELAY_AFTER_COMMAND);
 }
 
