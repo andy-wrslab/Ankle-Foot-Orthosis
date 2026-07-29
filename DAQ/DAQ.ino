@@ -2,6 +2,7 @@
 #include "teensySensoryMB_32_Inputs.h"
 #include "EasyCAT.h"
 #include <SPI.h>
+#include "SdFat.h"
 #include "PINOUT.h"
 #include "SensorData.h"
 #include "IMU.h"
@@ -86,17 +87,29 @@ uint16_t p_heel = 0;
 uint16_t p_toe = 0;
 volatile uint32_t t_IMU = 0;
 
+// SD session log (boots.txt): one BOOTED line per reset, plus a line when
+// EtherCAT drops out of the operational state.  Any line appearing during a
+// collection means the Teensy rebooted or the bus/shield failed at that
+// millis() timestamp; a healthy trial adds nothing.
+SdFs sd;
+bool sd_ok = false;
+bool ecatWasOperational = false;                     // armed on reaching OP; a drop while armed gets logged
+unsigned long lastEcatLogMs = 0;
+const unsigned long ECAT_LOG_MIN_INTERVAL_MS = 500;  // a flapping status must not hammer the SD from the loop
+
 #define PIN_INFRARED_LED 14
 
 
 void  setup() {
   Serial.begin(921600);
   setupLED();
+  setupSD();
+  logBoot();
   setupEASYCAT();
   setupSensors();
   setupIMU();
   setupTimers();
-  
+
 }
 
 
@@ -156,7 +169,14 @@ void  loop() {
   if (easycat_enabled && easycat_poll_due) {
     easycat_poll_due = false;
     application();
-    EASYCAT.MainTask();
+    uint8_t ecatStatus = EASYCAT.MainTask();   // low nibble = ESM state (0x08 = OP), bit7 = watchdog expired
+    if (ecatStatus == ESM_OP) {
+      ecatWasOperational = true;               // healthy; arm the failure detector
+    } else if (ecatWasOperational && millis() - lastEcatLogMs > ECAT_LOG_MIN_INTERVAL_MS) {
+      ecatWasOperational = false;              // one line per drop, re-armed on recovery
+      lastEcatLogMs = millis();
+      logEcatStatus(ecatStatus);
+    }
 
     // // Debug: track EasyCAT execution interval aiming for 2kHz
     // static uint32_t ec_last_ts = 0;
@@ -213,11 +233,45 @@ void  setupEASYCAT() {
   Serial.println ("EasyCAT - Generic EtherCAT slave");
   if (EASYCAT.Init() == true)
   {
-    Serial.print ("initialized");                                 
+    Serial.print ("initialized");
   }                                                               //
-  else                                                            // initialization failed   
+  else                                                            // initialization failed
   {                                                               // the EasyCAT board was not recognized
-    Serial.print ("initialization failed");                       //                                                 
+    Serial.print ("initialization failed");                       //
+  }
+}
+
+void  setupSD() {
+  sd_ok = sd.begin(SdioConfig(FIFO_SDIO));   // Teensy 4.1 built-in slot: SDIO, no contention with SPI0/SPI1
+  if (!sd_ok) {
+    Serial.println("SD init failed - boot/EtherCAT logging disabled");
+  }
+}
+
+// Append the boot marker once per reset (call from setup() only).  O_APPEND
+// cannot touch existing content, so the line count is the boot count; a new
+// line mid-collection means the Teensy went down.
+void  logBoot() {
+  if (!sd_ok) return;
+  FsFile f;
+  if (f.open("boots.txt", O_WRITE | O_CREAT | O_APPEND)) {
+    f.println("BOOTED");
+    f.sync();
+    f.close();
+  }
+}
+
+// Called from loop() only when EtherCAT falls out of the operational state, so
+// the few-ms SD latency lands after data flow is already broken.  Logged byte:
+// 0x88/0x01/0x02/0x04 = master/cable died, 0x00/0x0F = LAN9252 itself not
+// answering SPI (shield dead).
+void  logEcatStatus(uint8_t status) {
+  if (!sd_ok) return;
+  FsFile f;
+  if (f.open("boots.txt", O_WRITE | O_CREAT | O_APPEND)) {
+    f.printf("ecat,%lu,0x%02X\n", millis(), status);
+    f.sync();
+    f.close();
   }
 }
 
