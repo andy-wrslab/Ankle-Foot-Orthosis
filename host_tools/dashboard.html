@@ -238,19 +238,15 @@ const groups = [
    '//' inside a name escapes a literal '/' in the Simulink block name.  */
 const paramTabs = [ {id:'A',label:'TRIAL'}, {id:'B',label:'ASSIST'}, {id:'C',label:'TORQUE'} ];
 const paramDefs = [
-  /* -------- A · trial setup -------- */
-  {id:'leg_side', tab:'A', label:'leg side', type:'toggle', onLbl:'RIGHT', offLbl:'LEFT', def:0,
-   block:'Left 0//Right 1', param:'Value', hint:'root constant "Left 0/Right 1"'},
-  {id:'body_weight', tab:'A', label:'body weight', units:'kg', min:30, max:150, step:0.5, def:78,
+  /* -------- A · trial setup (editable at any time, incl. while running) -------- */
+  {id:'leg_side', tab:'A', label:'left / right foot', type:'toggle', onLbl:'RIGHT', offLbl:'LEFT', offFirst:true, def:0,
+   block:'Left 0//Right 1', param:'Value', hint:'root constant "Left 0/Right 1" · 0 = left, 1 = right'},
+  {id:'body_weight', tab:'A', label:'body weight', units:'kg', def:78,
    block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/body weigth [Kg]', param:'Value'},
   {id:'enable_assist', tab:'A', label:'enable assistance', type:'toggle', def:1,
    block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/Enable_Assistance [0//1]', param:'Value'},
-  {id:'file_logging', tab:'A', label:'target file logging', type:'toggle', def:1,
-   block:'Sensor Readings/Constant3', param:'Value', hint:'feeds the Enable File Log block'},
-  {id:'min_cycles', tab:'A', label:'min_cycles', units:'—', min:0, max:50, step:1, def:10,
+  {id:'min_cycles', tab:'A', label:'min_cycles', units:'—', def:10,
    block:'min_cycles', param:'Value', hint:'strides before assistance engages'},
-  {id:'zero_sensors', tab:'A', label:'sensor zeroing', type:'action', btnLbl:'ZERO SENSORS',
-   hint:'tare encoder + insole at current pose'},
   /* -------- B · assistance + gait detection -------- */
   {id:'gain_pos', tab:'B', label:'gain_pos', units:'0–1', min:0, max:1, step:0.01, def:1,
    block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/gain_pos [0->1]', param:'Value'},
@@ -329,7 +325,6 @@ const Backend = {
   start(){      return this.mock?Promise.resolve({}):apiPost('/api/rt/start'); },
   stop(){       return this.mock?Promise.resolve({}):apiPost('/api/rt/stop'); },
   setparam(def,value){ return this.mock?Promise.resolve({}):apiPost('/api/param',{block:def.block,param:def.param,value:value}); },
-  zeroSensors(){ return this.mock?Promise.resolve({}):apiPost('/api/zero'); },
   listLogs(){    return Promise.resolve({}); },
   downloadLog(name){ return Promise.resolve({}); }
 };
@@ -834,18 +829,6 @@ function scenario(kind){
   if(kind==='stopped'){ scenario('running'); setTimeout(()=>{ recT=42.6; rtStop(); },200); return; }
 }
 
-/* zero sensors (tab A action) */
-function zeroSensors(){
-  if(!Backend.mock){
-    Backend.zeroSensors().then(()=>toast('Sensors zeroed'))
-      .catch(e=>toast('Zeroing: '+e.message));
-    return;
-  }
-  zeroOff=(last['ankle_angle']||0)+zeroOff;
-  log('ok','zero sensors · encoder + insole tare','ankle_offset='+zeroOff.toFixed(3)+' deg');
-  toast('Sensors zeroed');
-}
-
 /* parameters */
 function applyParam(id){
   const p=paramMap[id], v=S.pending[id];
@@ -1068,38 +1051,26 @@ function renderParams(){
     const on=S.paramTab===t.id;
     return '<button data-act="setParamTab" data-arg="'+t.id+'" class="mono" style="flex:1;font-size:9.5px;font-weight:700;letter-spacing:.1em;padding:5px 0;border:1px solid '+(on?A:'#cfd4da')+';border-radius:3px;background:'+(on?A:'#fff')+';color:'+(on?'#fff':'#6b7580')+';">'+t.id+' · '+t.label+'</button>';
   }).join('');
-  const lockA=S.exec && S.paramTab==='A';
   const defs=paramDefs.filter(p=>p.tab===S.paramTab);
-  let html='';
-  if(lockA) html+='<div class="mono" style="font-size:9px;color:#9a6b00;background:#fffaee;border:1px solid #f0e6c8;border-radius:3px;padding:5px 7px;letter-spacing:.05em;">TRIAL SETUP LOCKED WHILE RUNNING · stop the model to edit</div>';
-  html+=defs.map(p=>{
+  const html=defs.map(p=>{
     const tt=' title="'+esc(MDL+'/'+p.block+(p.hint?' — '+p.hint:''))+'"';
-    if(p.type==='action'){
+    const pend=S.pending[p.id], app=S.applied[p.id], dirty=pend!==app;
+    if(p.type==='toggle'){
+      const onBtn='<button data-act="togParam" data-arg="'+p.id+':1" class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(app?A:'#cfd4da')+';border-radius:3px;background:'+(app?A:'#fff')+';color:'+(app?'#fff':'#6b7580')+';">'+(p.onLbl||'ON')+'</button>';
+      const offBtn='<button data-act="togParam" data-arg="'+p.id+':0" class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(!app?'#5b646e':'#cfd4da')+';border-radius:3px;background:'+(!app?'#5b646e':'#fff')+';color:'+(!app?'#fff':'#6b7580')+';">'+(p.offLbl||'OFF')+'</button>';
       return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;">'+
         '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
-        '<button data-act="zeroSensors" '+(S.exec?'':'disabled')+' class="mono" title="'+esc(p.hint||'')+'" style="font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(S.exec?A:'#cfd4da')+';border-radius:3px;background:#fff;color:'+(S.exec?A:'#aab2ba')+';">'+p.btnLbl+'</button>'+
-        '<span class="mono" style="font-size:9px;color:#9aa2ac;">'+(S.exec?'model running · ready':'available while running')+'</span></div>';
+        '<div style="display:flex;gap:6px;">'+(p.offFirst?offBtn+onBtn:onBtn+offBtn)+'</div></div>';
     }
-    const pend=S.pending[p.id], app=S.applied[p.id], dirty=pend!==app;
-    const dis=lockA?'disabled':'';
-    if(p.type==='toggle'){
-      const onL=p.onLbl||'ON', offL=p.offLbl||'OFF';
-      return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;opacity:'+(lockA?0.55:1)+';">'+
-        '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
-        '<div style="display:flex;gap:6px;">'+
-        '<button data-act="togParam" data-arg="'+p.id+':1" '+dis+' class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(app?A:'#cfd4da')+';border-radius:3px;background:'+(app?A:'#fff')+';color:'+(app?'#fff':'#6b7580')+';">'+onL+'</button>'+
-        '<button data-act="togParam" data-arg="'+p.id+':0" '+dis+' class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(!app?'#5b646e':'#cfd4da')+';border-radius:3px;background:'+(!app?'#5b646e':'#fff')+';color:'+(!app?'#fff':'#6b7580')+';">'+offL+'</button>'+
-        '</div></div>';
-    }
-    return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;opacity:'+(lockA?0.55:1)+';">'+
-      '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
-      '<div style="display:flex;align-items:center;gap:7px;">'+
-      '<input type="range" data-act="slideParam" data-arg="'+p.id+'" min="'+p.min+'" max="'+p.max+'" step="'+p.step+'" value="'+pend+'" '+dis+' style="flex:1;accent-color:#0f6b6b;height:14px;" />'+
-      '<input data-act="typeParam" data-arg="'+p.id+'" value="'+pend+'" '+dis+' class="mono" style="width:56px;font-variant-numeric:tabular-nums;font-size:11.5px;text-align:right;padding:4px 5px;border:1px solid '+(dirty?'#f4c000':'#cfd4da')+';border-radius:3px;background:'+(dirty?'#fffbee':'#fff')+';color:#14181c;" />'+
-      '<span class="mono" style="font-size:9.5px;color:#9aa2ac;min-width:26px;">'+(p.units||'')+'</span>'+
-      '<button data-act="applyParam" data-arg="'+p.id+'" '+dis+' class="mono" style="font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 7px;border:1px solid '+(dirty?A:'#e2e5e9')+';border-radius:3px;background:'+(dirty?A:'#fff')+';color:'+(dirty?'#fff':'#aab2ba')+';">APPLY</button>'+
-      '</div>'+
-      '<span class="mono" style="font-size:9px;color:#9aa2ac;">applied '+app+'</span></div>';
+    return '<div style="display:flex;flex-direction:column;gap:3px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:7px;">'+
+      '<span class="mono" style="font-size:10.5px;color:#2b333c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"'+tt+'>'+p.label+'</span>'+
+      '<div style="display:flex;align-items:center;gap:6px;flex:0 0 auto;">'+
+      '<input data-act="typeParam" data-arg="'+p.id+'" value="'+pend+'" class="mono" style="width:84px;font-variant-numeric:tabular-nums;font-size:11.5px;text-align:right;padding:4px 6px;border:1px solid '+(dirty?'#f4c000':'#cfd4da')+';border-radius:3px;background:'+(dirty?'#fffbee':'#fff')+';color:#14181c;" />'+
+      '<span class="mono" style="font-size:9.5px;color:#9aa2ac;min-width:24px;">'+(p.units||'')+'</span>'+
+      '<button data-act="applyParam" data-arg="'+p.id+'" class="mono" style="font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 7px;border:1px solid '+(dirty?A:'#e2e5e9')+';border-radius:3px;background:'+(dirty?A:'#fff')+';color:'+(dirty?'#fff':'#aab2ba')+';">APPLY</button>'+
+      '</div></div>'+
+      '<span class="mono" style="font-size:9px;color:#9aa2ac;">applied '+app+' · Enter to apply</span></div>';
   }).join('');
   $('#paramList').innerHTML=html;
   const anyDirty=paramDefs.some(p=>p.type!=='action' && S.applied[p.id]!==S.pending[p.id]);
@@ -1230,7 +1201,6 @@ const actions={
   setParamTab(a){ S.paramTab=a; renderParams(); },
   togParam(a){ const [id,v]=a.split(':'); S.pending[id]=+v; applyParam(id); },
   applyParam(a){ applyParam(a); },
-  zeroSensors,
   scenario(a){ scenario(a); },
   loadFiles, dlAll:downloadAll,
   dlFile(a){ downloadFile(a); },
@@ -1250,18 +1220,11 @@ document.addEventListener('change',ev=>{
   if(!el) return;
   const act=el.getAttribute('data-act'), arg=el.getAttribute('data-arg');
   if(act==='togChan'){ const here=subsOf(arg).indexOf(S.selSub)>=0; setPlot(arg,S.selSub,!here); }
-  if(act==='slideParam'){ S.pending[arg]=parseFloat(el.value); renderParams(); }
   if(act==='typeParam'){ const v=parseFloat(el.value); if(!isNaN(v)) S.pending[arg]=v; renderParams(); }
 });
 document.addEventListener('input',ev=>{
   const el=ev.target;
   if(el.id==='searchBox'){ S.search=el.value; renderTree(); }
-  if(el.getAttribute && el.getAttribute('data-act')==='slideParam'){
-    S.pending[el.getAttribute('data-arg')]=parseFloat(el.value);
-    // live-update the number box without a full re-render (keeps slider drag smooth)
-    const row=el.parentElement.querySelector('[data-act="typeParam"]');
-    if(row) row.value=el.value;
-  }
 });
 document.addEventListener('keydown',ev=>{
   if(ev.target && /input|textarea|select/i.test(ev.target.tagName)){
