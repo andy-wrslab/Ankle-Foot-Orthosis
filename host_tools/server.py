@@ -97,6 +97,10 @@ class Stream:
         self.last_vals = [None] * N_CH
         self.last_change = [0.0] * N_CH
         self.bad_packets = 0
+        self.src = None           # ip of the accepted source
+        self.demo = False         # accepted source is loopback (demo sender)
+        self.real_seen = False    # once real (non-loopback) data arrives, demo is locked out
+        self.ignored_demo = 0
 
     def now(self):
         return time.monotonic() - self.t0
@@ -186,6 +190,8 @@ class Recorder:
             "stream_gaps_during_run": STREAM.gaps - self.gaps_at_start,
             "channels": CHANNELS,
             "udp_port": ARGS.udp_port,
+            "source": STREAM.src,
+            "demo_data": STREAM.demo,
         }
         self.path.with_suffix(".json").write_text(json.dumps(meta, indent=2))
         note("ok", f"recording stopped · {self.path.name}",
@@ -205,6 +211,25 @@ class UdpProto(asyncio.DatagramProtocol):
         if len(data) != PACKET_BYTES:
             STREAM.bad_packets += 1
             return
+        # source priority: the real Speedgoat (non-loopback) always outranks the
+        # demo sender (loopback). Once real data has been seen, demo packets are
+        # dropped until the server restarts — a forgotten demo_data window can
+        # never contaminate a trial.
+        ip = addr[0]
+        is_demo = ip.startswith("127.")
+        if is_demo and STREAM.real_seen:
+            STREAM.ignored_demo += 1
+            if STREAM.ignored_demo == 1:
+                note("warn", "demo sender ignored — real Speedgoat data has priority",
+                     "close the demo_data window; its packets are being dropped")
+            return
+        if not is_demo and not STREAM.real_seen:
+            STREAM.real_seen = True
+            if STREAM.demo:
+                note("warn", "real Speedgoat stream detected — demo sender now ignored", ip)
+        if STREAM.src != ip:
+            STREAM.src = ip
+            STREAM.demo = is_demo
         wall = time.monotonic()
         t = STREAM.now()
         vals = UNPACK.unpack(data)
@@ -366,6 +391,9 @@ def _stream_status():
             "bad": STREAM.bad_packets,
             "flat": STREAM.flat_channels(),
             "t": STREAM.last_pkt_t,
+            "source": STREAM.src,
+            "demo": STREAM.demo,
+            "ignored_demo": STREAM.ignored_demo,
         },
         "rec": {"on": REC.on, "file": REC.path.name if REC.on else None, "rows": REC.rows if REC.on else 0},
         "matlab": ML_STATUS_CACHE,

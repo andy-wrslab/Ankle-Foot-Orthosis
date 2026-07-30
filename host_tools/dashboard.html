@@ -45,6 +45,7 @@ button:disabled{cursor:default;}
     <div id="rtActions" style="display:flex;align-items:center;gap:8px;padding:0 10px;border-right:1px solid #eceef1;"></div>
     <div style="display:flex;align-items:center;gap:9px;padding:0 12px;border-right:1px solid #eceef1;">
       <span data-live="conn" class="mono" style="font-size:11px;font-weight:600;letter-spacing:.09em;padding:4px 10px;border-radius:11px;background:#eef1f4;color:#5b646e;border:1px solid #dcdfe4;">DISCONNECTED</span>
+      <span id="demoBadge" class="mono" style="display:none;font-size:9.5px;font-weight:700;letter-spacing:.08em;padding:3px 8px;border-radius:3px;background:#fffaee;border:1px solid #f4c000;color:#9a6b00;">DEMO DATA</span>
     </div>
     <div style="flex:1 1 auto;display:flex;align-items:stretch;min-width:0;overflow:hidden;">
       <div style="flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 14px;border-right:1px solid #f1f3f5;">
@@ -74,6 +75,7 @@ button:disabled{cursor:default;}
       <span style="color:#9aa2ac;">sample time</span><span style="color:#3b444e;">1 ms &middot; 1000 Hz &middot; fixed step</span>
       <span style="color:#9aa2ac;">exec time</span><span data-live="exectime" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">control link</span><span style="color:#3b444e;">slrealtime (MATLAB engine) &middot; TCP</span>
+      <span style="color:#9aa2ac;">data source</span><span data-live="src" style="color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">telemetry</span><span data-live="linkrate" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">packet size</span><span style="color:#3b444e;">31 &times; float32 = 124 B &middot; UDP 5432</span>
       <span style="color:#9aa2ac;">last packet age</span><span data-live="pktage" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
@@ -1301,6 +1303,17 @@ function wsConnect(){
         S.built = true;                                        // builds live in the Simulink desktop
         S.ecat = (m.stream && m.stream.running) ? 'OP' : 'INIT';   // heuristic until StateWord is streamed
         gaps = (m.stream && m.stream.gaps) || 0;
+        /* demo-data badge + source line in diagnostics */
+        const demo=!!(m.stream && m.stream.demo && m.stream.running);
+        const db=document.getElementById('demoBadge');
+        if(db) db.style.display=demo?'inline-block':'none';
+        const srcEl=root.querySelector('[data-live="src"]');
+        if(srcEl){
+          const s=m.stream&&m.stream.source;
+          const ign=(m.stream&&m.stream.ignored_demo)?' · demo ignored':'';
+          srcEl.textContent=s?(s+(m.stream.demo?' · DEMO':'')+ign):'—';
+          srcEl.style.color=m.stream&&m.stream.demo?'#9a6b00':'#3b444e';
+        }
         /* partial-stall detector: alarm only when a whole sensor group is
            flat for 2 consecutive status ticks (~1 s) — the signature of a
            real freeze, not a quiet sensor */
