@@ -48,6 +48,7 @@ ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
 ap.add_argument("--target", default="", help="Speedgoat target name for slrealtime(); empty = default target")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine control plane")
+ap.add_argument("--record-demo", action="store_true", help="also auto-record demo (loopback) data")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
 ARGS = ap.parse_args()
 
@@ -71,6 +72,7 @@ CHANNELS = [
 assert len(CHANNELS) == N_CH
 
 GAP_S = 0.25         # no packets for this long while active -> stream gap
+AUTOREC_STOP_S = 5.0 # close the auto-recording after this much stream silence
 FLAT_S = 0.10        # channel unchanged for this long while stream alive -> flat
 # step/hold channels legitimately sit still between gait events — exclude
 # them from the flat-freeze detector so it only flags true sensor freezes
@@ -415,16 +417,6 @@ def status():
     return _stream_status()
 
 
-@app.post("/api/record/start")
-def record_start():
-    return {"ok": True, "file": REC.start()}
-
-
-@app.post("/api/record/stop")
-def record_stop():
-    return {"ok": True, "file": REC.stop()}
-
-
 @app.post("/api/rt/connect")
 async def rt_connect():
     r = await asyncio.to_thread(ML.connect)
@@ -451,23 +443,21 @@ async def rt_load():
 @app.post("/api/rt/start")
 async def rt_start():
     r = await asyncio.to_thread(ML.start)
-    rec = REC.start()
     if r.get("ok"):
-        note("ok", "model start · execution running", f"recording {rec}")
+        note("ok", "model start requested", "recording starts automatically with the stream")
     else:
-        note("warn", "model start not sent · recording anyway", r.get("err", ""))
-    return {"ok": True, "matlab": r, "recording": rec}
+        note("warn", "model start not sent", r.get("err", ""))
+    return {"ok": True, "matlab": r}
 
 
 @app.post("/api/rt/stop")
 async def rt_stop():
     r = await asyncio.to_thread(ML.stop)
-    rec = REC.stop()
     if r.get("ok"):
-        note("info", "model stop · execution halted", f"file {rec}" if rec else "")
+        note("info", "model stop requested", "recording closes when the stream goes silent")
     else:
-        note("warn", "model stop not sent (no MATLAB)", r.get("err", ""))
-    return {"ok": True, "matlab": r, "recording": rec}
+        note("warn", "model stop not sent", r.get("err", ""))
+    return {"ok": True, "matlab": r}
 
 
 @app.post("/api/param")
@@ -549,6 +539,13 @@ async def status_loop():
     while True:
         await asyncio.sleep(STATUS_S)
         tick += 1
+        # auto-record: capture whenever Speedgoat data is streaming (demo data
+        # only with --record-demo); close after AUTOREC_STOP_S of silence so
+        # brief dropouts don't split a run into fragments
+        if STREAM.alive() and not REC.on and (not STREAM.demo or ARGS.record_demo):
+            REC.start()
+        if REC.on and STREAM.last_pkt_wall and (time.monotonic() - STREAM.last_pkt_wall) > AUTOREC_STOP_S:
+            REC.stop()
         if tick % 4 == 0:                                  # MATLAB poll every 2 s
             ML_STATUS_CACHE = await asyncio.to_thread(ML.status)
         if CLIENTS:

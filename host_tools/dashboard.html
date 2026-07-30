@@ -777,7 +777,7 @@ function rtLoad(){
 function rtStart(){
   if(!Backend.mock){
     Backend.start().then(r=>{
-      toast(r.matlab&&r.matlab.ok?'Model started · recording '+(r.recording||''):'Recording '+(r.recording||'')+' (no MATLAB link)');
+      toast(r.matlab&&r.matlab.ok?'Model start requested':'Start not sent: '+((r.matlab&&r.matlab.err)||'no MATLAB link'));
     }).catch(e=>toast('Start failed: '+e.message));
     return;
   }
@@ -789,8 +789,9 @@ function rtStart(){
 }
 function rtStop(){
   if(!Backend.mock){
-    Backend.stop().then(r=>{ if(r.recording) toast('Saved '+r.recording); })
-      .catch(e=>toast('Stop failed: '+e.message));
+    Backend.stop().then(r=>{
+      toast(r.matlab&&r.matlab.ok?'Model stop requested':'Stop not sent: '+((r.matlab&&r.matlab.err)||'no MATLAB link'));
+    }).catch(e=>toast('Stop failed: '+e.message));
     return;
   }
   S.exec=false; S.stalled=false;
@@ -943,14 +944,12 @@ function renderRt(){
       'border:1px solid '+border+';border-radius:3px;background:'+bg+';color:'+fg+';opacity:'+(a.dis?0.35:1)+';">'+
       '<span style="font-size:10px;">'+a.icon+'</span>'+a.label+'</button>';
   }).join('');
-  if(!mk){
-    // recording is independent of model start/stop: the model usually runs as
-    // the Speedgoat startup app, so trials are captured with this button
-    const on=!!S.recOn;
-    html+='<button data-act="toggleRec" title="'+(on?esc('recording '+(S.recFile||'')+' — click to stop'):'start a CSV recording on the backend (independent of model start)')+'" class="mono" '+
-      'style="display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.07em;padding:7px 10px;'+
-      'border:1px solid '+(on?'#b4232a':'#cfd4da')+';border-radius:3px;background:'+(on?'#b4232a':'#fff')+';color:'+(on?'#fff':'#2b333c')+';'+
-      (on?'animation:afoPulse 1.2s ease-in-out infinite;':'')+'">'+(on?'■ REC':'● REC')+'</button>';
+  if(!mk && S.recOn){
+    // recording is automatic: it follows the Speedgoat stream (server-side)
+    html+='<span class="mono" title="'+esc('recording '+(S.recFile||'')+' — closes automatically when the stream stops')+'" '+
+      'style="display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;letter-spacing:.07em;padding:7px 10px;'+
+      'border:1px solid #b4232a;border-radius:3px;background:#fdf3f3;color:#b4232a;animation:afoPulse 1.2s ease-in-out infinite;">'+
+      '● REC '+esc(S.recFile||'')+'</span>';
   }
   $('#rtActions').innerHTML=html;
 }
@@ -1180,12 +1179,6 @@ function renderIns(){
    ===================================================================== */
 const actions={
   rtConnect, rtDisconnect, rtBuild, rtLoad, rtStart, rtStop,
-  toggleRec(){
-    if(Backend.mock) return;
-    const path=S.recOn?'/api/record/stop':'/api/record/start';
-    apiPost(path).then(r=>{ if(!S.recOn&&r.file) toast('Recording '+r.file); if(S.recOn&&r.file) toast('Saved '+r.file); })
-      .catch(e=>toast('Recording: '+e.message));
-  },
   toggleLog(){ S.logOpen=!S.logOpen; if(S.logOpen) S.unread=0; renderLog(); },
   clearLog(){ S.log=[]; S.unread=0; renderLog(); },
   toggleFiles(){ if(S.exec){ S.filesOpen=false; } else { S.filesOpen=!S.filesOpen; S.diagOpen=false; renderDiag(); } renderFiles(); },

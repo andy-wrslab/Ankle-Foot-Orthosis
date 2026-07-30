@@ -32,8 +32,11 @@ instead (press `d` for the scenario panel).
   `--udp-port 5431` switches to the full-rate stream.
 - Live data goes to the browser over WebSocket; recordings are written to
   `host_tools/trial_logs/runNNN_<timestamp>.csv` with a `.json` sidecar
-  (rows, gaps, timing). Recording starts/stops with the START/STOP buttons
-  and works even when MATLAB is not connected.
+  (rows, gaps, timing, source). Recording is automatic: it starts when
+  Speedgoat data begins streaming and closes after 5 s of stream silence
+  (brief dropouts do not split a run). Demo/loopback data is never
+  recorded unless the server runs with `--record-demo`. MATLAB is not
+  required for any of this.
 - Channel names/order live in `CHANNELS` in `server.py` (the dashboard
   adopts them at connect). They are placeholders until the Mux3 order is
   confirmed with a wiggle test.
