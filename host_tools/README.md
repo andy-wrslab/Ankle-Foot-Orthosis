@@ -6,15 +6,21 @@ load/start/stop + parameter tuning through the MATLAB engine.
 
 ## Quick start
 
+Double-click **`start_console.bat`** — it sets up the Python environment on
+first run, starts the server, and opens http://localhost:8321. With the rig
+on, data appears by itself. To try it without the rig, also double-click
+**`demo_data.bat`** (streams fake gait data into the console).
+
+Manual equivalent:
+
 ```
 cd host_tools
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-.venv\Scripts\python server.py
+.venv\Scripts\python server.py            # console at http://localhost:8321
+.venv\Scripts\python fake_speedgoat.py    # optional: sample data (second window)
 ```
 
-Open http://localhost:8321 — the dashboard is served at `/` and connects
-automatically (title bar shows `live backend mode` in the event log).
 Opening `dashboard.html` directly as a file runs the standalone mock demo
 instead (press `d` for the scenario panel).
 
