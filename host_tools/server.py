@@ -620,45 +620,10 @@ async def engine_loop():
             if ES.setup_ok:
                 ES.reset()
             continue
-        if not ES.setup_ok:
-            noww = time.monotonic()
-            if noww < ES.next_setup_wall:
-                continue
-            ES.next_setup_wall = noww + 5.0     # gentle retry — never hammer the engine
-            r = await asyncio.to_thread(ML.call_json, "afo_stream_setup()")
-            if r.get("ok"):
-                ES.setup_ok = True
-                ES.last_setup_err = ""
-                STREAM.mode = "engine"
-                STREAM.src = "slrealtime instrument"
-                STREAM.demo = False
-                STREAM.gap_window = ENGINE_GAP_S
-                note("ok", "instrument stream attached", f"app: {r.get('app','?')} · all SDI-instrumented signals")
-            else:
-                err = r.get("err", "")
-                if err != ES.last_setup_err:    # log each distinct failure once
-                    note("warn", "instrument stream setup failed", err)
-                    ES.last_setup_err = err
-                continue
-        r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
-        if not r.get("ok"):
-            continue
-        # unknown buffer shapes are described by the drain — surface each once
-        diag = " · ".join(r.get("diag") or [])
-        if diag and diag != ES.last_diag:
-            note("warn", "instrument buffer shape not recognized", diag)
-            ES.last_diag = diag
-        changed, _rows = ES.ingest(r.get("signals") or [])
-        if changed:
-            note("ok", "signal set discovered", f"{len(CH.names)} channels (cached)")
-            STREAM.reset()
-            if REC.on:
-                REC.stop("channel set changed")
-            await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
-                             binary=False)
-        # target-side SDI/FileLog recording follows the model state.
-        # afo_recording is tolerant: "already recording" (startup app or
-        # Explorer-initiated) counts as success and prints nothing in MATLAB.
+        # target-side SDI/FileLog recording follows the model state — and must
+        # run BEFORE stream setup, whose signal enumeration needs the live SDI
+        # run that recording creates. afo_recording is tolerant: "already
+        # recording" (startup app or Explorer-initiated) counts as success.
         running = bool(m.get("running"))
         if running and not ES.sdi_recording:
             noww = time.monotonic()
@@ -681,6 +646,54 @@ async def engine_loop():
             ES.sdi_recording = False
             note("info", "target recording stopped — importing file log…", "")
             asyncio.create_task(_import_filelog())
+        if not ES.setup_ok:
+            noww = time.monotonic()
+            if noww < ES.next_setup_wall:
+                continue
+            ES.next_setup_wall = noww + 5.0     # gentle retry — never hammer the engine
+            r = await asyncio.to_thread(ML.call_json, "afo_stream_setup()")
+            if r.get("ok") and not r.get("nsignames"):
+                # signal enumeration comes from the live SDI recording run;
+                # keep retrying until it exists (model running + recording)
+                err = "no instrumented signals enumerable yet (model running & recording?)"
+                if err != ES.last_setup_err:
+                    note("warn", "instrument setup incomplete — will retry", err)
+                    ES.last_setup_err = err
+                continue
+            if r.get("ok"):
+                ES.setup_ok = True
+                ES.last_setup_err = ""
+                STREAM.mode = "engine"
+                STREAM.src = "slrealtime instrument"
+                STREAM.demo = False
+                STREAM.gap_window = ENGINE_GAP_S
+                note("ok", "instrument stream attached",
+                     f"app: {r.get('app','?')} · {r.get('nsignames')} signals enumerated")
+                notes = (r.get("notes") or "").strip()
+                if notes:
+                    note("info", "instrumentation notes", notes[:300])
+            else:
+                err = r.get("err", "")
+                if err != ES.last_setup_err:    # log each distinct failure once
+                    note("warn", "instrument stream setup failed", err)
+                    ES.last_setup_err = err
+                continue
+        r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
+        if not r.get("ok"):
+            continue
+        # unknown buffer shapes are described by the drain — surface each once
+        diag = " · ".join(r.get("diag") or [])
+        if diag and diag != ES.last_diag:
+            note("warn", "instrument buffer shape not recognized", diag)
+            ES.last_diag = diag
+        changed, _rows = ES.ingest(r.get("signals") or [])
+        if changed:
+            note("ok", "signal set discovered", f"{len(CH.names)} channels (cached)")
+            STREAM.reset()
+            if REC.on:
+                REC.stop("channel set changed")
+            await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
+                             binary=False)
 
 
 async def _import_filelog():
