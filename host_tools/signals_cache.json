@@ -1,0 +1,628 @@
+{
+ "defs": [
+  {
+   "id": "Actual Angle",
+   "name": "Actual Angle",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Actual Current",
+   "name": "Actual Current",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Actual Position",
+   "name": "Actual Position",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Actual Torque",
+   "name": "Actual Torque",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Actual Velocity",
+   "name": "Actual Velocity",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Actual_torque",
+   "name": "Actual_torque",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(1)",
+   "name": "Control Parameters(1)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(2)",
+   "name": "Control Parameters(2)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(3)",
+   "name": "Control Parameters(3)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(4)",
+   "name": "Control Parameters(4)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(5)",
+   "name": "Control Parameters(5)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Parameters(6)",
+   "name": "Control Parameters(6)",
+   "group": "Control Parameters",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(1)",
+   "name": "Control Signals(1)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(2)",
+   "name": "Control Signals(2)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(3)",
+   "name": "Control Signals(3)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(4)",
+   "name": "Control Signals(4)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(5)",
+   "name": "Control Signals(5)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Control Signals(6)",
+   "name": "Control Signals(6)",
+   "group": "Control Signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "ControlWord",
+   "name": "ControlWord",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Demand Current",
+   "name": "Demand Current",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Demand Velocity",
+   "name": "Demand Velocity",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Encoder Actual",
+   "name": "Encoder Actual",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Encoder_Raw",
+   "name": "Encoder_Raw",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Heel Strike:1",
+   "name": "Heel Strike:1",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "I",
+   "name": "I",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "MATLAB Function7:1",
+   "name": "MATLAB Function7:1",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "P",
+   "name": "P",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "PI_with_switch",
+   "name": "PI_with_switch",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "RL_AAN",
+   "name": "RL_AAN",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Raw_Angle",
+   "name": "Raw_Angle",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SL",
+   "name": "SL",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_Estimated_buf",
+   "name": "SV_Estimated_buf",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_Estimator:1",
+   "name": "SV_Estimator:1",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_error",
+   "name": "SV_error",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_max",
+   "name": "SV_max",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_mean",
+   "name": "SV_mean",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "SV_target",
+   "name": "SV_target",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "StateWord",
+   "name": "StateWord",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Total Desired torque",
+   "name": "Total Desired torque",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Uc",
+   "name": "Uc",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Uc_all_one",
+   "name": "Uc_all_one",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "Uc_non_one",
+   "name": "Uc_non_one",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "assist_threshold",
+   "name": "assist_threshold",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "assistance",
+   "name": "assistance",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "assistance_level",
+   "name": "assistance_level",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "ax",
+   "name": "ax",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "ay",
+   "name": "ay",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "az",
+   "name": "az",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "isAlive",
+   "name": "isAlive",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "median_SV",
+   "name": "median_SV",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "min_cycles",
+   "name": "min_cycles",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pSum",
+   "name": "pSum",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(1)",
+   "name": "p_filt(1)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(2)",
+   "name": "p_filt(2)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(3)",
+   "name": "p_filt(3)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(4)",
+   "name": "p_filt(4)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(5)",
+   "name": "p_filt(5)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(6)",
+   "name": "p_filt(6)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(7)",
+   "name": "p_filt(7)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "p_filt(8)",
+   "name": "p_filt(8)",
+   "group": "p_filt",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(1)",
+   "name": "pack_data:1(1)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(2)",
+   "name": "pack_data:1(2)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(3)",
+   "name": "pack_data:1(3)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(4)",
+   "name": "pack_data:1(4)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(5)",
+   "name": "pack_data:1(5)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(6)",
+   "name": "pack_data:1(6)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pack_data:1(7)",
+   "name": "pack_data:1(7)",
+   "group": "pack_data:1",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "pitch",
+   "name": "pitch",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "r_ax",
+   "name": "r_ax",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "r_ay",
+   "name": "r_ay",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "r_az",
+   "name": "r_az",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "roll",
+   "name": "roll",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "status",
+   "name": "status",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "step_down",
+   "name": "step_down",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "step_up",
+   "name": "step_up",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "stride_idx",
+   "name": "stride_idx",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "sync",
+   "name": "sync",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "thr_sum_out",
+   "name": "thr_sum_out",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "unfiltered_torque",
+   "name": "unfiltered_torque",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "window_down",
+   "name": "window_down",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "window_up",
+   "name": "window_up",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "wx",
+   "name": "wx",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "wy",
+   "name": "wy",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "wz",
+   "name": "wz",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "y",
+   "name": "y",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  },
+  {
+   "id": "yaw",
+   "name": "yaw",
+   "group": "signals",
+   "units": "\u2014",
+   "prec": 3
+  }
+ ],
+ "groups": [
+  {
+   "id": "signals",
+   "label": "SIGNALS"
+  },
+  {
+   "id": "Control Parameters",
+   "label": "CONTROL PARAMETERS"
+  },
+  {
+   "id": "Control Signals",
+   "label": "CONTROL SIGNALS"
+  },
+  {
+   "id": "p_filt",
+   "label": "P_FILT"
+  },
+  {
+   "id": "pack_data:1",
+   "label": "PACK_DATA:1"
+  }
+ ]
+}

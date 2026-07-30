@@ -545,6 +545,7 @@ class EngineStream:
         self.next_rec_wall = 0.0      # backoff for recording start attempts
         self.last_rec_err = ""
         self.last_diag = ""
+        self.extra_sleep = 0.0        # adaptive cadence: drains slow as runs grow
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
         self.grid_t = None
@@ -612,7 +613,7 @@ ES = EngineStream()
 
 async def engine_loop():
     while True:
-        await asyncio.sleep(DRAIN_S)
+        await asyncio.sleep(DRAIN_S + ES.extra_sleep)
         if ARGS.udp_port:                       # UDP mode owns the stream
             continue
         m = ML_STATUS_CACHE
@@ -678,7 +679,11 @@ async def engine_loop():
                     note("warn", "instrument stream setup failed", err)
                     ES.last_setup_err = err
                 continue
+        t0 = time.monotonic()
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
+        dur = time.monotonic() - t0
+        # keep the shared MATLAB responsive: leave >2x the drain cost idle
+        ES.extra_sleep = max(0.0, min(5.0, 2.5 * dur - DRAIN_S))
         if not r.get("ok"):
             continue
         # unknown buffer shapes are described by the drain — surface each once
