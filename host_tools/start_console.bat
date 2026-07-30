@@ -25,7 +25,7 @@ echo   AFO Rig Console   -   http://localhost:8321
 echo   Press Ctrl+C or close this window to stop the server.
 echo.
 start "" http://localhost:8321
-.venv\Scripts\python server.py
+.venv\Scripts\python server.py %*
 
 echo.
 echo Server stopped.

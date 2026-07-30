@@ -77,7 +77,7 @@ button:disabled{cursor:default;}
       <span style="color:#9aa2ac;">control link</span><span style="color:#3b444e;">slrealtime (MATLAB engine) &middot; TCP</span>
       <span style="color:#9aa2ac;">data source</span><span data-live="src" style="color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">telemetry</span><span data-live="linkrate" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
-      <span style="color:#9aa2ac;">packet size</span><span style="color:#3b444e;">31 &times; float32 = 124 B &middot; UDP 5432</span>
+      <span style="color:#9aa2ac;">packet size</span><span data-live="pktsize" style="color:#3b444e;">31 ch &times; float32</span>
       <span style="color:#9aa2ac;">last packet age</span><span data-live="pktage" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">stream gaps</span><span data-live="diaggaps" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
       <span style="color:#9aa2ac;">ring buffer</span><span data-live="diagbuf" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
@@ -188,47 +188,59 @@ const ACCENT = '#0f6b6b';
 const WINDOW_SEC = 10;
 const MDL = 'MotorTorqueControlTest_working_5_8_2022_ADC_FILT_Mo';
 
-/* ---------------- channel manifest (31 × float32, UDP order TBC) ------ */
-const channels = [
-  {id:'ankle_angle',  name:'ankle_angle',  group:'ankle',    units:'deg',   color:'#0072B2', prec:2},
-  {id:'pot_raw',      name:'pot_raw',      group:'ankle',    units:'deg',   color:'#56B4E9', prec:2},
-  {id:'torque_cmd',   name:'torque_cmd',   group:'actuator', units:'N·m',   color:'#D55E00', prec:2},
-  {id:'ins_p1',  name:'insole_p1', group:'pressure', units:'kPa', color:'#0b4f6c', prec:0},
-  {id:'ins_p2',  name:'insole_p2', group:'pressure', units:'kPa', color:'#12657f', prec:0},
-  {id:'ins_p3',  name:'insole_p3', group:'pressure', units:'kPa', color:'#1a7b92', prec:0},
-  {id:'ins_p4',  name:'insole_p4', group:'pressure', units:'kPa', color:'#2291a5', prec:0},
-  {id:'ins_p5',  name:'insole_p5', group:'pressure', units:'kPa', color:'#2aa7b8', prec:0},
-  {id:'ins_p6',  name:'insole_p6', group:'pressure', units:'kPa', color:'#32bdcb', prec:0},
-  {id:'ins_p7',  name:'insole_p7', group:'pressure', units:'kPa', color:'#3ad3de', prec:0},
-  {id:'ins_p8',  name:'insole_p8', group:'pressure', units:'kPa', color:'#42e9f1', prec:0},
-  {id:'heel_press', name:'heel_agg', group:'pressure', units:'kPa', color:'#0072B2', prec:0},
-  {id:'toe_press',  name:'toe_agg',  group:'pressure', units:'kPa', color:'#D55E00', prec:0},
-  {id:'imu_yaw',   name:'imu_yaw',   group:'imu', units:'deg',   color:'#0072B2', prec:1},
-  {id:'imu_pitch', name:'imu_pitch', group:'imu', units:'deg',   color:'#D55E00', prec:1},
-  {id:'imu_roll',  name:'imu_roll',  group:'imu', units:'deg',   color:'#009E73', prec:1},
-  {id:'imu_ax', name:'imu_ax', group:'imu', units:'m/s²',  color:'#CC79A7', prec:2},
-  {id:'imu_ay', name:'imu_ay', group:'imu', units:'m/s²',  color:'#8a6bbf', prec:2},
-  {id:'imu_az', name:'imu_az', group:'imu', units:'m/s²',  color:'#666f78', prec:2},
-  {id:'imu_gx', name:'imu_gx', group:'imu', units:'deg/s', color:'#8b939d', prec:1},
-  {id:'imu_gy', name:'imu_gy', group:'imu', units:'deg/s', color:'#a8b0b8', prec:1},
-  {id:'imu_gz', name:'imu_gz', group:'imu', units:'deg/s', color:'#c2c9d0', prec:1},
-  {id:'gait_phase', name:'gait_phase', group:'gait', units:'—',   color:'#5b646e', prec:0, step:true},
-  {id:'stride_vel', name:'stride_vel', group:'gait', units:'m/s', color:'#0072B2', prec:2, step:true},
-  {id:'stride_len', name:'stride_len', group:'gait', units:'m',   color:'#56B4E9', prec:2, step:true},
-  {id:'assist_uc',  name:'assist_Uc',  group:'gait', units:'N·m', color:'#D55E00', prec:2},
-  {id:'sync_led',   name:'sync_led',   group:'gait', units:'—',   color:'#009E73', prec:0, step:true},
-  {id:'motor_current', name:'motor_current', group:'actuator', units:'A',     color:'#009E73', prec:2},
-  {id:'motor_vel',     name:'motor_vel',     group:'actuator', units:'rad/s', color:'#CC79A7', prec:2},
-  {id:'ctrl_dt',       name:'ctrl_loop_dt',  group:'actuator', units:'ms',    color:'#8b939d', prec:3},
-  {id:'spare_31',      name:'spare_31',      group:'actuator', units:'—',     color:'#c2c9d0', prec:0, step:true}
+/* ---------------- channel manifest ------------------------------------
+   Colors are assigned per subplot position (PALETTE), never per channel,
+   so N signals in one plot always get N distinct colors.
+   In live mode the server sends the discovered channel set (all SDI-
+   instrumented signals, vectors expanded) and adoptChannels() replaces
+   this built-in list, which serves the standalone mock. */
+let channels = [
+  {id:'ankle_angle',  name:'ankle_angle',  group:'ankle',    units:'deg',   prec:2},
+  {id:'pot_raw',      name:'pot_raw',      group:'ankle',    units:'deg',   prec:2},
+  {id:'torque_cmd',   name:'torque_cmd',   group:'actuator', units:'N·m',   prec:2},
+  {id:'ins_p1',  name:'insole_p1', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p2',  name:'insole_p2', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p3',  name:'insole_p3', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p4',  name:'insole_p4', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p5',  name:'insole_p5', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p6',  name:'insole_p6', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p7',  name:'insole_p7', group:'pressure', units:'kPa', prec:0},
+  {id:'ins_p8',  name:'insole_p8', group:'pressure', units:'kPa', prec:0},
+  {id:'heel_press', name:'heel_agg', group:'pressure', units:'kPa', prec:0},
+  {id:'toe_press',  name:'toe_agg',  group:'pressure', units:'kPa', prec:0},
+  {id:'imu_yaw',   name:'imu_yaw',   group:'imu', units:'deg',   prec:1},
+  {id:'imu_pitch', name:'imu_pitch', group:'imu', units:'deg',   prec:1},
+  {id:'imu_roll',  name:'imu_roll',  group:'imu', units:'deg',   prec:1},
+  {id:'imu_ax', name:'imu_ax', group:'imu', units:'m/s²',  prec:2},
+  {id:'imu_ay', name:'imu_ay', group:'imu', units:'m/s²',  prec:2},
+  {id:'imu_az', name:'imu_az', group:'imu', units:'m/s²',  prec:2},
+  {id:'imu_gx', name:'imu_gx', group:'imu', units:'deg/s', prec:1},
+  {id:'imu_gy', name:'imu_gy', group:'imu', units:'deg/s', prec:1},
+  {id:'imu_gz', name:'imu_gz', group:'imu', units:'deg/s', prec:1},
+  {id:'gait_phase', name:'gait_phase', group:'gait', units:'—',   prec:0, step:true},
+  {id:'stride_vel', name:'stride_vel', group:'gait', units:'m/s', prec:2, step:true},
+  {id:'stride_len', name:'stride_len', group:'gait', units:'m',   prec:2, step:true},
+  {id:'assist_uc',  name:'assist_Uc',  group:'gait', units:'N·m', prec:2},
+  {id:'sync_led',   name:'sync_led',   group:'gait', units:'—',   prec:0, step:true},
+  {id:'motor_current', name:'motor_current', group:'actuator', units:'A',     prec:2},
+  {id:'motor_vel',     name:'motor_vel',     group:'actuator', units:'rad/s', prec:2},
+  {id:'ctrl_dt',       name:'ctrl_loop_dt',  group:'actuator', units:'ms',    prec:3},
+  {id:'spare_31',      name:'spare_31',      group:'actuator', units:'—',     prec:0, step:true}
 ];
-const groups = [
+let groups = [
   {id:'ankle',    label:'ANKLE / ENCODER'},
   {id:'pressure', label:'INSOLE PRESSURE'},
   {id:'imu',      label:'IMU'},
   {id:'gait',     label:'GAIT / RL ASSIST'},
   {id:'actuator', label:'ACTUATOR / LOOP'}
 ];
+/* colorblind-aware series palette, assigned by position within a subplot */
+const PALETTE=['#0072B2','#D55E00','#009E73','#CC79A7','#E69F00','#56B4E9',
+               '#8a6bbf','#b4232a','#12657f','#666f78','#2aa7b8','#9a6b00'];
+const plotColor=(sub,id)=>{
+  const cs=chansIn(sub), i=cs.findIndex(c=>c.id===id);
+  return PALETTE[(i<0?0:i)%PALETTE.length];
+};
 
 /* ---------------- parameter manifest — real Simulink block targets ----
    tab A: trial setup (locked while the model runs)
@@ -355,8 +367,30 @@ let strideV=1.24, strideL=1.31, syncLed=0, _lastP=0, zeroOff=0;
 const yr={}, yLock={};
 let view=null, cur=[null,null], drag=null;
 
-const chanMap={}; channels.forEach(c=>chanMap[c.id]=c);
+let chanMap={}; channels.forEach(c=>chanMap[c.id]=c);
 const chan=id=>chanMap[id];
+
+/* Replace the channel set with the server-discovered one (live mode). */
+function adoptChannels(defs, groupDefs){
+  channels = defs.map(d=>({id:String(d.id||d.name), name:String(d.name||d.id),
+    group:String(d.group||'signals'), units:d.units||'—',
+    prec:(d.prec===undefined?3:d.prec), step:!!(d.step||d.hold)}));
+  if(Array.isArray(groupDefs) && groupDefs.length) groups=groupDefs.map(g=>({id:String(g.id),label:String(g.label||g.id)}));
+  else { const seen=[]; channels.forEach(c=>{ if(seen.indexOf(c.group)<0) seen.push(c.group); });
+    groups=seen.map(g=>({id:g,label:g.toUpperCase()})); }
+  chanMap={}; channels.forEach(c=>chanMap[c.id]=c);
+  for(const k in buf) delete buf[k];
+  channels.forEach(c=>buf[c.id]=new Float32Array(N));
+  head=-1; count=0;
+  for(const k in last) delete last[k];
+  for(const k in lastChange) delete lastChange[k];
+  const valid=new Set(channels.map(c=>c.id));
+  Object.keys(S.assign).forEach(k=>{ if(!valid.has(k)) delete S.assign[k]; });
+  if(!valid.has(S.sel)) S.sel=channels.length?channels[0].id:null;
+  const op={}; groups.forEach(g=>{ op[g.id]=S.open[g.id]!==false; });
+  S.open=op;
+  renderTree(); renderSubplots();
+}
 const paramMap={}; paramDefs.forEach(p=>paramMap[p.id]=p);
 
 /* ---------------- tiny dom helpers ---------------- */
@@ -636,8 +670,8 @@ function draw(i,c){
 
   const X=t=>L+pw*((t-d.t0)/span);
   const Y=v=>Math.max(T-4,Math.min(T+ph+4, T+ph-ph*((v-rng.min)/(rng.max-rng.min))));
-  for(const s of sigs){
-    const b=buf[s.id]; g.beginPath(); g.strokeStyle=s.color; g.lineWidth=1.2;
+  sigs.forEach((s,si)=>{
+    const b=buf[s.id]; g.beginPath(); g.strokeStyle=PALETTE[si%PALETTE.length]; g.lineWidth=1.2;
     let started=false,py=0;
     for(let k=0;k<idx.length;k++){
       const ii=idx[k], x=X(ts[ii]), y=Y(b[ii]);
@@ -647,7 +681,7 @@ function draw(i,c){
       py=y;
     }
     g.stroke();
-  }
+  });
   for(let k=0;k<2;k++){
     if(!S.curOn[k]) continue;
     const t=cur[k]; if(t===null||t<d.t0||t>d.t1) continue;
@@ -659,18 +693,19 @@ function draw(i,c){
     const ii=nearestIdx(t);
     if(ii>=0){
       let ly=T+20;
-      for(const s of sigs){
+      sigs.forEach((s,si)=>{
+        const col=PALETTE[si%PALETTE.length];
         const v=buf[s.id][ii], y=Y(v);
-        g.fillStyle=s.color; g.beginPath(); g.arc(x,y,2.6,0,Math.PI*2); g.fill();
+        g.fillStyle=col; g.beginPath(); g.arc(x,y,2.6,0,Math.PI*2); g.fill();
         const txt=v.toFixed(s.prec);
         g.font='9px '+MONO; g.textAlign=x>L+pw*0.72?'right':'left';
         const tx=x>L+pw*0.72?x-5:x+5;
         g.fillStyle='rgba(255,255,255,0.86)';
         const wm=g.measureText(txt).width;
         g.fillRect(g.textAlign==='right'?tx-wm-2:tx-2, ly-8, wm+4, 11);
-        g.fillStyle=s.color; g.fillText(txt,tx,ly);
+        g.fillStyle=col; g.fillText(txt,tx,ly);
         ly+=12;
-      }
+      });
     }
   }
   if(drag && drag.i===i && (drag.mode==='zoomx'||drag.mode==='zoomy')){
@@ -705,7 +740,7 @@ function frame(){
   if(now-_lf<32) return; _lf=now;
   const running=S.exec;
   const rate=pktTimes.length;
-  const stalled=running && (now-lastPktWall>250);
+  const stalled=running && (now-lastPktWall>(S.stallMs||250));
   if(stalled && !S.stalled){ S.stalled=true; log('error','no UDP packets for >250 ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
 
   const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
@@ -981,9 +1016,10 @@ function renderTree(){
     const open=S.open[gr.id]!==false;
     const rowsHtml=!open?'':rows.map(c=>{
       const subs=subsOf(c.id), here=subs.indexOf(S.selSub)>=0, any=subs.length>0;
+      const sw=any?plotColor(subs[0],c.id):'#dfe3e7';
       return '<div data-act="selChan" data-arg="'+c.id+'" style="display:grid;grid-template-columns:16px 10px 1fr;gap:6px;align-items:center;padding:3px 9px;border-bottom:1px solid #f8f9fa;background:'+(S.sel===c.id?'#eef5f5':'#fff')+';cursor:pointer;">'+
         '<input type="checkbox" data-act="togChan" data-arg="'+c.id+'" '+(here?'checked':'')+' title="plot in selected subplot" style="margin:0;width:12px;height:12px;accent-color:#0f6b6b;cursor:pointer;" />'+
-        '<span style="width:9px;height:9px;border-radius:1px;background:'+(any?c.color:'#dfe3e7')+';"></span>'+
+        '<span style="width:9px;height:9px;border-radius:1px;background:'+sw+';"></span>'+
         '<span class="mono" style="font-size:11px;color:'+(any?'#14181c':'#8b939d')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+c.name+'</span></div>';
     }).join('');
     return '<div><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 9px;background:#f7f8f9;border-bottom:1px solid #f1f3f5;border-top:1px solid #f1f3f5;">'+
@@ -1004,8 +1040,8 @@ function renderSubplots(){
       '<div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 9px;border-bottom:1px solid #eceef1;background:'+(on?'#f2f7f7':'#fcfcfd')+';">'+
       '<span style="width:6px;height:6px;border-radius:50%;background:'+(on?ACCENT:'#dfe3e7')+';flex:0 0 auto;"></span>'+
       '<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">'+
-      cs.map(c=>'<button data-act="rmChan" data-arg="'+c.id+':'+i+'" title="remove from subplot" class="mono" style="display:inline-flex;align-items:center;gap:5px;border:1px solid #e2e5e9;background:#fff;border-radius:3px;padding:2px 7px;font-size:9.5px;color:#3b444e;">'+
-        '<span style="width:8px;height:8px;border-radius:1px;background:'+c.color+';"></span><span>'+c.name+'</span></button>').join('')+
+      cs.map((c,ci)=>'<button data-act="rmChan" data-arg="'+c.id+':'+i+'" title="remove from subplot" class="mono" style="display:inline-flex;align-items:center;gap:5px;border:1px solid #e2e5e9;background:#fff;border-radius:3px;padding:2px 7px;font-size:9.5px;color:#3b444e;">'+
+        '<span style="width:8px;height:8px;border-radius:1px;background:'+PALETTE[ci%PALETTE.length]+';"></span><span>'+c.name+'</span></button>').join('')+
       '</div></div>'+
       '<div style="flex:1 1 auto;min-height:0;position:relative;"><canvas data-sub="'+i+'" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas></div></div>';
   }
@@ -1265,10 +1301,13 @@ function wsConnect(){
   wsock.onmessage=ev=>{
     if(typeof ev.data==='string'){
       let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
-      if(m.type==='hello' && Array.isArray(m.channels) && m.channels.length===channels.length){
-        m.channels.forEach((n,i)=>{ channels[i].name=n; });   // server owns the channel names
-        head=-1; count=0;   // fresh server session: drop samples from the previous epoch
+      if(m.type==='hello' && Array.isArray(m.channels) && m.channels.length){
+        if(typeof m.channels[0]==='object') adoptChannels(m.channels, m.groups);   // discovered set
+        else if(m.channels.length===channels.length) m.channels.forEach((n,i)=>{ channels[i].name=n; });
+        head=-1; count=0;   // fresh epoch (new server session or channel set)
         renderTree(); renderSubplots();
+        const ps=root.querySelector('[data-live="pktsize"]');
+        if(ps) ps.textContent=channels.length+' ch × float32 ('+(channels.length*4)+' B/frame)';
       } else if(m.type==='status'){
         S.exec = !!(m.stream && m.stream.running) || !!(m.matlab && m.matlab.running) || false;
         S.link = !!(m.matlab && m.matlab.connected);
@@ -1276,6 +1315,7 @@ function wsConnect(){
         S.mldatxCfg = !!(m.cfg && m.cfg.mldatx);
         S.recOn = !!(m.rec && m.rec.on);
         S.recFile = (m.rec && m.rec.file) || null;
+        S.stallMs = (m.stream && m.stream.stall_ms) || 250;
         S.built = true;                                        // builds live in the Simulink desktop
         S.ecat = (m.stream && m.stream.running) ? 'OP' : 'INIT';   // heuristic until StateWord is streamed
         gaps = (m.stream && m.stream.gaps) || 0;
