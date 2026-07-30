@@ -406,6 +406,7 @@ def _stream_status():
         },
         "rec": {"on": REC.on, "file": REC.path.name if REC.on else None, "rows": REC.rows if REC.on else 0},
         "matlab": ML_STATUS_CACHE,
+        "cfg": {"mldatx": bool(ARGS.mldatx)},
     }
 
 
@@ -454,7 +455,7 @@ async def rt_start():
     if r.get("ok"):
         note("ok", "model start · execution running", f"recording {rec}")
     else:
-        note("warn", "model start not sent (no MATLAB) · recording anyway", r.get("err", ""))
+        note("warn", "model start not sent · recording anyway", r.get("err", ""))
     return {"ok": True, "matlab": r, "recording": rec}
 
 

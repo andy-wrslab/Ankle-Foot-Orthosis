@@ -925,15 +925,16 @@ function renderRt(){
     {id:'build', label:'BUILD', icon:'⚙', dis:mk?(!S.link||S.exec):true,
      hint:mk?'build & download application (codegen)':'build from the Simulink desktop (Ctrl+B)',
      act:'rtBuild', primary:mk&&S.link&&!S.built},
-    {id:'load', label:'LOAD', icon:'↧', dis:!S.link||(mk&&!S.built)||S.exec,
-     hint:'load application on target', act:'rtLoad', primary:S.link&&S.built&&!S.loaded&&mk},
+    {id:'load', label:'LOAD', icon:'↧', dis: mk?(!S.link||!S.built||S.exec):(!S.link||S.exec||!S.mldatxCfg),
+     hint: mk?'load application on target':(S.mldatxCfg?'load application on target':'placeholder — the app is preloaded as the Speedgoat startup application (start server with --mldatx to enable)'),
+     act:'rtLoad', primary:S.link&&S.built&&!S.loaded&&mk},
     S.exec
       ? {id:'stop', label:'STOP', icon:'■', dis:false, hint:'stop model execution', act:'rtStop', stopBtn:true}
       : {id:'start', label:'START', icon:'▶', dis:mk?!S.loaded:false,
          hint:mk?'start model execution':'start model execution + CSV recording (records even without a MATLAB link)',
          act:'rtStart', primary:S.loaded}
   ];
-  $('#rtActions').innerHTML=defs.map(a=>{
+  let html=defs.map(a=>{
     const border=a.stopBtn?'#b4232a':a.primary?A:'#cfd4da';
     const bg=a.stopBtn?'#b4232a':a.primary?A:'#fff';
     const fg=a.stopBtn?'#fff':a.primary?'#fff':'#2b333c';
@@ -942,6 +943,16 @@ function renderRt(){
       'border:1px solid '+border+';border-radius:3px;background:'+bg+';color:'+fg+';opacity:'+(a.dis?0.35:1)+';">'+
       '<span style="font-size:10px;">'+a.icon+'</span>'+a.label+'</button>';
   }).join('');
+  if(!mk){
+    // recording is independent of model start/stop: the model usually runs as
+    // the Speedgoat startup app, so trials are captured with this button
+    const on=!!S.recOn;
+    html+='<button data-act="toggleRec" title="'+(on?esc('recording '+(S.recFile||'')+' — click to stop'):'start a CSV recording on the backend (independent of model start)')+'" class="mono" '+
+      'style="display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.07em;padding:7px 10px;'+
+      'border:1px solid '+(on?'#b4232a':'#cfd4da')+';border-radius:3px;background:'+(on?'#b4232a':'#fff')+';color:'+(on?'#fff':'#2b333c')+';'+
+      (on?'animation:afoPulse 1.2s ease-in-out infinite;':'')+'">'+(on?'■ REC':'● REC')+'</button>';
+  }
+  $('#rtActions').innerHTML=html;
 }
 
 function renderTopButtons(){
@@ -1169,6 +1180,12 @@ function renderIns(){
    ===================================================================== */
 const actions={
   rtConnect, rtDisconnect, rtBuild, rtLoad, rtStart, rtStop,
+  toggleRec(){
+    if(Backend.mock) return;
+    const path=S.recOn?'/api/record/stop':'/api/record/start';
+    apiPost(path).then(r=>{ if(!S.recOn&&r.file) toast('Recording '+r.file); if(S.recOn&&r.file) toast('Saved '+r.file); })
+      .catch(e=>toast('Recording: '+e.message));
+  },
   toggleLog(){ S.logOpen=!S.logOpen; if(S.logOpen) S.unread=0; renderLog(); },
   clearLog(){ S.log=[]; S.unread=0; renderLog(); },
   toggleFiles(){ if(S.exec){ S.filesOpen=false; } else { S.filesOpen=!S.filesOpen; S.diagOpen=false; renderDiag(); } renderFiles(); },
@@ -1263,6 +1280,9 @@ function wsConnect(){
         S.exec = !!(m.stream && m.stream.running) || !!(m.matlab && m.matlab.running) || false;
         S.link = !!(m.matlab && m.matlab.connected);
         S.loaded = !!(m.matlab && m.matlab.loaded);
+        S.mldatxCfg = !!(m.cfg && m.cfg.mldatx);
+        S.recOn = !!(m.rec && m.rec.on);
+        S.recFile = (m.rec && m.rec.file) || null;
         S.built = true;                                        // builds live in the Simulink desktop
         S.ecat = (m.stream && m.stream.running) ? 'OP' : 'INIT';   // heuristic until StateWord is streamed
         gaps = (m.stream && m.stream.gaps) || 0;
