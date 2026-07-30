@@ -546,6 +546,9 @@ class EngineStream:
         self.last_rec_err = ""
         self.last_diag = ""
         self.extra_sleep = 0.0        # adaptive cadence: drains slow as runs grow
+        self.last_rows_wall = 0.0     # when the live stream last produced samples
+        self.restart_tried = False    # one automatic recording restart per attach
+        self.next_guidance_wall = 0.0
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
         self.grid_t = None
@@ -557,6 +560,9 @@ class EngineStream:
         self.last_sig_t = {}
         self.lastv = {}
         self.grid_t = None
+        self.last_rows_wall = 0.0
+        self.restart_tried = False
+        self.next_guidance_wall = 0.0
 
     def ingest(self, signals):
         """Returns (changed, rows). signals: [{name,w,t:[...],v:[flat]}]."""
@@ -668,8 +674,9 @@ async def engine_loop():
                 STREAM.src = "slrealtime instrument"
                 STREAM.demo = False
                 STREAM.gap_window = ENGINE_GAP_S
-                note("ok", "instrument stream attached",
-                     f"app: {r.get('app','?')} · {r.get('nsignames')} signals enumerated")
+                ES.last_rows_wall = time.monotonic()   # grace period starts now
+                note("ok", "live SDI run pinned",
+                     f"{r.get('app','?')} · {r.get('nsignames')} signals")
                 notes = (r.get("notes") or "").strip()
                 if notes:
                     note("info", "instrumentation notes", notes[:300])
@@ -686,12 +693,37 @@ async def engine_loop():
         ES.extra_sleep = max(0.0, min(5.0, 2.5 * dur - DRAIN_S))
         if not r.get("ok"):
             continue
-        # unknown buffer shapes are described by the drain — surface each once
+        # drain diagnostics — surface each distinct message once
         diag = " · ".join(r.get("diag") or [])
         if diag and diag != ES.last_diag:
-            note("warn", "instrument buffer shape not recognized", diag)
+            note("info", "live stream diagnostic", diag)
             ES.last_diag = diag
         changed, _rows = ES.ingest(r.get("signals") or [])
+        if _rows > 0:
+            ES.last_rows_wall = time.monotonic()
+        # stale-stream watchdog: model runs but no samples arrive — the app's
+        # XCP live-streaming link is likely down. Try one recording restart
+        # (re-establishes streaming for soft wedges), then tell the user the
+        # app itself needs a reload.
+        if ES.setup_ok and running and ES.last_rows_wall:
+            silent = time.monotonic() - ES.last_rows_wall
+            if silent > 15:
+                if not ES.restart_tried:
+                    ES.restart_tried = True
+                    note("warn", "live stream silent — restarting target recording",
+                         f"{int(silent)} s without samples · trying to re-establish streaming")
+                    await asyncio.to_thread(ML.call_json, "afo_recording('stop')")
+                    await asyncio.sleep(1.0)
+                    await asyncio.to_thread(ML.call_json, "afo_recording('start')")
+                    ES.sdi_recording = True
+                    ES.setup_ok = False           # re-pin the (hopefully new) run
+                    ES.next_setup_wall = 0.0
+                    ES.last_rows_wall = time.monotonic()
+                elif time.monotonic() >= ES.next_guidance_wall:
+                    ES.next_guidance_wall = time.monotonic() + 120
+                    note("error", "live streaming is down — the app's XCP link appears broken",
+                         "stop the model and RELOAD the application on the Speedgoat "
+                         "(rebooting the Speedgoat does this), then reconnect")
         if changed:
             note("ok", "signal set discovered", f"{len(CH.names)} channels (cached)")
             STREAM.reset()
