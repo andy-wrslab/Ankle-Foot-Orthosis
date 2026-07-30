@@ -743,7 +743,9 @@ function frame(){
   if(now-_lf<32) return; _lf=now;
   const running=S.exec;
   const rate=pktTimes.length;
-  const stalled=running && (now-lastPktWall>(S.stallMs||250));
+  /* STALL means a stream that existed went silent — never fires before the
+     first data arrives (e.g., model running but instrument not attached yet) */
+  const stalled=running && lastPktWall>0 && (now-lastPktWall>(S.stallMs||250));
   if(stalled && !S.stalled){ S.stalled=true; log('error','no UDP packets for >250 ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
 
   const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };

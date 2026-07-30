@@ -64,8 +64,7 @@ ap.add_argument("--udp-port", type=int, default=0, help="0 = UDP disabled (defau
 ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
 ap.add_argument("--target", default="TargetPC1", help="Speedgoat target name for slrealtime()")
-ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe")
-ap.add_argument("--target-port", type=int, default=22222, help="slrealtime TCP port for the reachability probe")
+ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe (ping)")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine entirely")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
 ap.add_argument("--record-demo", action="store_true", help="also auto-record demo (loopback UDP) data")
@@ -432,14 +431,18 @@ class MatlabRT:
             return {"ok": False, "err": str(e)}
 
     def connect_target(self):
-        # fast reachability probe first: an off-network rig must fail in ~2 s,
+        # fast reachability probe first (ICMP ping — the QNX target answers no
+        # fixed TCP port we can rely on): an off-network rig must fail in ~2 s,
         # not block the (single-threaded) engine — and every status poll behind
         # it — on a long tg.connect timeout
-        import socket as _socket
+        import subprocess
         try:
-            with _socket.create_connection((ARGS.target_ip, ARGS.target_port), timeout=2.0):
-                pass
-        except OSError:
+            p = subprocess.run(["ping", "-n", "1", "-w", "2000", ARGS.target_ip],
+                               capture_output=True, timeout=6)
+            reachable = p.returncode == 0
+        except Exception:
+            reachable = True          # probe itself failed — let tg.connect decide
+        if not reachable:
             return {"ok": False,
                     "err": f"{ARGS.target} ({ARGS.target_ip}) not reachable — is this PC on the rig network?"}
         r = self.ensure_engine(True)
@@ -537,7 +540,8 @@ ML_STATUS_CACHE = {"connected": False, "available": None}
 class EngineStream:
     def __init__(self):
         self.setup_ok = False
-        self.setup_err_noted = False
+        self.next_setup_wall = 0.0    # backoff: retry setup at most every 5 s
+        self.last_setup_err = ""
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
         self.grid_t = None
@@ -545,6 +549,7 @@ class EngineStream:
 
     def reset(self):
         self.setup_ok = False
+        self.next_setup_wall = 0.0
         self.last_sig_t = {}
         self.lastv = {}
         self.grid_t = None
@@ -613,19 +618,24 @@ async def engine_loop():
                 ES.reset()
             continue
         if not ES.setup_ok:
+            noww = time.monotonic()
+            if noww < ES.next_setup_wall:
+                continue
+            ES.next_setup_wall = noww + 5.0     # gentle retry — never hammer the engine
             r = await asyncio.to_thread(ML.call_json, "afo_stream_setup()")
             if r.get("ok"):
                 ES.setup_ok = True
-                ES.setup_err_noted = False
+                ES.last_setup_err = ""
                 STREAM.mode = "engine"
                 STREAM.src = "slrealtime instrument"
                 STREAM.demo = False
                 STREAM.gap_window = ENGINE_GAP_S
-                note("ok", "instrument stream attached", "all SDI-instrumented signals")
+                note("ok", "instrument stream attached", f"app: {r.get('app','?')} · all SDI-instrumented signals")
             else:
-                if not ES.setup_err_noted:
-                    note("warn", "instrument stream setup failed", r.get("err", ""))
-                    ES.setup_err_noted = True
+                err = r.get("err", "")
+                if err != ES.last_setup_err:    # log each distinct failure once
+                    note("warn", "instrument stream setup failed", err)
+                    ES.last_setup_err = err
                 continue
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
         if not r.get("ok"):
