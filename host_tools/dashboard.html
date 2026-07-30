@@ -307,21 +307,29 @@ const paramDefs = [
    When the FastAPI app exists, set API to its origin, implement the
    TODO branches (fetch + WebSocket), and everything else stays as-is.
    ===================================================================== */
-const API = null;   // e.g. 'http://localhost:8321' once the Python app exists
+/* Real mode engages automatically when this page is served by server.py
+   (http/https). Opening the file directly (file://) runs the standalone mock. */
+const API = (location.protocol==='http:'||location.protocol==='https:') ? '' : null;
+async function apiPost(path, body){
+  const r = await fetch(API+path,{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: body?JSON.stringify(body):undefined});
+  let j={}; try{ j=await r.json(); }catch(e){}
+  if(!r.ok || j.ok===false) throw new Error(j.err||('HTTP '+r.status));
+  return j;
+}
 const Backend = {
-  mock: !API,
-  connect(){    if(API){/* TODO: fetch(API+'/api/connect',{method:'POST'}) */} },
-  disconnect(){ if(API){/* TODO */} },
-  build(){      if(API){/* TODO: engine slbuild — long-running */} },
-  load(){       if(API){/* TODO: tg.load(mldatx) */} },
-  start(){      if(API){/* TODO: tg.start */} },
-  stop(){       if(API){/* TODO: tg.stop */} },
-  setparam(def, value){
-    if(API){/* TODO: POST /api/param {block:def.block, param:def.param, value} -> setparam(tg, [MDL,'/',block], param, value) */}
-  },
-  zeroSensors(){ if(API){/* TODO */} },
-  listLogs(){    if(API){/* TODO: GET /api/logs */} },
-  downloadLog(name){ if(API){/* TODO */} }
+  mock: API===null,
+  connect(){    return this.mock?Promise.resolve({}):apiPost('/api/rt/connect'); },
+  disconnect(){ return this.mock?Promise.resolve({}):apiPost('/api/rt/disconnect'); },
+  build(){      return Promise.resolve({}); },
+  load(){       return this.mock?Promise.resolve({}):apiPost('/api/rt/load'); },
+  start(){      return this.mock?Promise.resolve({}):apiPost('/api/rt/start'); },
+  stop(){       return this.mock?Promise.resolve({}):apiPost('/api/rt/stop'); },
+  setparam(def,value){ return this.mock?Promise.resolve({}):apiPost('/api/param',{block:def.block,param:def.param,value:value}); },
+  zeroSensors(){ return this.mock?Promise.resolve({}):apiPost('/api/zero'); },
+  listLogs(){    return Promise.resolve({}); },
+  downloadLog(name){ return Promise.resolve({}); }
 };
 
 /* ---------------- state ---------------- */
@@ -417,6 +425,7 @@ function push(t,pkt){
 }
 let _w=0,_acc=0;
 function step(){
+  if(!Backend.mock) return;            // real mode: packets arrive over WebSocket
   const wall=performance.now();
   if(!S.exec){ _w=wall; return; }
   const dt=Math.min(120, wall-(_w||wall)); _w=wall;
@@ -680,10 +689,12 @@ function draw(i,c){
       g.strokeRect(L+0.5,Math.min(y0,y1)+0.5,pw-1,Math.abs(y1-y0));
     }
   }
-  if(simT<imuStallUntil && sigs.some(s=>s.group==='imu')){
+  const mockImuHeld=Backend.mock && simT<imuStallUntil && sigs.some(s=>s.group==='imu');
+  const realHeld=(typeof flatGroups!=='undefined') && sigs.some(s=>flatGroups.has(s.group));
+  if(mockImuHeld || realHeld){
     g.fillStyle='rgba(244,192,0,0.13)'; g.fillRect(L,T,pw,ph);
     g.fillStyle='#8a6a00'; g.font='bold 10px '+MONO; g.textAlign='left';
-    g.fillText('IMU BLOCK HELD · PARTIAL STALL',L+8,T+14);
+    g.fillText('SENSOR BLOCK HELD · PARTIAL STALL',L+8,T+14);
   }
 }
 
@@ -715,7 +726,7 @@ function frame(){
 
   const pill=root.querySelector('[data-live="conn"]');
   if(pill){
-    const st=!S.link?'DISCONNECTED': stalled?'STALL': running?'RUNNING': S.loaded?'LOADED':'CONNECTED';
+    const st=stalled?'STALL': running?'RUNNING': !S.link?'DISCONNECTED': S.loaded?'LOADED':'CONNECTED';
     const map={DISCONNECTED:['#eef1f4','#5b646e','#dcdfe4'],CONNECTED:['#f2f5f7','#2b333c','#cfd4da'],
       LOADED:['#eef4f4','#0b5252','#bcd6d6'],RUNNING:[ACCENT,'#ffffff',ACCENT],STALL:['#b4232a','#ffffff','#b4232a']};
     const m=map[st];
@@ -743,16 +754,36 @@ function frame(){
 /* =====================================================================
    RT ACTIONS (Simulink Real-Time chain)
    ===================================================================== */
-function rtConnect(){ Backend.connect(); S.link=true; renderRt(); renderFiles();
+function rtConnect(){
+  if(!Backend.mock){
+    Backend.connect().then(r=>{ toast('MATLAB engine connected'+(r.mode?' ('+r.mode+')':'')); })
+      .catch(e=>toast('MATLAB connect failed: '+e.message));
+    return;   // S.link etc. follow from the next status broadcast
+  }
+  S.link=true; renderRt(); renderFiles();
   log('ok','target connected · slrealtime','speedgoat · 192.168.7.5 · ping 0.4 ms'); toast('Target connected'); }
-function rtDisconnect(){ Backend.disconnect(); S.link=false; S.exec=false; S.loaded=false; S.ecat='INIT'; S.stalled=false;
+function rtDisconnect(){
+  if(!Backend.mock){ Backend.disconnect().catch(()=>{}); return; }
+  S.link=false; S.exec=false; S.loaded=false; S.ecat='INIT'; S.stalled=false;
   renderRt(); renderFiles(); log('info','target disconnected','session closed'); }
-function rtBuild(){ Backend.build(); S.built=true; renderRt();
+function rtBuild(){
+  if(!Backend.mock) return;   // real builds happen in the Simulink desktop (Ctrl+B)
+  S.built=true; renderRt();
   log('ok','build complete · afo_ctrl.mldatx','codegen · 31 log signals · Ts=1 ms'); toast('Build complete'); }
-function rtLoad(){ Backend.load(); S.loaded=true; S.ecat='OP'; renderRt();
+function rtLoad(){
+  if(!Backend.mock){
+    Backend.load().then(()=>toast('Load requested')).catch(e=>toast('Load failed: '+e.message));
+    return;
+  }
+  S.loaded=true; S.ecat='OP'; renderRt();
   log('ok','application loaded on target · EtherCAT PREOP→SAFEOP→OP','1000 Hz'); toast('Application loaded'); }
 function rtStart(){
-  Backend.start();
+  if(!Backend.mock){
+    Backend.start().then(r=>{
+      toast(r.matlab&&r.matlab.ok?'Model started · recording '+(r.recording||''):'Recording '+(r.recording||'')+' (no MATLAB link)');
+    }).catch(e=>toast('Start failed: '+e.message));
+    return;
+  }
   lastPktWall=performance.now(); nextPartial=simT+25; nextDrop=simT+55;
   S.exec=true; S.stalled=false; S.filesOpen=false;
   renderRt(); renderFiles(); renderParams(); renderTopButtons();
@@ -760,7 +791,11 @@ function rtStart(){
   sessionStart();
 }
 function rtStop(){
-  Backend.stop();
+  if(!Backend.mock){
+    Backend.stop().then(r=>{ if(r.recording) toast('Saved '+r.recording); })
+      .catch(e=>toast('Stop failed: '+e.message));
+    return;
+  }
   S.exec=false; S.stalled=false;
   renderRt(); renderFiles(); renderParams(); renderTopButtons();
   log('info','model stop · execution halted','t='+simT.toFixed(3)+' s');
@@ -785,6 +820,7 @@ function sessionEnd(){
 
 /* dev scenarios */
 function scenario(kind){
+  if(!Backend.mock){ toast('dev scenarios are mock-only (open the file directly to demo)'); return; }
   if(kind==='disconnected'){ S.link=false;S.built=false;S.loaded=false;S.exec=false;S.ecat='INIT';
     renderRt();renderFiles();renderParams();renderTopButtons(); log('error','target unreachable','icmp timeout 3/3'); return; }
   if(kind==='idle'){ S.link=true;S.built=true;S.loaded=true;S.exec=false;S.ecat='OP';
@@ -798,7 +834,11 @@ function scenario(kind){
 
 /* zero sensors (tab A action) */
 function zeroSensors(){
-  Backend.zeroSensors();
+  if(!Backend.mock){
+    Backend.zeroSensors().then(()=>toast('Sensors zeroed'))
+      .catch(e=>toast('Zeroing: '+e.message));
+    return;
+  }
   zeroOff=(last['ankle_angle']||0)+zeroOff;
   log('ok','zero sensors · encoder + insole tare','ankle_offset='+zeroOff.toFixed(3)+' deg');
   toast('Sensors zeroed');
@@ -808,16 +848,28 @@ function zeroSensors(){
 function applyParam(id){
   const p=paramMap[id], v=S.pending[id];
   if(S.applied[id]===v) return;
-  Backend.setparam(p,v);
-  log('info','param applied · '+p.label, S.applied[id]+' → '+v+(p.units?' '+p.units:'')+' · setparam '+MDL+'/'+p.block);
-  S.applied[id]=v;
-  renderParams();
-  toast(p.label+' = '+v+(p.units?' '+p.units:''));
+  if(Backend.mock){
+    log('info','param applied · '+p.label, S.applied[id]+' → '+v+(p.units?' '+p.units:'')+' · setparam '+MDL+'/'+p.block);
+    S.applied[id]=v;
+    renderParams();
+    toast(p.label+' = '+v+(p.units?' '+p.units:''));
+    return;
+  }
+  /* real mode: only mark applied once the target accepted it
+     (the server emits the log line, which arrives as a WS event) */
+  Backend.setparam(p,v).then(()=>{
+    S.applied[id]=v; renderParams();
+    toast(p.label+' = '+v+(p.units?' '+p.units:''));
+  }).catch(e=>{
+    toast('FAILED: '+p.label+' — '+e.message);
+    renderParams();
+  });
 }
 function applyAll(){ paramDefs.forEach(p=>{ if(p.type!=='action' && S.applied[p.id]!==S.pending[p.id]) applyParam(p.id); }); }
 
 /* log files (mock target /logs) */
 function loadFiles(){
+  if(!Backend.mock){ toast('target /logs browsing comes later — CSV recordings land in host_tools/trial_logs/'); return; }
   if(!S.link||S.exec) return;
   Backend.listLogs();
   const mk=(n,secs,mb,when)=>({name:n, mb:mb, got:false,
@@ -880,15 +932,21 @@ function pickerCancel(){ S.picker=null; renderPicker(); }
    RENDERERS
    ===================================================================== */
 function renderRt(){
-  const A=ACCENT;
+  const A=ACCENT, mk=Backend.mock;
   const defs=[
     {id:'connect', label:S.link?'DISCONNECT':'CONNECT', icon:S.link?'⏻':'⇄', dis:false,
-     hint:'connect to Speedgoat target', act:S.link?'rtDisconnect':'rtConnect', primary:!S.link},
-    {id:'build', label:'BUILD', icon:'⚙', dis:!S.link||S.exec, hint:'build & download application (codegen)', act:'rtBuild', primary:S.link&&!S.built},
-    {id:'load', label:'LOAD', icon:'↧', dis:!S.link||!S.built||S.exec, hint:'load application on target', act:'rtLoad', primary:S.link&&S.built&&!S.loaded},
+     hint:mk?'connect to Speedgoat target':'attach the MATLAB engine (shared desktop session first, headless fallback)',
+     act:S.link?'rtDisconnect':'rtConnect', primary:!S.link},
+    {id:'build', label:'BUILD', icon:'⚙', dis:mk?(!S.link||S.exec):true,
+     hint:mk?'build & download application (codegen)':'build from the Simulink desktop (Ctrl+B)',
+     act:'rtBuild', primary:mk&&S.link&&!S.built},
+    {id:'load', label:'LOAD', icon:'↧', dis:!S.link||(mk&&!S.built)||S.exec,
+     hint:'load application on target', act:'rtLoad', primary:S.link&&S.built&&!S.loaded&&mk},
     S.exec
       ? {id:'stop', label:'STOP', icon:'■', dis:false, hint:'stop model execution', act:'rtStop', stopBtn:true}
-      : {id:'start', label:'START', icon:'▶', dis:!S.loaded, hint:'start model execution', act:'rtStart', primary:S.loaded}
+      : {id:'start', label:'START', icon:'▶', dis:mk?!S.loaded:false,
+         hint:mk?'start model execution':'start model execution + CSV recording (records even without a MATLAB link)',
+         act:'rtStart', primary:S.loaded}
   ];
   $('#rtActions').innerHTML=defs.map(a=>{
     const border=a.stopBtn?'#b4232a':a.primary?A:'#cfd4da';
@@ -1216,14 +1274,83 @@ document.addEventListener('keydown',ev=>{
   if(ev.key==='Escape') goLive();
 });
 
+/* =====================================================================
+   REAL-MODE WEBSOCKET CLIENT (packets + status + server events)
+   ===================================================================== */
+let wsock=null, wsUp=false;
+const flatGroups=new Set(); const _flatCnt={};
+function wsConnect(){
+  if(API===null) return;
+  try{ wsock=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws'); }
+  catch(e){ setTimeout(wsConnect,2000); return; }
+  wsock.binaryType='arraybuffer';
+  wsock.onopen=()=>{ wsUp=true; log('ok','backend link up','ws://'+location.host+'/ws'); };
+  wsock.onclose=()=>{ if(wsUp) log('error','backend link lost','reconnecting…'); wsUp=false; setTimeout(wsConnect,2000); };
+  wsock.onerror=()=>{ try{ wsock.close(); }catch(e){} };
+  wsock.onmessage=ev=>{
+    if(typeof ev.data==='string'){
+      let m; try{ m=JSON.parse(ev.data); }catch(e){ return; }
+      if(m.type==='hello' && Array.isArray(m.channels) && m.channels.length===channels.length){
+        m.channels.forEach((n,i)=>{ channels[i].name=n; });   // server owns the channel names
+        head=-1; count=0;   // fresh server session: drop samples from the previous epoch
+        renderTree(); renderSubplots();
+      } else if(m.type==='status'){
+        S.exec = !!(m.stream && m.stream.running) || (m.matlab && m.matlab.status==='running') || false;
+        S.link = !!(m.matlab && m.matlab.connected);
+        S.loaded = !!(m.matlab && m.matlab.app);
+        S.built = true;                                        // builds live in the Simulink desktop
+        S.ecat = (m.stream && m.stream.running) ? 'OP' : 'INIT';   // heuristic until StateWord is streamed
+        gaps = (m.stream && m.stream.gaps) || 0;
+        /* partial-stall detector: alarm only when a whole sensor group is
+           flat for 2 consecutive status ticks (~1 s) — the signature of a
+           real freeze, not a quiet sensor */
+        const flatNames=new Set((m.stream && m.stream.flat)||[]);
+        groups.forEach(g=>{
+          const cs=channels.filter(c=>c.group===g.id && !c.step);
+          const all=cs.length>0 && cs.every(c=>flatNames.has(c.name));
+          _flatCnt[g.id]=all?(_flatCnt[g.id]||0)+1:0;
+          if(_flatCnt[g.id]===2){
+            flatGroups.add(g.id);
+            log('warn','sensor freeze detected · '+g.label+' group flat','held >1 s while stream alive');
+          }
+          if(!all) flatGroups.delete(g.id);
+        });
+        renderRt();
+      } else if(m.type==='event'){
+        log(m.sev||'info', m.msg||'', m.raw||'');
+      }
+      return;
+    }
+    const dv=new DataView(ev.data);
+    if(dv.byteLength<5 || dv.getUint8(0)!==1) return;
+    const n=dv.getUint32(1,true);
+    let off=5;
+    const wall=performance.now();
+    for(let k=0;k<n;k++){
+      if(off+8+channels.length*4>dv.byteLength) break;
+      const t=dv.getFloat64(off,true); off+=8;
+      const pkt={};
+      for(let i=0;i<channels.length;i++){ pkt[channels[i].id]=dv.getFloat32(off,true); off+=4; }
+      push(t,pkt);
+      simT=t;
+    }
+    if(n>0){
+      lastPktWall=wall;
+      for(let k=0;k<n;k++) pktTimes.push(wall);
+      const cut=wall-1000; while(pktTimes.length&&pktTimes[0]<cut) pktTimes.shift();
+    }
+  };
+}
+
 /* ---------------- boot ---------------- */
 renderRt(); renderTopButtons(); renderTree(); renderSubplots(); renderToolbar();
 renderParams(); renderLog(); renderFiles(); renderDiag(); renderDev(); renderIns();
-log('info','console ready · target not connected','build 1.0.0 · mock mode');
+log('info','console ready','build 1.1.0 · '+(Backend.mock?'mock mode':'live backend mode'));
 setInterval(step,25);
 raf=requestAnimationFrame(frame);
-/* mock demo boots into a live run; with a real backend the console starts DISCONNECTED */
+/* mock demo boots into a live run; with a real backend the console reflects actual state */
 if(Backend.mock) setTimeout(()=>scenario('running'),150);
+wsConnect();
 </script>
 </body>
 </html>

@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+# Control plane (optional). Enables MATLAB engine attach for load/start/stop/setparam.
+# R2024b pairing; Python 3.9-3.12:
+#   pip install matlabengine==24.2.*
