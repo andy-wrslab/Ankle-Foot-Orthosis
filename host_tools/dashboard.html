@@ -630,9 +630,12 @@ function draw(i,c){
   g.strokeStyle='#dcdfe4'; g.strokeRect(L+0.5,T+0.5,pw-1,ph-1);
 
   const sigs=chansIn(i);
-  if(!S.loaded && !count){
+  if(!count){
     g.fillStyle='#aab2ba'; g.font='10px '+MONO; g.textAlign='center';
-    g.fillText('NO APPLICATION LOADED · CONNECT → BUILD → LOAD → START', L+pw/2, T+ph/2); return;
+    g.fillText(Backend.mock?'NO APPLICATION LOADED · CONNECT → BUILD → LOAD → START'
+                           :'NO DATA · CONNECT TO TARGETPC1 — SIGNALS ARE DISCOVERED AUTOMATICALLY',
+               L+pw/2, T+ph/2);
+    if(!sigs.length) return;
   }
   if(!sigs.length) return;
   const idx=idxIn(d.t0,d.t1);
@@ -788,8 +791,9 @@ function frame(){
    ===================================================================== */
 function rtConnect(){
   if(!Backend.mock){
-    Backend.connect().then(r=>{ toast('MATLAB engine connected'+(r.mode?' ('+r.mode+')':'')); })
-      .catch(e=>toast('MATLAB connect failed: '+e.message));
+    toast('Connecting to TargetPC1…');
+    Backend.connect().then(()=>{ toast('Target connected · TargetPC1'); })
+      .catch(e=>toast('Target not reachable: '+e.message));
     return;   // S.link etc. follow from the next status broadcast
   }
   S.link=true; renderRt(); renderFiles();
@@ -956,7 +960,7 @@ function renderRt(){
   const A=ACCENT, mk=Backend.mock;
   const defs=[
     {id:'connect', label:S.link?'DISCONNECT':'CONNECT', icon:S.link?'⏻':'⇄', dis:false,
-     hint:mk?'connect to Speedgoat target':'attach the MATLAB engine (shared desktop session first, headless fallback)',
+     hint:'connect to the Speedgoat target (TargetPC1 · 192.168.7.5)',
      act:S.link?'rtDisconnect':'rtConnect', primary:!S.link},
     {id:'build', label:'BUILD', icon:'⚙', dis:mk?(!S.link||S.exec):true,
      hint:mk?'build & download application (codegen)':'build from the Simulink desktop (Ctrl+B)',
@@ -1008,6 +1012,10 @@ function renderTopButtons(){
 }
 
 function renderTree(){
+  if(!channels.length){
+    $('#sigTree').innerHTML='<div class="mono" style="padding:16px 12px;font-size:10px;color:#9aa2ac;line-height:1.6;">No signals yet.<br><br>CONNECT to TargetPC1 — the instrumented signal list is discovered from the running application automatically.</div>';
+    return;
+  }
   const q=S.search.trim().toLowerCase();
   $('#sigTree').innerHTML=groups.map(gr=>{
     const all=channels.filter(c=>c.group===gr.id);
@@ -1310,7 +1318,7 @@ function wsConnect(){
         if(ps) ps.textContent=channels.length+' ch × float32 ('+(channels.length*4)+' B/frame)';
       } else if(m.type==='status'){
         S.exec = !!(m.stream && m.stream.running) || !!(m.matlab && m.matlab.running) || false;
-        S.link = !!(m.matlab && m.matlab.connected);
+        S.link = !!(m.matlab && m.matlab.target_conn);   // link = the Speedgoat target, not the engine
         S.loaded = !!(m.matlab && m.matlab.loaded);
         S.mldatxCfg = !!(m.cfg && m.cfg.mldatx);
         S.recOn = !!(m.rec && m.rec.on);
@@ -1372,6 +1380,12 @@ function wsConnect(){
 }
 
 /* ---------------- boot ---------------- */
+if(!Backend.mock){
+  /* live mode: no placeholder signals — the real set arrives from the server
+     (discovered from the target's instrumented signals, or a prior cache) */
+  channels=[]; groups=[]; chanMap={};
+  S.assign={}; S.sel=null;
+}
 renderRt(); renderTopButtons(); renderTree(); renderSubplots(); renderToolbar();
 renderParams(); renderLog(); renderFiles(); renderDiag(); renderDev(); renderIns();
 log('info','console ready','build 1.1.0 · '+(Backend.mock?'mock mode':'live backend mode'));

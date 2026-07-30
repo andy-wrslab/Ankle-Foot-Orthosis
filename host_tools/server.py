@@ -63,7 +63,9 @@ ap.add_argument("--udp-bind", default="0.0.0.0", help="bind address for the opti
 ap.add_argument("--udp-port", type=int, default=0, help="0 = UDP disabled (default); 5432/5431 = listen to the model's UDP Send stream (demo/legacy)")
 ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
-ap.add_argument("--target", default="", help="Speedgoat target name for slrealtime(); empty = default target")
+ap.add_argument("--target", default="TargetPC1", help="Speedgoat target name for slrealtime()")
+ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe")
+ap.add_argument("--target-port", type=int, default=22222, help="slrealtime TCP port for the reachability probe")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine entirely")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
 ap.add_argument("--record-demo", action="store_true", help="also auto-record demo (loopback UDP) data")
@@ -136,11 +138,17 @@ class ChannelSet:
         self.groups = []
         self.names = []
         self.flat_excluded = set()
-        cached = self._load_cache()
-        if cached:
-            self.defs, self.groups = cached
-        else:
+        if ARGS.udp_port:
+            # UDP mode needs the fixed packet layout
             self.defs, self.groups = STATIC_DEFS, STATIC_GROUPS
+        else:
+            # engine mode: no placeholders — start empty (or from the cache of
+            # a previous discovery) and adopt the real set from the instrument
+            cached = self._load_cache()
+            if cached:
+                self.defs, self.groups = cached
+            else:
+                self.defs, self.groups = [], []
         self._finish()
 
     def _finish(self):
@@ -296,6 +304,8 @@ class Recorder:
     def start(self):
         if self.on:
             return self.path.name
+        if not CH.names:
+            return None
         n = self.next_run_no()
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.path = self.root / f"run{n:03d}_{stamp}.csv"
@@ -393,8 +403,10 @@ class MatlabRT:
             self.available, self.err = False, f"matlabengine not installed ({e})"
         return self.available
 
-    # blocking; call via asyncio.to_thread
-    def connect(self):
+    # blocking; call via asyncio.to_thread.
+    # The engine is plumbing: ensure_engine attaches it quietly; CONNECT in
+    # the UI means connecting to the Speedgoat target itself.
+    def ensure_engine(self, allow_spawn=True):
         if not self._import():
             return {"ok": False, "err": self.err}
         if self.eng:
@@ -405,8 +417,8 @@ class MatlabRT:
             if names:
                 self.eng = matlab.engine.connect_matlab(names[0])
                 self.mode = f"shared:{names[0]}"
-            elif ARGS.no_spawn:
-                return {"ok": False, "err": "no shared MATLAB session found (run matlab.engine.shareEngine in MATLAB)"}
+            elif ARGS.no_spawn or not allow_spawn:
+                return {"ok": False, "err": "no shared MATLAB session found (run matlab.engine.shareEngine('AFO') in MATLAB)"}
             else:
                 self.eng = matlab.engine.start_matlab()
                 self.mode = "headless"
@@ -418,6 +430,35 @@ class MatlabRT:
         except Exception as e:
             self.eng = None
             return {"ok": False, "err": str(e)}
+
+    def connect_target(self):
+        # fast reachability probe first: an off-network rig must fail in ~2 s,
+        # not block the (single-threaded) engine — and every status poll behind
+        # it — on a long tg.connect timeout
+        import socket as _socket
+        try:
+            with _socket.create_connection((ARGS.target_ip, ARGS.target_port), timeout=2.0):
+                pass
+        except OSError:
+            return {"ok": False,
+                    "err": f"{ARGS.target} ({ARGS.target_ip}) not reachable — is this PC on the rig network?"}
+        r = self.ensure_engine(True)
+        if not r.get("ok"):
+            return r
+        rr = self._eval("tg.connect;")
+        chk = self._eval("jsonencode(logical(isConnected(tg)))", nargout=1)
+        conn = False
+        if chk.get("ok"):
+            with contextlib.suppress(Exception):
+                conn = bool(json.loads(chk["out"]))
+        if conn:
+            return {"ok": True, "target": ARGS.target}
+        return {"ok": False, "err": rr.get("err") or f"{ARGS.target} not reachable"}
+
+    def disconnect_target(self):
+        if self.eng:
+            self._eval("tg.disconnect;")
+        return {"ok": True}
 
     def disconnect(self):
         if self.eng:
@@ -674,18 +715,20 @@ def status():
 
 @app.post("/api/rt/connect")
 async def rt_connect():
-    r = await asyncio.to_thread(ML.connect)
+    r = await asyncio.to_thread(ML.connect_target)
     if r.get("ok"):
-        note("ok", f"MATLAB engine connected ({r.get('mode')})", "slrealtime tg ready")
+        note("ok", f"target connected · {ARGS.target}", "192.168.7.5 · signal discovery follows")
     else:
-        note("warn", "MATLAB engine unavailable", r.get("err", ""))
+        note("warn", f"target not reachable · {ARGS.target}", r.get("err", ""))
     return JSONResponse(r, status_code=200 if r.get("ok") else 503)
 
 
 @app.post("/api/rt/disconnect")
 async def rt_disconnect():
     ES.reset()
-    return await asyncio.to_thread(ML.disconnect)
+    r = await asyncio.to_thread(ML.disconnect_target)
+    note("info", f"target disconnected · {ARGS.target}", "")
+    return r
 
 
 @app.post("/api/rt/load")
@@ -801,7 +844,7 @@ async def status_loop():
         await asyncio.sleep(STATUS_S)
         tick += 1
         # host CSV auto-record follows the live stream
-        if STREAM.alive() and not REC.on and (not STREAM.demo or ARGS.record_demo):
+        if CH.names and STREAM.alive() and not REC.on and (not STREAM.demo or ARGS.record_demo):
             REC.start()
         if REC.on and STREAM.last_wall and (time.monotonic() - STREAM.last_wall) > AUTOREC_STOP_S:
             REC.stop()
@@ -818,6 +861,16 @@ async def event_loop():
             await _broadcast(json.dumps(e), binary=False)
 
 
+async def _quiet_engine_attach():
+    """Attach a shared MATLAB session in the background (plumbing only —
+    never spawns a headless MATLAB; CONNECT is about the target)."""
+    if ARGS.no_matlab:
+        return
+    r = await asyncio.to_thread(ML.ensure_engine, False)
+    if r.get("ok"):
+        note("info", "MATLAB engine attached (background)", r.get("mode", ""))
+
+
 @app.on_event("startup")
 async def startup():
     loop = asyncio.get_running_loop()
@@ -832,6 +885,7 @@ async def startup():
     asyncio.create_task(status_loop())
     asyncio.create_task(event_loop())
     asyncio.create_task(engine_loop())
+    asyncio.create_task(_quiet_engine_attach())
     print(f"Dashboard     : http://{ARGS.http_host}:{ARGS.http_port}/", flush=True)
     print(f"Trial logs    : {REC.root}", flush=True)
 
