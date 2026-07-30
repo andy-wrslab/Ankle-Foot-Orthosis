@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+html,body{margin:0;padding:0;background:#f6f7f8;}
+*{box-sizing:border-box;}
+a{color:#0f6b6b;text-decoration:none;}
+a:hover{color:#0b5252;text-decoration:underline;}
+input,select,textarea,button{font-family:inherit;}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#d3d8dd;border-radius:5px}
+@keyframes afoPulse{0%,100%{opacity:1}50%{opacity:.45}}
+</style>
+</helmet>
+<div ref="{{ r.root }}" style="height:100vh;display:flex;flex-direction:column;background:#f6f7f8;color:#14181c;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;overflow:hidden;">
+
+  <div style="flex:0 0 auto;display:flex;align-items:stretch;background:#ffffff;border-bottom:1px solid #dcdfe4;height:46px;">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 12px;border-right:1px solid #eceef1;">
+      <div style="width:14px;height:14px;border:2px solid #0f6b6b;border-radius:2px;"></div>
+      <div style="display:flex;flex-direction:column;line-height:1.15;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.06em;white-space:nowrap;">Ankle&nbsp;Foot&nbsp;Orthosis</span>
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.12em;color:#8b939d;">GAIT LAB · CONSOLE</span>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;padding:0 10px;border-right:1px solid #eceef1;">
+      <sc-for list="{{ rtActions }}" as="a" hint-placeholder-count="5">
+        <button onClick="{{ a.go }}" disabled="{{ a.dis }}" title="{{ a.hint }}" style="display:flex;align-items:center;gap:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;font-weight:700;letter-spacing:.07em;padding:7px 10px;border:1px solid {{ a.border }};border-radius:3px;background:{{ a.bg }};color:{{ a.fg }};cursor:pointer;opacity:{{ a.op }};">
+          <span style="font-size:10px;">{{ a.icon }}</span>{{ a.label }}
+        </button>
+      </sc-for>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:9px;padding:0 12px;border-right:1px solid #eceef1;">
+      <span data-live="conn" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;font-weight:600;letter-spacing:.09em;padding:4px 10px;border-radius:11px;background:#eef1f4;color:#5b646e;border:1px solid #dcdfe4;">DISCONNECTED</span>
+    </div>
+
+    <div style="flex:1 1 auto;display:flex;align-items:stretch;min-width:0;overflow:hidden;">
+      <div style="flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 14px;border-right:1px solid #f1f3f5;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:8.5px;letter-spacing:.14em;color:#9aa2ac;">MODEL TIME</span>
+        <span data-live="mtime" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:14px;font-weight:500;white-space:nowrap;">0.000 s</span>
+      </div>
+      <div style="flex:1 1 auto;min-width:0;"></div>
+    </div>
+
+    <div style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:0 12px;border-left:1px solid #eceef1;">
+      <button onClick="{{ toggleLog }}" style="display:flex;align-items:center;gap:7px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;letter-spacing:.08em;padding:6px 10px;border:1px solid {{ logBtn.border }};border-radius:3px;background:{{ logBtn.bg }};color:{{ logBtn.fg }};cursor:pointer;">
+        EVENT LOG
+        <sc-if value="{{ logBtn.alert }}" hint-placeholder-val="{{ false }}">
+          <span style="display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#b4232a;color:#fff;font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;animation:afoPulse 1.4s ease-in-out infinite;">{{ logBtn.count }}</span>
+        </sc-if>
+      </button>
+      <button onClick="{{ toggleFiles }}" disabled="{{ dis.logBtn }}" title="{{ logFilesHint }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;letter-spacing:.08em;padding:6px 10px;border:1px solid {{ filesBtnStyle.border }};background:{{ filesBtnStyle.bg }};border-radius:3px;cursor:pointer;color:#2b333c;opacity:{{ dis.logBtnOp }};">EXPORT</button>
+      <button onClick="{{ toggleDiag }}" title="low-level target diagnostics" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;letter-spacing:.08em;padding:6px 10px;border:1px solid {{ diagBtn.border }};background:{{ diagBtn.bg }};border-radius:3px;cursor:pointer;color:{{ diagBtn.fg }};">DIAGNOSTICS</button>
+      <button onClick="{{ toggleDev }}" title="dev panel (d)" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;letter-spacing:.08em;padding:6px 8px;border:1px solid #cfd4da;background:#fff;border-radius:3px;cursor:pointer;color:#6b7580;" style-hover="background:#f2f4f6;">DEV</button>
+    </div>
+  </div>
+
+  <sc-if value="{{ diagOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;z-index:22;top:50px;right:10px;width:352px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 10px 28px rgba(20,24,28,.16);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">LOW-LEVEL DIAGNOSTICS</span>
+        <button onClick="{{ toggleDiag }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;padding:2px 6px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;cursor:pointer;">CLOSE ✕</button>
+      </div>
+      <div style="padding:9px;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;">
+        <span style="color:#9aa2ac;">ethercat</span><span data-live="ecat" style="font-weight:700;color:#b4232a;">INIT</span>
+        <span style="color:#9aa2ac;">target</span><span style="color:#3b444e;">speedgoat · 192.168.7.5</span>
+        <span style="color:#9aa2ac;">application</span><span data-live="appfile" style="color:#3b444e;">afo_ctrl_v41.mldatx</span>
+        <span style="color:#9aa2ac;">sample time</span><span style="color:#3b444e;">1 ms · 1000 Hz · fixed step</span>
+        <span style="color:#9aa2ac;">exec time</span><span data-live="exectime" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+        <span style="color:#9aa2ac;">control link</span><span style="color:#3b444e;">slrealtime · TCP 22222</span>
+        <span style="color:#9aa2ac;">telemetry</span><span data-live="linkrate" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+        <span style="color:#9aa2ac;">packet size</span><span style="color:#3b444e;">31 × float32 = 124 B</span>
+        <span style="color:#9aa2ac;">last packet age</span><span data-live="pktage" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+        <span style="color:#9aa2ac;">stream gaps</span><span data-live="diaggaps" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+        <span style="color:#9aa2ac;">ring buffer</span><span data-live="diagbuf" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+        <span style="color:#9aa2ac;">render</span><span data-live="diagfps" style="font-variant-numeric:tabular-nums;color:#3b444e;">—</span>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-top:1px solid #f1f3f5;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;color:#9aa2ac;letter-spacing:.06em;">MOCK FAULT INJECTION <span style="color:{{ faultsColor }};font-weight:700;">{{ faultsLabel }}</span></span>
+        <button onClick="{{ toggleFaults }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;">TOGGLE</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="flex:1 1 auto;display:flex;gap:8px;padding:8px;min-height:0;">
+
+    <sc-if value="{{ insOpen }}" hint-placeholder-val="{{ true }}">
+      <div style="flex:0 0 296px;display:flex;flex-direction:column;background:#fff;border:1px solid #dcdfe4;border-radius:4px;min-height:0;overflow:hidden;">
+        <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+          <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">DATA INSPECTOR</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button onClick="{{ toggleIns }}" title="hide inspector" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;padding:1px 6px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;cursor:pointer;">◀</button>
+          </div>
+        </div>
+        <div style="flex:0 0 auto;display:flex;gap:6px;padding:7px 9px;border-bottom:1px solid #f1f3f5;">
+          <input value="{{ search }}" onChange="{{ setSearch }}" placeholder="filter signals…" style="flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;padding:4px 6px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#14181c;" />
+          <button onClick="{{ clearPlots }}" title="remove all signals from plots" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.06em;padding:4px 7px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#6b7580;cursor:pointer;">CLEAR</button>
+        </div>
+        <div style="flex:1 1 auto;min-height:0;overflow-y:auto;">
+          <sc-for list="{{ tree }}" as="g" hint-placeholder-count="5">
+            <div>
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 9px;background:#f7f8f9;border-bottom:1px solid #f1f3f5;border-top:1px solid #f1f3f5;">
+                <button onClick="{{ g.toggleOpen }}" style="display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:0;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.1em;color:#3b444e;font-weight:600;">
+                  <span style="color:#9aa2ac;font-size:9px;">{{ g.caret }}</span>{{ g.label }}
+                  <span style="color:#aab2ba;font-weight:400;">{{ g.countLabel }}</span>
+                </button>
+              </div>
+              <sc-if value="{{ g.open }}" hint-placeholder-val="{{ true }}">
+                <div>
+                  <sc-for list="{{ g.rows }}" as="c" hint-placeholder-count="3">
+                    <div onClick="{{ c.select }}" style="display:grid;grid-template-columns:16px 10px 1fr;gap:6px;align-items:center;padding:3px 9px;border-bottom:1px solid #f8f9fa;background:{{ c.rowBg }};cursor:pointer;" style-hover="background:#f4f6f8;">
+                      <input type="checkbox" checked="{{ c.on }}" onChange="{{ c.toggle }}" title="plot in selected subplot" style="margin:0;width:12px;height:12px;accent-color:#0f6b6b;cursor:pointer;" />
+                      <span style="width:9px;height:9px;border-radius:1px;background:{{ c.swatch }};"></span>
+                      <span style="display:flex;align-items:center;gap:5px;min-width:0;">
+                        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;color:{{ c.nameColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ c.name }}</span>
+                      </span>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+    <sc-if value="{{ insClosed }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:0 0 26px;display:flex;flex-direction:column;align-items:center;gap:10px;padding:7px 0;background:#fff;border:1px solid #dcdfe4;border-radius:4px;">
+        <button onClick="{{ toggleIns }}" title="show inspector" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;padding:1px 5px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;cursor:pointer;">▶</button>
+        <span style="writing-mode:vertical-rl;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.16em;color:#9aa2ac;">DATA INSPECTOR</span>
+      </div>
+    </sc-if>
+
+    <div style="flex:1 1 auto;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;position:relative;">
+      <div data-live="banner" style="display:none;position:absolute;z-index:6;top:42px;left:50%;transform:translateX(-50%);background:#b4232a;color:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:12px;font-weight:600;letter-spacing:.1em;padding:7px 18px;border-radius:3px;box-shadow:0 2px 10px rgba(180,35,42,.28);animation:afoPulse 1s ease-in-out infinite;">NO UDP PACKETS · STREAM DROPOUT <span data-live="bannerdur" style="font-weight:400;opacity:.85;">0 ms</span></div>
+
+      <div style="flex:0 0 auto;display:flex;align-items:center;gap:7px;flex-wrap:wrap;background:#fff;border:1px solid #dcdfe4;border-radius:4px;padding:5px 8px;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.13em;color:#9aa2ac;">TOOL</span>
+        <sc-for list="{{ tools }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.go }}" title="{{ t.hint }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid {{ t.border }};border-radius:3px;background:{{ t.bg }};color:{{ t.fg }};cursor:pointer;">{{ t.label }}</button>
+        </sc-for>
+        <span style="width:1px;height:20px;background:#eceef1;"></span>
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.13em;color:#9aa2ac;">CURSORS</span>
+        <sc-for list="{{ cursorOpts }}" as="o" hint-placeholder-count="2">
+          <button onClick="{{ o.go }}" title="{{ o.hint }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid {{ o.border }};border-radius:3px;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;">{{ o.label }}</button>
+        </sc-for>
+        <span style="flex:1 1 auto;"></span>
+        <button onClick="{{ goLive }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:700;letter-spacing:.07em;padding:5px 10px;border:1px solid {{ live.border }};border-radius:3px;background:{{ live.bg }};color:{{ live.fg }};cursor:pointer;">{{ live.label }}</button>
+        <button onClick="{{ fitAll }}" title="autoscale y axes" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;">FIT Y</button>
+        <button onClick="{{ clearSel }}" title="remove all signals from the selected subplot" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;">CLEAR PLOT</button>
+        <span style="width:1px;height:20px;background:#eceef1;"></span>
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.13em;color:#9aa2ac;">LAYOUT</span>
+        <sc-for list="{{ subOptions }}" as="o" hint-placeholder-count="3">
+          <button onClick="{{ o.go }}" title="{{ o.hint }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;font-weight:600;padding:5px 8px;border:1px solid {{ o.border }};border-radius:3px;background:{{ o.bg }};color:{{ o.fg }};cursor:pointer;">{{ o.label }}</button>
+        </sc-for>
+      </div>
+
+      <div style="flex:1 1 auto;min-height:0;display:grid;gap:8px;grid-template-columns:{{ grid.cols }};grid-template-rows:{{ grid.rows }};">
+        <sc-for list="{{ subplots }}" as="sp" hint-placeholder-count="2">
+          <div onClick="{{ sp.select }}" style="min-height:0;min-width:0;display:flex;flex-direction:column;background:#fff;border:1px solid {{ sp.border }};box-shadow:{{ sp.shadow }};border-radius:4px;overflow:hidden;">
+            <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 9px;border-bottom:1px solid #eceef1;background:{{ sp.headBg }};">
+              <span style="width:6px;height:6px;border-radius:50%;background:{{ sp.dot }};flex:0 0 auto;"></span>
+              <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
+                <sc-for list="{{ sp.chans }}" as="c" hint-placeholder-count="2">
+                  <button onClick="{{ c.toggle }}" title="remove from subplot" style="display:inline-flex;align-items:center;gap:5px;border:1px solid #e2e5e9;background:#fff;border-radius:3px;padding:2px 7px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;color:#3b444e;">
+                    <span style="width:8px;height:8px;border-radius:1px;background:{{ c.color }};"></span>
+                    <span>{{ c.name }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+            <div style="flex:1 1 auto;min-height:0;position:relative;"><canvas data-sub="{{ sp.i }}" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas></div>
+          </div>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ logOpen }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:0 0 186px;display:flex;flex-direction:column;background:#fff;border:1px solid #dcdfe4;border-radius:4px;overflow:hidden;box-shadow:0 -2px 10px rgba(20,24,28,.06);">
+          <div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+            <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">EVENT LOG</span>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.08em;color:#9aa2ac;">{{ logCount }} ROWS · NEWEST FIRST</span>
+              <button onClick="{{ clearLog }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 7px;border:1px solid #e2e5e9;border-radius:3px;background:#fff;color:#6b7580;cursor:pointer;">CLEAR</button>
+              <button onClick="{{ toggleLog }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 7px;border:1px solid #e2e5e9;border-radius:3px;background:#fff;color:#6b7580;cursor:pointer;">CLOSE ✕</button>
+            </div>
+          </div>
+          <div style="flex:1 1 auto;min-height:0;overflow-y:auto;">
+            <sc-for list="{{ log }}" as="e" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:96px 70px 1fr auto;gap:10px;align-items:baseline;padding:3px 9px;border-bottom:1px solid #f6f7f8;background:{{ e.bg }};">
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:10.5px;color:#8b939d;">{{ e.t }}</span>
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;font-weight:700;letter-spacing:.08em;color:{{ e.sevColor }};">{{ e.sev }}</span>
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;color:#2b333c;">{{ e.msg }}</span>
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:10.5px;color:#6b7580;">{{ e.raw }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="flex:0 0 296px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow-y:auto;overflow-x:hidden;">
+
+      <div style="background:#fff;border:1px solid #dcdfe4;border-radius:4px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+          <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">PARAMETERS</span>
+        </div>
+        <div style="padding:9px;display:flex;flex-direction:column;gap:9px;">
+          <sc-for list="{{ params }}" as="p" hint-placeholder-count="4">
+            <div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;">
+              <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;color:#2b333c;">{{ p.label }}</span>
+              <sc-if value="{{ p.isToggle }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:6px;">
+                  <button onClick="{{ p.setOn }}" style="flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid {{ p.onBorder }};border-radius:3px;background:{{ p.onBg }};color:{{ p.onFg }};cursor:pointer;">ON</button>
+                  <button onClick="{{ p.setOff }}" style="flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid {{ p.offBorder }};border-radius:3px;background:{{ p.offBg }};color:{{ p.offFg }};cursor:pointer;">OFF</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ p.isNumber }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <input type="range" min="{{ p.min }}" max="{{ p.max }}" step="{{ p.step }}" value="{{ p.value }}" onChange="{{ p.onSlide }}" style="flex:1;accent-color:#0f6b6b;height:14px;" />
+                  <input value="{{ p.value }}" onChange="{{ p.onType }}" onKeyDown="{{ p.onKey }}" style="width:56px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:11.5px;text-align:right;padding:4px 5px;border:1px solid {{ p.inputBorder }};border-radius:3px;background:{{ p.inputBg }};color:#14181c;" />
+                  <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;color:#9aa2ac;min-width:26px;">{{ p.units }}</span>
+                  <button onClick="{{ p.apply }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 7px;border:1px solid {{ p.applyBorder }};border-radius:3px;background:{{ p.applyBg }};color:{{ p.applyFg }};cursor:pointer;">APPLY</button>
+                </div>
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;color:#9aa2ac;">applied {{ p.appliedStr }}</span>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <sc-if value="{{ dev }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;left:12px;bottom:12px;z-index:20;background:#14181c;color:#e6eaee;border:1px solid #2b333c;border-radius:4px;padding:9px 11px;box-shadow:0 8px 24px rgba(0,0,0,.28);min-width:252px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.14em;color:#8b939d;">DEV · STATE INJECT (d)</span>
+        <button onClick="{{ toggleDev }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;padding:2px 6px;border:1px solid #39424c;border-radius:3px;background:#1d2328;color:#b9c1c9;cursor:pointer;">CLOSE</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;">
+        <sc-for list="{{ scenarios }}" as="s" hint-placeholder-count="6">
+          <button onClick="{{ s.go }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;letter-spacing:.05em;text-align:left;padding:6px 7px;border:1px solid #39424c;border-radius:3px;background:#1d2328;color:#dfe5ea;cursor:pointer;">{{ s.label }}</button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ filesOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;z-index:22;top:50px;right:10px;width:370px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 10px 28px rgba(20,24,28,.16);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+        <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">LOG FILES · /logs</span>
+        <div style="display:flex;align-items:center;gap:7px;">
+          <button onClick="{{ loadFiles }}" disabled="{{ dis.files }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;letter-spacing:.08em;padding:3px 7px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;opacity:{{ dis.filesOp }};">{{ filesBtn }}</button>
+          <button onClick="{{ toggleFiles }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;padding:2px 6px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;cursor:pointer;">CLOSE ✕</button>
+        </div>
+      </div>
+      <div style="padding:9px;display:flex;flex-direction:column;gap:8px;">
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:8.5px;letter-spacing:.13em;color:#9aa2ac;">LOG FOLDER {{ dirLockLabel }}</span>
+            <div style="display:flex;gap:6px;align-items:stretch;">
+              <span style="flex:1 1 auto;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;padding:5px 6px;border:1px solid #e2e5e9;border-radius:3px;background:#f7f8f9;color:{{ dirColor }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;">{{ dlPath }}</span>
+              <button onClick="{{ pickDl }}" disabled="{{ dis.dir }}" title="{{ dirHint }}" style="flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:5px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;opacity:{{ dis.dirOp }};">BROWSE…</button>
+            </div>
+          </div>
+          <sc-if value="{{ filesEmpty }}" hint-placeholder-val="{{ false }}">
+            <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;color:#9aa2ac;line-height:1.4;">{{ filesEmptyNote }}</span>
+          </sc-if>
+          <sc-for list="{{ files }}" as="f" hint-placeholder-count="3">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:6px;border-bottom:1px solid #f4f5f7;">
+              <div style="display:flex;flex-direction:column;gap:1px;min-width:0;">
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;color:#14181c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ f.name }}</span>
+                <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:9px;color:#9aa2ac;">{{ f.meta }}</span>
+              </div>
+              <button onClick="{{ f.download }}" style="flex:0 0 auto;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid {{ f.btnBorder }};border-radius:3px;background:#fff;color:{{ f.btnFg }};cursor:pointer;">{{ f.btnLabel }}</button>
+            </div>
+          </sc-for>
+          <sc-if value="{{ filesAny }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+              <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-variant-numeric:tabular-nums;font-size:9px;color:#9aa2ac;">{{ filesTotal }}</span>
+              <button onClick="{{ downloadAll }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid #0f6b6b;border-radius:3px;background:#fff;color:#0f6b6b;cursor:pointer;">DOWNLOAD ALL</button>
+            </div>
+          </sc-if>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ picker }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;inset:0;z-index:30;background:rgba(20,24,28,.28);display:flex;align-items:center;justify-content:center;">
+      <div style="width:420px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 18px 44px rgba(20,24,28,.28);overflow:hidden;">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;border-bottom:1px solid #eceef1;background:#fcfcfd;">
+          <span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;">SELECT FOLDER · {{ picker.title }}</span>
+          <button onClick="{{ picker.cancel }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:9px;padding:2px 6px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;cursor:pointer;">✕</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid #f1f3f5;">
+          <button onClick="{{ picker.up }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10px;padding:4px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;">↑ UP</button>
+          <span style="flex:1 1 auto;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;color:#14181c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;">{{ picker.path }}</span>
+        </div>
+        <div style="max-height:236px;overflow-y:auto;">
+          <sc-for list="{{ picker.entries }}" as="e" hint-placeholder-count="3">
+            <button onClick="{{ e.go }}" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:0;border-bottom:1px solid #f6f7f8;background:#fff;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;color:#14181c;" style-hover="background:#f4f6f8;">
+              <span style="color:#9aa2ac;">▸</span>{{ e.name }}
+            </button>
+          </sc-for>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 10px;border-top:1px solid #eceef1;background:#fcfcfd;">
+          <button onClick="{{ picker.cancel }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 12px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;cursor:pointer;">CANCEL</button>
+          <button onClick="{{ picker.select }}" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:6px 12px;border:1px solid #0f6b6b;border-radius:3px;background:#0f6b6b;color:#fff;cursor:pointer;">SELECT THIS FOLDER</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;right:16px;bottom:16px;z-index:20;background:#14181c;color:#f2f5f7;border-radius:4px;padding:9px 13px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:11px;letter-spacing:.03em;box-shadow:0 6px 20px rgba(0,0,0,.25);">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#0f6b6b&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;options&quot;:[&quot;#0f6b6b&quot;,&quot;#0057b8&quot;,&quot;#1a5f7a&quot;,&quot;#134e4a&quot;]},&quot;windowSec&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:10,&quot;min&quot;:4,&quot;max&quot;:30,&quot;step&quot;:1,&quot;unit&quot;:&quot;s&quot;,&quot;tsType&quot;:&quot;number&quot;},&quot;scenario&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;running&quot;,&quot;options&quot;:[&quot;disconnected&quot;,&quot;idle&quot;,&quot;running&quot;,&quot;partial&quot;,&quot;dropout&quot;,&quot;stopped&quot;],&quot;tsType&quot;:&quot;string&quot;}}">
+class Component extends DCLogic {
+  channels = [
+    {id:'ankle_angle',name:'ankle_angle',group:'ankle',units:'deg',color:'#0072B2',prec:2},
+    {id:'pot_raw',name:'pot_raw',group:'ankle',units:'deg',color:'#56B4E9',prec:2},
+    {id:'torque_cmd',name:'torque_cmd',group:'actuator',units:'N·m',color:'#D55E00',prec:2},
+    {id:'ins_p1',name:'insole_p1',group:'pressure',units:'kPa',color:'#0b4f6c',prec:0},
+    {id:'ins_p2',name:'insole_p2',group:'pressure',units:'kPa',color:'#12657f',prec:0},
+    {id:'ins_p3',name:'insole_p3',group:'pressure',units:'kPa',color:'#1a7b92',prec:0},
+    {id:'ins_p4',name:'insole_p4',group:'pressure',units:'kPa',color:'#2291a5',prec:0},
+    {id:'ins_p5',name:'insole_p5',group:'pressure',units:'kPa',color:'#2aa7b8',prec:0},
+    {id:'ins_p6',name:'insole_p6',group:'pressure',units:'kPa',color:'#32bdcb',prec:0},
+    {id:'ins_p7',name:'insole_p7',group:'pressure',units:'kPa',color:'#3ad3de',prec:0},
+    {id:'ins_p8',name:'insole_p8',group:'pressure',units:'kPa',color:'#42e9f1',prec:0},
+    {id:'heel_press',name:'heel_agg',group:'pressure',units:'kPa',color:'#0072B2',prec:0},
+    {id:'toe_press',name:'toe_agg',group:'pressure',units:'kPa',color:'#D55E00',prec:0},
+    {id:'imu_yaw',name:'imu_yaw',group:'imu',units:'deg',color:'#0072B2',prec:1},
+    {id:'imu_pitch',name:'imu_pitch',group:'imu',units:'deg',color:'#D55E00',prec:1},
+    {id:'imu_roll',name:'imu_roll',group:'imu',units:'deg',color:'#009E73',prec:1},
+    {id:'imu_ax',name:'imu_ax',group:'imu',units:'m/s²',color:'#CC79A7',prec:2},
+    {id:'imu_ay',name:'imu_ay',group:'imu',units:'m/s²',color:'#8a6bbf',prec:2},
+    {id:'imu_az',name:'imu_az',group:'imu',units:'m/s²',color:'#666f78',prec:2},
+    {id:'imu_gx',name:'imu_gx',group:'imu',units:'deg/s',color:'#8b939d',prec:1},
+    {id:'imu_gy',name:'imu_gy',group:'imu',units:'deg/s',color:'#a8b0b8',prec:1},
+    {id:'imu_gz',name:'imu_gz',group:'imu',units:'deg/s',color:'#c2c9d0',prec:1},
+    {id:'gait_phase',name:'gait_phase',group:'gait',units:'—',color:'#5b646e',prec:0,hold:true,step:true},
+    {id:'stride_vel',name:'stride_vel',group:'gait',units:'m/s',color:'#0072B2',prec:2,hold:true,step:true},
+    {id:'stride_len',name:'stride_len',group:'gait',units:'m',color:'#56B4E9',prec:2,hold:true,step:true},
+    {id:'assist_uc',name:'assist_Uc',group:'gait',units:'N·m',color:'#D55E00',prec:2},
+    {id:'sync_led',name:'sync_led',group:'gait',units:'—',color:'#009E73',prec:0,hold:true,step:true},
+    {id:'motor_current',name:'motor_current',group:'actuator',units:'A',color:'#009E73',prec:2},
+    {id:'motor_vel',name:'motor_vel',group:'actuator',units:'rad/s',color:'#CC79A7',prec:2},
+    {id:'ctrl_dt',name:'ctrl_loop_dt',group:'actuator',units:'ms',color:'#8b939d',prec:3},
+    {id:'spare_31',name:'spare_31',group:'actuator',units:'—',color:'#c2c9d0',prec:0,hold:true,step:true}
+  ];
+  groups = [
+    {id:'ankle',label:'ANKLE / ENCODER'},
+    {id:'pressure',label:'INSOLE PRESSURE'},
+    {id:'imu',label:'IMU'},
+    {id:'gait',label:'GAIT / RL ASSIST'},
+    {id:'actuator',label:'ACTUATOR / LOOP'}
+  ];
+  paramDefs = [
+    {id:'assist_gain',label:'assist_gain',units:'—',min:0,max:3,step:0.05,def:1.15,pdo:'PDO 0x6040:01'},
+    {id:'assist_threshold',label:'assist_threshold',units:'kPa',min:0,max:40,step:1,def:9,pdo:'PDO 0x6040:02'},
+    {id:'torque_limit',label:'torque_limit',units:'N·m',min:2,max:20,step:0.5,def:12,pdo:'PDO 0x6040:03'},
+    {id:'ramp_time',label:'assist_ramp',units:'ms',min:20,max:400,step:10,def:120,pdo:'PDO 0x6040:04'},
+    {id:'rl_assist',label:'rl_assist_enable',units:'',type:'toggle',def:1,pdo:'PDO 0x6040:10'}
+  ];
+
+  state = {
+    link:false, built:false, loaded:false, exec:false, stalled:false, ecat:'INIT',
+    runNo:14, dlPath:'/home/gaitlab/Downloads/afo/', picker:null,
+    assign:{}, nSub:2, sel:'ankle_angle', selSub:1, search:'', open:{}, insOpen:true,
+    tool:'pan', curOn:[false,false], viewOn:false, faults:true, files:[], filesLoaded:false, diagOpen:false, filesOpen:false,
+    log:[], unread:0, logOpen:false, dev:false, toast:null,
+    applied:{}, pending:{}
+  };
+
+  componentDidMount(){
+    this.N=16384;
+    this.buf={}; this.channels.forEach(c=>{ this.buf[c.id]=new Float32Array(this.N); });
+    this.ts=new Float64Array(this.N);
+    this.head=-1; this.count=0;
+    this.last={}; this.lastChange={}; this.flat={}; this.flatCount=0;
+    this.pktTimes=[]; this.simT=0; this.recT=0; this.samples=0; this.gaps=0;
+    this.lastPktWall=0; this.dropUntil=0; this.imuStallUntil=0;
+    this.nextPartial=12; this.nextDrop=26; this.strideV=1.24; this.strideL=1.31; this.syncLed=0;
+    this.zeroOff=0; this.yr={}; this.yLock={}; this.view=null; this.cur=[null,null]; this.drag=null;
+    const ap={}; this.paramDefs.forEach(p=>ap[p.id]=p.def);
+    const as={ankle_angle:[1], torque_cmd:[1], heel_press:[2], toe_press:[2], assist_uc:[2]};
+    const op={}; this.groups.forEach(g=>op[g.id]=true);
+    this.setState({applied:Object.assign({},ap), pending:Object.assign({},ap), assign:as, open:op});
+    this.log('info','console ready · target not connected','build 0.9.6');
+    this.iv=setInterval(()=>this.step(),25);
+    this.raf=requestAnimationFrame(this.frame);
+    this.keyed=e=>{
+      if(e.target && /input|textarea|select/i.test(e.target.tagName)) return;
+      if(e.key==='d'||e.key==='D') this.setState(s=>({dev:!s.dev}));
+      if(e.key==='Escape') this.goLive();
+    };
+    window.addEventListener('keydown',this.keyed);
+    setTimeout(()=>this.scenario(this.props.scenario||'running'),150);
+  }
+  componentWillUnmount(){ clearInterval(this.iv); cancelAnimationFrame(this.raf); window.removeEventListener('keydown',this.keyed); }
+
+  fmtClock(){ const d=new Date(), p=n=>String(n).padStart(2,'0');
+    return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0'); }
+  log(sev,msg,raw){
+    const e={t:this.fmtClock(), sev:sev.toUpperCase(), msg:msg, raw:raw||'',
+      sevColor: sev==='error'?'#b4232a':sev==='warn'?'#9a6b00':sev==='ok'?'#0f6b6b':'#6b7580',
+      bg: sev==='error'?'#fdf3f3':sev==='warn'?'#fffaee':'#fff'};
+    const bad = sev==='error'||sev==='warn';
+    this.setState(s=>({log:[e].concat(s.log).slice(0,240), unread: (bad && !s.logOpen)? s.unread+1 : s.unread}));
+  }
+  toast(m){ this.setState({toast:m}); clearTimeout(this._tt); this._tt=setTimeout(()=>this.setState({toast:null}),1900); }
+
+  // ---- stream ----
+  genPacket(t){
+    const P=1.14,p=(t/P)%1,tau=Math.PI*2,rl=this.state.applied.rl_assist;
+    const g=this.state.applied.assist_gain ?? 1, lim=this.state.applied.torque_limit ?? 12;
+    const nz=a=>(Math.random()-0.5)*a, bell=(x,c,w)=>Math.exp(-((x-c)*(x-c))/(2*w*w));
+    const ang=-11*Math.sin(tau*p)+5.5*Math.sin(2*tau*p+0.6)+nz(0.35)-this.zeroOff;
+    const tq=Math.max(-lim,Math.min(lim,4.2*Math.sin(tau*p+0.5)+1.3*Math.sin(3*tau*p)+nz(0.2)));
+    const stance=p<0.62?1:0, peaks=[210,190,150,120,145,175,200,165], ins=[];
+    for(let i=0;i<8;i++) ins.push(stance*peaks[i]*bell(p,0.06+i*0.068,0.075)+nz(2.5)+1.2);
+    const heel=(ins[0]+ins[1]+ins[2])/3*1.08, toe=(ins[5]+ins[6]+ins[7])/3*1.05;
+    if(p<0.02 && this._lastP>0.5){ this.strideV=1.18+Math.random()*0.14; this.strideL=1.26+Math.random()*0.12; this.syncLed=this.syncLed?0:1; }
+    this._lastP=p;
+    const ph=p<0.14?0:p<0.4?1:p<0.62?2:3;
+    const assist=rl?Math.max(0,g*(9.5*bell(p,0.5,0.085)+2.2*bell(p,0.12,0.06))+nz(0.12)):0;
+    return {ankle_angle:ang,pot_raw:ang*1.015+nz(0.5),torque_cmd:tq,
+      ins_p1:ins[0],ins_p2:ins[1],ins_p3:ins[2],ins_p4:ins[3],ins_p5:ins[4],ins_p6:ins[5],ins_p7:ins[6],ins_p8:ins[7],
+      heel_press:heel,toe_press:toe,
+      imu_yaw:2.8*Math.sin(tau*p*0.5)+nz(0.3),imu_pitch:7.5*Math.sin(tau*p+0.3)+nz(0.4),imu_roll:4.2*Math.sin(tau*p+1.4)+nz(0.3),
+      imu_ax:1.8*Math.sin(tau*p+0.2)+nz(0.3),imu_ay:1.1*Math.sin(tau*p+1.1)+nz(0.3),imu_az:9.81+1.4*Math.sin(2*tau*p)+nz(0.3),
+      imu_gx:44*Math.cos(tau*p)+nz(4),imu_gy:26*Math.cos(tau*p+0.8)+nz(4),imu_gz:15*Math.cos(tau*p+2)+nz(4),
+      gait_phase:ph,stride_vel:this.strideV,stride_len:this.strideL,assist_uc:assist,sync_led:this.syncLed,
+      motor_current:tq*0.42+nz(0.05),motor_vel:-11*Math.cos(tau*p)+nz(0.4),ctrl_dt:1.0+nz(0.04),spare_31:0};
+  }
+  push(t,pkt){
+    this.head=(this.head+1)%this.N; if(this.count<this.N) this.count++;
+    this.ts[this.head]=t;
+    const stallImu=t<this.imuStallUntil;
+    for(const c of this.channels){
+      let v=pkt[c.id];
+      if(stallImu && c.group==='imu') v=this.last[c.id]!==undefined?this.last[c.id]:v;
+      this.buf[c.id][this.head]=v;
+      if(this.last[c.id]===undefined || Math.abs(v-this.last[c.id])>1e-6) this.lastChange[c.id]=t;
+      this.last[c.id]=v;
+    }
+  }
+  step(){
+    const wall=performance.now();
+    if(!this.state.exec){ this._w=wall; return; }
+    const dt=Math.min(120, wall-(this._w||wall)); this._w=wall;
+    this.simT+=dt/1000;
+    this.recT+=dt/1000;
+    if(this.state.faults){
+      if(this.simT>this.nextPartial && this.imuStallUntil<this.simT){
+        this.imuStallUntil=this.simT+2.0; this.nextPartial=this.simT+90;
+        this.log('warn','sensor freeze detected · IMU block held (9 ch)','dt_hold=2.00 s');
+      }
+      if(this.simT>this.nextDrop && this.dropUntil<wall){ this.dropUntil=wall+820; this.nextDrop=this.simT+180; }
+    }
+    if(wall<this.dropUntil) return;
+    const acc=(this._acc||0)+dt, n=Math.floor(acc/3); this._acc=acc-n*3;
+    for(let i=0;i<n;i++){
+      const t=this.simT-(n-1-i)*0.003;
+      this.push(t,this.genPacket(t));
+      this.pktTimes.push(wall-(n-1-i)*3);
+    }
+    if(n>0){
+      if(this.lastPktWall && wall-this.lastPktWall>250){
+        this.gaps++;
+        this.log('error','UDP stream gap recovered','gap='+Math.round(wall-this.lastPktWall)+' ms · packets_lost≈'+Math.round((wall-this.lastPktWall)/3));
+        if(this.state.stalled) this.setState({stalled:false});
+      }
+      this.lastPktWall=wall;
+    }
+    const cut=wall-1000; while(this.pktTimes.length && this.pktTimes[0]<cut) this.pktTimes.shift();
+  }
+
+  // ---- view helpers ----
+  accent(){ return this.props.accent || '#0f6b6b'; }
+  winSec(){ return this.props.windowSec || 10; }
+  chan(id){ if(!this._cm){ this._cm={}; this.channels.forEach(c=>this._cm[c.id]=c); } return this._cm[id]; }
+  subsOf(id){ const v=this.state.assign[id]; return Array.isArray(v)?v:(v?[v]:[]); }
+  chansIn(i){ return this.channels.filter(c=>this.subsOf(c.id).indexOf(i)>=0); }
+  setPlot(id,sub,on){
+    this.setState(st=>{
+      const cur=Array.isArray(st.assign[id])?st.assign[id].slice():(st.assign[id]?[st.assign[id]]:[]);
+      const k=cur.indexOf(sub);
+      if(on && k<0) cur.push(sub);
+      if(!on && k>=0) cur.splice(k,1);
+      return {assign:Object.assign({},st.assign,{[id]:cur})};
+    });
+  }
+  domain(){
+    if(this.view) return {t0:this.view.t0,t1:this.view.t1};
+    const t1=this.simT, W=this.winSec();
+    return {t0:t1-W,t1:t1};
+  }
+  idxIn(t0,t1){
+    const out=[];
+    for(let k=0;k<this.count;k++){
+      const i=(this.head-k+this.N*2)%this.N;
+      const t=this.ts[i];
+      if(t>t1) continue;
+      if(t<t0) break;
+      out.push(i);
+    }
+    out.reverse(); return out;
+  }
+  geom(c){ const L=52,R=14,T=8,B=18; return {L:L,R:R,T:T,B:B,pw:c.clientWidth-L-R,ph:c.clientHeight-T-B}; }
+  setView(t0,t1){
+    const span=Math.max(0.02,t1-t0);
+    this.view={t0:t0,t1:t0+span};
+    if(!this.state.viewOn) this.setState({viewOn:true}); else this.forceUpdate();
+  }
+  goLive = ()=>{ this.view=null; this.yLock={}; this.setState({viewOn:false}); };
+  toggleLive = ()=>{
+    if(this.state.viewOn) this.goLive();
+    else { const d=this.domain(); this.view={t0:d.t0,t1:d.t1}; this.setState({viewOn:true}); }
+  };
+  toggleDiag = ()=>this.setState(st=>({diagOpen:!st.diagOpen}));
+  toggleFiles = ()=>this.setState(st=>(st.exec? {filesOpen:false} : {filesOpen:!st.filesOpen, diagOpen:false}));
+  toggleFaults = ()=>this.setState(st=>({faults:!st.faults}));
+  loadFiles = ()=>{
+    if(!this.state.link || this.state.exec) return;
+    const mk=(n,secs,mb,when)=>({name:n, mb:mb, got:false,
+      meta:mb.toFixed(1)+' MB · '+Math.floor(secs/60)+':'+String(Math.round(secs%60)).padStart(2,'0')+' @ 1000 Hz · '+when});
+    const list=[
+      mk('run013_afo_assist_rl.mldatx',161,19.4,'today 10:52'),
+      mk('run012_afo_fixed_gain.mldatx',204,24.6,'today 10:31'),
+      mk('run011_baseline_no_afo.mldatx',186,22.4,'today 10:08'),
+      mk('run010_afo_passive.mldatx',242,29.1,'yesterday 17:44')
+    ];
+    this.setState(st=>{
+      const keep={}; st.files.forEach(f=>{ keep[f.name]=f.got; });
+      return {files:list.map(f=>Object.assign({},f,{got:!!keep[f.name]})), filesLoaded:true};
+    });
+    this.log('ok','target file list read · /logs','4 files · 95.5 MB used · 1.7 GB free');
+  };
+  downloadFile = name=>{
+    const dir=this.state.dlPath.replace(/\/?$/,'/');
+    this.setState(st=>({files:st.files.map(f=>f.name===name?Object.assign({},f,{got:true}):f)}));
+    const f=this.state.files.find(x=>x.name===name);
+    this.log('ok','file downloaded · '+name,'→ '+dir+name+' · '+(f?f.mb.toFixed(1):'?')+' MB · sftp 84 MB/s');
+    this.toast('Saved '+dir+name);
+  };
+  downloadAll = ()=>{
+    const dir=this.state.dlPath.replace(/\/?$/,'/');
+    const n=this.state.files.filter(f=>!f.got).length;
+    this.setState(st=>({files:st.files.map(f=>Object.assign({},f,{got:true}))}));
+    this.log('ok','downloaded all target logs','('+n+' files) → '+dir);
+    this.toast('Saved '+n+' files to '+dir);
+  };
+  fitAll = ()=>{ this.yLock={}; this.forceUpdate(); };
+  nearestIdx(t){
+    let best=-1,bd=Infinity;
+    for(let k=0;k<this.count;k++){
+      const i=(this.head-k+this.N*2)%this.N, d=Math.abs(this.ts[i]-t);
+      if(d<bd){ bd=d; best=i; }
+      if(this.ts[i]<t-1) break;
+    }
+    return best;
+  }
+
+  wire(canvas,i){
+    if(canvas._wired) return; canvas._wired=true;
+    canvas.style.touchAction='none';
+    const tAt=ev=>{ const r=canvas.getBoundingClientRect(), gm=this.geom(canvas), d=this.domain();
+      return d.t0 + ((ev.clientX-r.left-gm.L)/gm.pw)*(d.t1-d.t0); };
+    const vAt=ev=>{ const r=canvas.getBoundingClientRect(), gm=this.geom(canvas), yr=this.yr[i];
+      if(!yr) return 0;
+      return yr.max - ((ev.clientY-r.top-gm.T)/gm.ph)*(yr.max-yr.min); };
+    const xOf=t=>{ const gm=this.geom(canvas), d=this.domain(); return gm.L+gm.pw*((t-d.t0)/(d.t1-d.t0)); };
+
+    canvas.addEventListener('pointerdown',ev=>{
+      ev.preventDefault(); ev.stopPropagation();
+      try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
+      if(this.state.selSub!==i) this.setState({selSub:i});
+      const t=tAt(ev), v=vAt(ev), tool=this.state.tool, on=this.state.curOn;
+      const px=ev.clientX-canvas.getBoundingClientRect().left;
+      let ck=-1, cd=1e9;
+      for(let k=0;k<2;k++){ if(!on[k]||this.cur[k]===null) continue;
+        const dd=Math.abs(xOf(this.cur[k])-px); if(dd<cd){ cd=dd; ck=k; } }
+      if(ck>=0 && cd<12){ this.cur[ck]=t; this.drag={mode:'cursor',k:ck,i:i}; }
+      else if(tool==='zoomx'||tool==='zoomy') this.drag={mode:tool,i:i,t0:t,v0:v,t1:t,v1:v};
+      else this.drag={mode:'pan',i:i,d0:this.domain(),y0:this.yr[i]?Object.assign({},this.yr[i]):null,x:ev.clientX,y:ev.clientY};
+    });
+    canvas.addEventListener('pointermove',ev=>{
+      const dg=this.drag; if(!dg||dg.i!==i) return;
+      if(dg.mode==='cursor') this.cur[dg.k]=tAt(ev);
+      else if(dg.mode==='zoomx'||dg.mode==='zoomy'){ dg.t1=tAt(ev); dg.v1=vAt(ev); }
+      else {
+        const gm=this.geom(canvas), d=dg.d0;
+        const dt=-((ev.clientX-dg.x)/gm.pw)*(d.t1-d.t0);
+        this.view={t0:d.t0+dt,t1:d.t1+dt};
+        if(!this.state.viewOn) this.setState({viewOn:true});
+        if(dg.y0){ const yr=dg.y0, dv=((ev.clientY-dg.y)/gm.ph)*(yr.max-yr.min);
+          this.yLock[i]={min:yr.min+dv,max:yr.max+dv}; }
+      }
+    });
+    const end=()=>{
+      const dg=this.drag; this.drag=null; if(!dg) return;
+      if(dg.mode==='zoomx'){
+        const dt=Math.abs(dg.t1-dg.t0);
+        if(dt>0.02) this.setView(Math.min(dg.t0,dg.t1),Math.max(dg.t0,dg.t1));
+        else { const d=this.domain(), sp=(d.t1-d.t0)/3; this.setView(dg.t0-sp/2,dg.t0+sp/2); }
+      } else if(dg.mode==='zoomy'){
+        const dv=Math.abs(dg.v1-dg.v0), yr=this.yr[dg.i];
+        if(dv>1e-9) this.yLock[dg.i]={min:Math.min(dg.v0,dg.v1),max:Math.max(dg.v0,dg.v1)};
+        else if(yr){ const sp=(yr.max-yr.min)/3; this.yLock[dg.i]={min:dg.v0-sp/2,max:dg.v0+sp/2}; }
+        this.forceUpdate();
+      }
+    };
+    canvas.addEventListener('pointerup',end);
+    canvas.addEventListener('pointercancel',end);
+    canvas.addEventListener('dblclick',()=>this.goLive());
+    canvas.addEventListener('wheel',ev=>{
+      ev.preventDefault();
+      const f=ev.deltaY>0?1.25:0.8;
+      if(ev.shiftKey || this.state.tool==='zoomy'){
+        const yr=this.yr[i]; if(!yr) return;
+        const v=vAt(ev);
+        this.yLock[i]={min:v-(v-yr.min)*f, max:v+(yr.max-v)*f};
+        this.forceUpdate();
+      } else {
+        const d=this.domain(), t=tAt(ev);
+        this.setView(t-(t-d.t0)*f, t+(d.t1-t)*f);
+      }
+    },{passive:false});
+  }
+  setViewSilent(t0,t1){ this.view={t0:t0,t1:t1}; }
+
+  niceRange(mn,mx){
+    if(!isFinite(mn)||!isFinite(mx)) return {min:-1,max:1};
+    if(mx-mn<1e-6){ const c=(mx+mn)/2||0; return {min:c-1,max:c+1}; }
+    const pad=(mx-mn)*0.12; mn-=pad; mx+=pad;
+    const span=mx-mn, mag=Math.pow(10,Math.floor(Math.log10(span/4)));
+    const st=[1,2,2.5,5,10].map(m=>m*mag).find(s=>span/s<=5.5)||mag*10;
+    return {min:Math.floor(mn/st)*st, max:Math.ceil(mx/st)*st};
+  }
+
+  frame = ()=>{
+    this.raf=requestAnimationFrame(this.frame);
+    const now=performance.now();
+    if(now-(this._lf||0)<32) return; this._lf=now;
+    const root=this.r.root.current; if(!root) return;
+    const s=this.state, running=s.exec;
+    const rate=this.pktTimes.length;
+    const stalled = running && (now-this.lastPktWall>250);
+    if(stalled && !s.stalled){ this.setState({stalled:true}); this.log('error','no UDP packets for >250 ms · stream STALL','last_seq_age='+Math.round(now-this.lastPktWall)+' ms'); }
+
+    const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
+    set('mtime', running? this.simT.toFixed(3)+' s' : (s.loaded? '0.000 s':'—.——— s'));
+    set('appstate','afo_ctrl_v41 · '+(!s.built?'not built':!s.loaded?'built, not loaded':running?'running on target':'loaded, stopped'));
+    set('appfile', s.built? 'afo_ctrl_v41.mldatx' : 'afo_ctrl_v41.slx (source)');
+    set('linkrate', running? (stalled?'0 Hz · stalled':rate+' Hz · 31 ch × f32') : 'idle');
+    set('exectime', running? this.simT.toFixed(1)+' s / inf' : '—');
+    if(s.diagOpen){
+      set('pktage', running? Math.round(now-this.lastPktWall)+' ms' : '—');
+      set('diaggaps', this.gaps+' since record start');
+      set('diagbuf', this.count+' / '+this.N+' samples ('+(this.count/333).toFixed(1)+' s)');
+      set('diagfps', Math.round(1000/Math.max(1,now-(this._prevF||now-33)))+' fps · dpr '+(window.devicePixelRatio||1));
+    }
+    this._prevF=now;
+    const rd=this.recT, mm=Math.floor(rd/60), ss=rd-mm*60;
+    set('recdur', String(mm).padStart(2,'0')+':'+ss.toFixed(1).padStart(4,'0'));
+    set('recn', Math.round(this.recT*1000).toLocaleString());
+    set('recgaps', String(this.gaps));
+    set('sessfile', running? '/logs/'+this.runFile(s.runNo) : 'logging starts with model execution');
+    const rs=root.querySelector('[data-live="sessstate"]');
+    if(rs){ const txt=running?'● LOGGING':(this.recT>0?'WRITTEN':'IDLE');
+      if(rs.textContent!==txt) rs.textContent=txt;
+      rs.style.color=running?'#b4232a':'#9aa2ac';
+      rs.style.animation=running?'afoPulse 1.2s ease-in-out infinite':'none'; }
+
+    const pill=root.querySelector('[data-live="conn"]');
+    if(pill){
+      const st = !s.link?'DISCONNECTED': stalled?'STALL': running?'RUNNING': s.loaded?'LOADED':'CONNECTED';
+      const map={DISCONNECTED:['#eef1f4','#5b646e','#dcdfe4'],CONNECTED:['#f2f5f7','#2b333c','#cfd4da'],
+        LOADED:['#eef4f4','#0b5252','#bcd6d6'],RUNNING:[this.accent(),'#ffffff',this.accent()],STALL:['#b4232a','#ffffff','#b4232a']};
+      const m=map[st];
+      if(pill.textContent!==st) pill.textContent=st;
+      pill.style.background=m[0]; pill.style.color=m[1]; pill.style.borderColor=m[2];
+      pill.style.animation = st==='STALL'?'afoPulse 0.9s ease-in-out infinite':'none';
+    }
+    const ec=root.querySelector('[data-live="ecat"]');
+    if(ec){ const op=s.ecat==='OP'; if(ec.textContent!==s.ecat) ec.textContent=s.ecat; ec.style.color=op?'#1a7a4a':'#b4232a'; }
+    const banner=root.querySelector('[data-live="banner"]');
+    if(banner){ banner.style.display=stalled?'block':'none';
+      if(stalled){ const d=root.querySelector('[data-live="bannerdur"]'); if(d) d.textContent=Math.round(now-this.lastPktWall)+' ms'; } }
+
+    root.querySelectorAll('[data-val]').forEach(el=>{
+      const id=el.getAttribute('data-val'), c=this.chan(id); if(!c) return;
+      const v=this.last[id];
+      el.textContent=(running&&v!==undefined&&!stalled)? v.toFixed(c.prec) : '—';
+    });
+
+    const d=this.domain();
+    const sc=this.chan(s.sel);
+    if(sc){
+      const idx=this.idxIn(d.t0,d.t1); let mn=Infinity,mx=-Infinity; const b=this.buf[sc.id];
+      for(let k=0;k<idx.length;k++){ const v=b[idx[k]]; if(v<mn)mn=v; if(v>mx)mx=v; }
+      set('selrange', idx.length? mn.toFixed(sc.prec)+' / '+mx.toFixed(sc.prec)+' '+sc.units : '—');
+      set('selstat', !running? 'not streaming' : 'streaming · 333 Hz');
+    }
+
+    for(let i=1;i<=s.nSub;i++){
+      const cv=root.querySelector('canvas[data-sub="'+i+'"]');
+      if(cv){
+        this.wire(cv,i);
+        const cur = s.tool==='zoomx'?'col-resize': s.tool==='zoomy'?'row-resize': this.drag?'grabbing':'grab';
+        if(cv.style.cursor!==cur) cv.style.cursor=cur;
+        this.draw(i,cv);
+      }
+    }
+  }
+
+  draw(i,c){
+    const w=c.clientWidth,h=c.clientHeight; if(!w||!h) return;
+    const dpr=Math.min(2,window.devicePixelRatio||1);
+    const bw=Math.round(w*dpr), bh=Math.round(h*dpr);
+    if(c.width!==bw || c.height!==bh){ c.width=bw; c.height=bh; }
+    const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+    const gm=this.geom(c), L=gm.L,T=gm.T,pw=gm.pw,ph=gm.ph;
+    const mono='ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';
+    const d=this.domain(), span=d.t1-d.t0;
+    // x grid: nice step
+    const magx=Math.pow(10,Math.floor(Math.log10(span/6)));
+    const xs=[1,2,2.5,5,10].map(m=>m*magx).find(s=>span/s<=8)||magx*10;
+    g.lineWidth=1;
+    for(let t=Math.ceil(d.t0/xs)*xs; t<=d.t1; t+=xs){
+      const x=Math.round(L+pw*((t-d.t0)/span))+0.5;
+      g.strokeStyle='#f0f2f4'; g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke();
+      g.strokeStyle='#c8ced4'; g.beginPath(); g.moveTo(x,T+ph); g.lineTo(x,T+ph+3); g.stroke();
+      g.fillStyle='#aab2ba'; g.font='9px '+mono; g.textAlign='center';
+      g.fillText((span<2? t.toFixed(2) : span<20? t.toFixed(1) : t.toFixed(0))+'s', x, T+ph+13);
+    }
+    g.strokeStyle='#dcdfe4'; g.strokeRect(L+0.5,T+0.5,pw-1,ph-1);
+
+    const sigs=this.chansIn(i);
+    if(!this.state.loaded && !this.count){
+      g.fillStyle='#aab2ba'; g.font='10px '+mono; g.textAlign='center';
+      g.fillText('NO APPLICATION LOADED · CONNECT → BUILD → LOAD → START', L+pw/2, T+ph/2); return;
+    }
+    if(!sigs.length) return;
+    const idx=this.idxIn(d.t0,d.t1);
+    let rng;
+    if(this.yLock[i]) rng=this.yLock[i];
+    else {
+      let mn=Infinity,mx=-Infinity;
+      for(const s of sigs){ const b=this.buf[s.id];
+        for(let k=0;k<idx.length;k++){ const v=b[idx[k]]; if(v<mn)mn=v; if(v>mx)mx=v; } }
+      const cur=this.yr[i];
+      // axis is sticky: keep it unless data leaves it, or it has become far too loose (re-checked ≤2 Hz)
+      const inside = cur && mn>=cur.min && mx<=cur.max;
+      const loose = cur && (mx-mn) < (cur.max-cur.min)*0.45;
+      const due = (this._yT||0) + 500 < performance.now();
+      if(inside && !(loose && due)) rng = cur;
+      else { rng = this.niceRange(mn,mx); if(due) this._yT=performance.now(); }
+    }
+    this.yr[i]=rng;
+    const n=4; g.font='9px '+mono; g.textAlign='right';
+    for(let k=0;k<=n;k++){
+      const v=rng.min+(rng.max-rng.min)*k/n, y=Math.round(T+ph-ph*k/n)+0.5;
+      if(k>0&&k<n){ g.strokeStyle='#f0f2f4'; g.beginPath(); g.moveTo(L,y); g.lineTo(L+pw,y); g.stroke(); }
+      g.strokeStyle='#c8ced4'; g.beginPath(); g.moveTo(L,y); g.lineTo(L-3,y); g.stroke();
+      const sp=rng.max-rng.min;
+      g.fillStyle='#8b939d';
+      g.fillText(sp>=20?v.toFixed(0):sp>=2?v.toFixed(1):v.toFixed(2), L-6, y+3);
+    }
+    if(rng.min<0&&rng.max>0){
+      const y0=Math.round(T+ph-ph*((0-rng.min)/(rng.max-rng.min)))+0.5;
+      g.strokeStyle='#dee2e6'; g.beginPath(); g.moveTo(L,y0); g.lineTo(L+pw,y0); g.stroke();
+    }
+    const units=Array.from(new Set(sigs.map(s=>s.units)));
+    g.save(); g.fillStyle='#aab2ba'; g.textAlign='center'; g.translate(L-38,T+ph/2); g.rotate(-Math.PI/2);
+    g.fillText(units.length===1?units[0]:'mixed',0,0); g.restore();
+    if(this.yLock[i]){ g.fillStyle='#9a6b00'; g.font='8.5px '+mono; g.textAlign='left'; g.fillText('Y LOCKED',L+6,T+ph-6); }
+
+    const X=t=>L+pw*((t-d.t0)/span);
+    const Y=v=>Math.max(T-4,Math.min(T+ph+4, T+ph-ph*((v-rng.min)/(rng.max-rng.min))));
+    for(const s of sigs){
+      const b=this.buf[s.id]; g.beginPath(); g.strokeStyle=s.color; g.lineWidth=1.2;
+      let started=false,py=0;
+      for(let k=0;k<idx.length;k++){
+        const ii=idx[k], x=X(this.ts[ii]), y=Y(b[ii]);
+        if(!started){ g.moveTo(x,y); started=true; }
+        else if(s.step){ g.lineTo(x,py); g.lineTo(x,y); }
+        else g.lineTo(x,y);
+        py=y;
+      }
+      g.stroke();
+    }
+    // cursors
+    const curOn=this.state.curOn;
+    for(let k=0;k<2;k++){
+      if(!curOn[k]) continue;
+      const t=this.cur[k]; if(t===null||t<d.t0||t>d.t1) continue;
+      const x=Math.round(X(t))+0.5;
+      g.strokeStyle=k===0?'#b4232a':'#0057b8'; g.lineWidth=1;
+      g.setLineDash(k===0?[]:[4,3]); g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke(); g.setLineDash([]);
+      g.fillStyle=k===0?'#b4232a':'#0057b8'; g.font='bold 8.5px '+mono; g.textAlign='left';
+      g.fillText('C'+(k+1), x+3, T+9);
+      const ii=this.nearestIdx(t);
+      if(ii>=0){
+        let ly=T+20;
+        for(const s of sigs){
+          const v=this.buf[s.id][ii], y=Y(v);
+          g.fillStyle=s.color; g.beginPath(); g.arc(x,y,2.6,0,Math.PI*2); g.fill();
+          const txt=v.toFixed(s.prec);
+          g.font='9px '+mono; g.textAlign=x>L+pw*0.72?'right':'left';
+          const tx = x>L+pw*0.72? x-5 : x+5;
+          g.fillStyle='rgba(255,255,255,0.86)';
+          const wm=g.measureText(txt).width;
+          g.fillRect(g.textAlign==='right'? tx-wm-2 : tx-2, ly-8, wm+4, 11);
+          g.fillStyle=s.color; g.fillText(txt,tx,ly);
+          ly+=12;
+        }
+      }
+    }
+    // zoom rubber band
+    if(this.drag && this.drag.i===i && (this.drag.mode==='zoomx'||this.drag.mode==='zoomy')){
+      const a=this.drag;
+      g.fillStyle='rgba(15,107,107,0.10)'; g.strokeStyle='rgba(15,107,107,0.6)';
+      if(a.mode==='zoomx'){
+        const x0=X(a.t0), x1=X(a.t1);
+        g.fillRect(Math.min(x0,x1),T,Math.abs(x1-x0),ph);
+        g.strokeRect(Math.min(x0,x1)+0.5,T+0.5,Math.abs(x1-x0),ph-1);
+      } else {
+        const y0=Y(a.v0), y1=Y(a.v1);
+        g.fillRect(L,Math.min(y0,y1),pw,Math.abs(y1-y0));
+        g.strokeRect(L+0.5,Math.min(y0,y1)+0.5,pw-1,Math.abs(y1-y0));
+      }
+    }
+    if(this.simT<this.imuStallUntil && sigs.some(s=>s.group==='imu')){
+      g.fillStyle='rgba(244,192,0,0.13)'; g.fillRect(L,T,pw,ph);
+      g.fillStyle='#8a6a00'; g.font='bold 10px '+mono; g.textAlign='left';
+      g.fillText('IMU BLOCK HELD · PARTIAL STALL',L+8,T+14);
+    }
+  }
+
+  // ---- Simulink Real-Time style actions ----
+  rtConnect = ()=>{ this.setState({link:true}); this.log('ok','target connected · slrealtime','speedgoat · 192.168.7.5 · ping 0.4 ms'); this.toast('Target connected'); };
+  rtDisconnect = ()=>{ this.setState({link:false,exec:false,loaded:false,ecat:'INIT',stalled:false}); this.log('info','target disconnected','session closed'); };
+  rtBuild = ()=>{ this.setState({built:true}); this.log('ok','build complete · afo_ctrl_v41.mldatx','codegen 41 s · 31 log signals · Ts=1 ms'); this.toast('Build complete'); };
+  rtLoad = ()=>{ this.setState({loaded:true,ecat:'OP'}); this.log('ok','application loaded on target · EtherCAT PREOP→SAFEOP→OP','afo_ctrl_v41.mldatx · 1000 Hz'); this.toast('Application loaded'); };
+  rtStart = ()=>{
+    this.lastPktWall=performance.now(); this.nextPartial=this.simT+25; this.nextDrop=this.simT+55;
+    this.setState({exec:true,stalled:false,filesOpen:false});
+    this.log('ok','model start · execution running','t=0.000 s · stop time inf');
+    this.sessionStart();
+  };
+  rtStop = ()=>{
+    this.setState({exec:false,stalled:false});
+    this.log('info','model stop · execution halted','t='+this.simT.toFixed(3)+' s');
+    this.sessionEnd();
+  };
+
+  scenario(kind){
+    if(kind==='disconnected'){ this.setState({link:false,built:false,loaded:false,exec:false,ecat:'INIT'}); this.log('error','target unreachable','icmp timeout 3/3'); return; }
+    if(kind==='idle'){ this.setState({link:true,built:true,loaded:true,exec:false,ecat:'OP'}); this.log('ok','application loaded · execution stopped','ready'); return; }
+    if(kind==='running'){ this.setState({link:true,built:true,loaded:true,ecat:'OP'}); setTimeout(()=>this.rtStart(),40); return; }
+    if(kind==='partial'){ this.scenario('running'); setTimeout(()=>{ this.imuStallUntil=this.simT+2.0; this.log('warn','sensor freeze detected · IMU block held (9 ch)','dt_hold=2.00 s'); },80); return; }
+    if(kind==='dropout'){ this.scenario('running'); setTimeout(()=>{ this.dropUntil=performance.now()+1400; },80); return; }
+    if(kind==='stopped'){ this.scenario('running'); setTimeout(()=>{ this.recT=42.6; this.rtStop(); },200); return; }
+  }
+
+  runFile(n){ return 'run'+String(n).padStart(3,'0')+'_afo.mat'; }
+  sessionStart(){
+    this.recT=0; this.gaps=0;
+    this.log('ok','logging started · '+this.runFile(this.state.runNo),'/logs · 1000 Hz · 31 signals · mat v7.3');
+  }
+  sessionEnd(){
+    const d=this.recT; if(d<0.2) return;
+    const n=this.state.runNo, name=this.runFile(n);
+    const mb=Math.max(0.1, d*1000*31*4/1e6);
+    const meta=mb.toFixed(1)+' MB · '+Math.floor(d/60)+':'+String(Math.round(d%60)).padStart(2,'0')+' @ 1000 Hz · just now';
+    this.log('ok','logging stopped · file written '+name,'/logs/'+name+' · '+mb.toFixed(1)+' MB · gaps='+this.gaps);
+    this.toast('Saved /logs/'+name);
+    this.setState(st=>({runNo:n+1, filesLoaded:true,
+      files:[{name:name, mb:mb, got:false, meta:meta}].concat(st.files)}));
+  }
+  fsTree = {
+    '/':['data/','home/','mnt/'],
+    '/data/':['s07/','s08/','pilot_2026_07/','archive/'],
+    '/data/s07/':['2026_07_30/','baseline/','rl_assist/'],
+    '/data/s08/':['2026_07_28/','baseline/'],
+    '/home/':['gaitlab/'],
+    '/home/gaitlab/':['Downloads/','Documents/','matlab/'],
+    '/home/gaitlab/Downloads/':['afo/','tmp/'],
+    '/home/gaitlab/Documents/':['gait_lab/','reports/']
+  };
+  fsKids(p){ return this.fsTree[p] || ['session_01/','session_02/','archive/']; }
+  openPicker = which=>this.setState({picker:{which:which, path:this.state.dlPath}});
+  pickerGo = p=>this.setState(st=>({picker:Object.assign({},st.picker,{path:p})}));
+  pickerUp = ()=>this.setState(st=>{
+    const p=st.picker.path.replace(/\/$/,''); const up=p.slice(0,p.lastIndexOf('/')+1)||'/';
+    return {picker:Object.assign({},st.picker,{path:up})};
+  });
+  pickerSelect = ()=>{
+    const pk=this.state.picker, p=pk.path.replace(/\/?$/,'/');
+    this.setState({dlPath:p,picker:null}); this.log('info','download folder set',p);
+  };
+  pickerCancel = ()=>this.setState({picker:null});
+  clearSel = ()=>{
+    const sub=this.state.selSub;
+    this.setState(st=>{ const a={};
+      Object.keys(st.assign).forEach(k=>{ a[k]=(Array.isArray(st.assign[k])?st.assign[k]:[]).filter(v=>v!==sub); });
+      return {assign:Object.assign({},st.assign,a)}; });
+    this.log('info','subplot '+sub+' cleared','');
+  };
+  openReport = e=>{ e.preventDefault(); this.toast('report viewer not wired (backend pending)'); };
+  setSearch = e=>this.setState({search:e.target.value});
+  clearPlots = ()=>{ this.setState({assign:{}}); };
+  clearLog = ()=>this.setState({log:[],unread:0});
+  toggleLog = ()=>this.setState(s=>({logOpen:!s.logOpen, unread: s.logOpen? s.unread:0}));
+  toggleIns = ()=>this.setState(s=>({insOpen:!s.insOpen}));
+  toggleDev = ()=>this.setState(s=>({dev:!s.dev}));
+  stop = e=>e.stopPropagation();
+  zeroSensors = ()=>{ this.zeroOff=(this.last['ankle_angle']||0)+this.zeroOff; this.log('ok','zero sensors · encoder + insole tare','ankle_offset='+this.zeroOff.toFixed(3)+' deg'); this.toast('Sensors zeroed'); };
+  applyParam(id){
+    const p=this.paramDefs.find(x=>x.id===id), v=this.state.pending[id];
+    if(this.state.applied[id]===v) return;
+    this.log('info','param applied · '+p.label,this.state.applied[id]+' → '+v+(p.units?' '+p.units:'')+' · slrealtime setparam');
+    this.setState(s=>({applied:Object.assign({},s.applied,{[id]:v})}));
+    this.toast(p.label+' = '+v+(p.units?' '+p.units:''));
+  }
+  applyAll = ()=>{ this.paramDefs.forEach(p=>{ if(this.state.applied[p.id]!==this.state.pending[p.id]) this.applyParam(p.id); }); };
+
+  renderVals(){
+    const s=this.state, A=this.accent();
+    if(!this.r) this.r={root:React.createRef()};
+    const q=s.search.trim().toLowerCase();
+    const setSub=(id,v)=>this.setState(st=>({assign:Object.assign({},st.assign,{[id]:v})}));
+
+    const tree=this.groups.map(gr=>{
+      const all=this.channels.filter(c=>c.group===gr.id);
+      const rows=all.filter(c=>!q||c.name.toLowerCase().indexOf(q)>=0);
+      const onCount=all.filter(c=>this.subsOf(c.id).length>0).length;
+      return {label:gr.label, open:s.open[gr.id]!==false, caret:s.open[gr.id]!==false?'▾':'▸',
+        countLabel:'('+onCount+'/'+all.length+')',
+        toggleOpen:()=>this.setState(st=>({open:Object.assign({},st.open,{[gr.id]:st.open[gr.id]===false})})),
+        rows:rows.map(c=>{
+          const subs=this.subsOf(c.id), here=subs.indexOf(s.selSub)>=0, any=subs.length>0;
+          return {id:c.id, name:c.name, on:here,
+            swatch:any?c.color:'#dfe3e7', nameColor:any?'#14181c':'#8b939d', rowBg:s.sel===c.id?'#eef5f5':'#fff',
+            select:()=>this.setState({sel:c.id}),
+            toggle:e=>{ e.stopPropagation(); this.setPlot(c.id,s.selSub,!here); }};
+        })};
+    });
+
+    const subplots=[];
+    for(let i=1;i<=s.nSub;i++){
+      const cs=this.chansIn(i), on=s.selSub===i;
+      subplots.push({i:i,
+        select:()=>{ if(s.selSub!==i) this.setState({selSub:i}); },
+        border:on?A:'#dcdfe4', shadow:on?('0 0 0 1px '+A):'none',
+        headBg:on?'#f2f7f7':'#fcfcfd', dot:on?A:'#dfe3e7',
+        chans:cs.map(c=>({id:c.id,name:c.name,color:c.color,
+          toggle:e=>{ e.stopPropagation(); this.setPlot(c.id,i,false); }}))});
+    }
+    const layouts=[{n:1,label:'1',hint:'single plot'},{n:2,label:'2',hint:'2 stacked'},{n:4,label:'4',hint:'4 plots, 2×2 grid'}];
+    const subOptions=layouts.map(o=>({label:o.label,hint:o.hint,
+      go:()=>this.setState(st=>({nSub:o.n, selSub:Math.min(st.selSub,o.n)})),
+      border:s.nSub===o.n?A:'#cfd4da', bg:s.nSub===o.n?A:'#fff', fg:s.nSub===o.n?'#fff':'#6b7580'}));
+    const grid = s.nSub===1? {cols:'1fr',rows:'1fr'} : s.nSub===2? {cols:'1fr',rows:'1fr 1fr'} : {cols:'1fr 1fr',rows:'1fr 1fr'};
+
+    const toolDefs=[{id:'pan',label:'PAN',hint:'drag to pan x/y · wheel zoom x · shift+wheel zoom y'},
+      {id:'zoomx',label:'ZOOM X',hint:'drag horizontally to zoom the time axis · click = zoom in'},
+      {id:'zoomy',label:'ZOOM Y',hint:'drag vertically to zoom this subplot y axis · click = zoom in'}];
+    const tools=toolDefs.map(t=>({label:t.label,hint:t.hint,
+      go:()=>this.setState({tool:t.id}),
+      border:s.tool===t.id?A:'#cfd4da', bg:s.tool===t.id?A:'#fff', fg:s.tool===t.id?'#fff':'#6b7580'}));
+    const curCol=['#b4232a','#0057b8'];
+    const cursorOpts=[0,1].map(k=>({label:'C'+(k+1), hint:'toggle cursor '+(k+1)+' · click again to remove',
+      go:()=>{ const on=s.curOn.slice();
+        if(on[k]){ on[k]=false; this.cur[k]=null; }
+        else { on[k]=true; const d=this.domain(); this.cur[k]=d.t0+(d.t1-d.t0)*(k===0?0.45:0.70); }
+        this.setState({curOn:on}); },
+      border:s.curOn[k]?curCol[k]:'#cfd4da', bg:s.curOn[k]?curCol[k]:'#fff', fg:s.curOn[k]?'#fff':'#6b7580'}));
+
+    const live = s.viewOn
+      ? {label:'GO LIVE',border:'#b4232a',bg:'#fff',fg:'#b4232a'}
+      : {label:'● LIVE',border:A,bg:A,fg:'#fff'};
+
+    const rtDefs=[
+      {id:'connect',label:s.link?'DISCONNECT':'CONNECT',icon:s.link?'⏻':'⇄',dis:false,hint:'connect to Speedgoat target',go:s.link?this.rtDisconnect:this.rtConnect,primary:!s.link},
+      {id:'build',label:'BUILD',icon:'⚙',dis:!s.link||s.exec,hint:'build & download application (codegen)',go:this.rtBuild,primary:s.link&&!s.built},
+      {id:'load',label:'LOAD',icon:'↧',dis:!s.link||!s.built||s.exec,hint:'load application on target',go:this.rtLoad,primary:s.link&&s.built&&!s.loaded},
+      s.exec
+        ? {id:'stop',label:'STOP',icon:'■',dis:false,hint:'stop model execution',go:this.rtStop,stop:true}
+        : {id:'start',label:'START',icon:'▶',dis:!s.loaded,hint:'start model execution',go:this.rtStart,primary:s.loaded}
+    ];
+    const actOf={connect:s.link,build:s.built,load:s.loaded,start:s.exec,stop:s.exec};
+    const rtActions=rtDefs.map(a=>{
+      const act=!!actOf[a.id], prim=!!a.primary;
+      return {label:a.label,icon:a.icon,hint:a.hint,go:a.go,dis:a.dis,op:a.dis?0.35:1,
+        border:a.stop?'#b4232a':prim?A:'#cfd4da',
+        bg:a.stop?'#b4232a':prim?A:'#fff',
+        fg:a.stop?'#fff':prim?'#fff':'#2b333c',
+        dot:a.stop?(act?'#b4232a':'#dfe3e7'):act?(prim?'#ffffff':'#1a7a4a'):(prim?'rgba(255,255,255,.45)':'#dfe3e7')};
+    });
+
+    const dis={ files:!s.link||s.exec, dir:s.exec, logBtn:s.exec };
+    ['files','dir','logBtn'].forEach(k=>dis[k+'Op']=dis[k]?0.4:1);
+
+    const files=s.files.map(f=>({name:f.name, meta:f.meta,
+      btnLabel:f.got?'✓ SAVED':'DOWNLOAD', btnBorder:f.got?'#e2e5e9':A, btnFg:f.got?'#9aa2ac':A,
+      download:()=>this.downloadFile(f.name)}));
+    const totMb=s.files.reduce((a,f)=>a+f.mb,0);
+    const filesTotal=s.files.length+' files · '+totMb.toFixed(1)+' MB';
+    const filesEmptyNote = !s.link? 'Connect to the target to browse /logs.'
+      : 'File list not loaded. LOAD LIST reads /logs on the target SSD. Runs are written there automatically while the model executes.';
+
+    const anyDirty=this.paramDefs.some(p=>s.applied[p.id]!==s.pending[p.id]);
+    const params=this.paramDefs.map(p=>{
+      const pend=s.pending[p.id], app=s.applied[p.id], dirty=pend!==app, isT=p.type==='toggle';
+      return {label:p.label,units:p.units,min:p.min,max:p.max,step:p.step,pdo:p.pdo,
+        value:isT?pend:String(pend), isToggle:isT, isNumber:!isT,
+        appliedStr:isT?(app?'on':'off'):String(app),
+        stateLabel:dirty?'PENDING ⏎':'APPLIED', stateColor:dirty?'#9a6b00':'#8b939d',
+        inputBorder:dirty?'#f4c000':'#cfd4da', inputBg:dirty?'#fffbee':'#fff',
+        applyBorder:dirty?A:'#e2e5e9', applyBg:dirty?A:'#fff', applyFg:dirty?'#fff':'#aab2ba',
+        onBorder:app?A:'#cfd4da', onBg:app?A:'#fff', onFg:app?'#fff':'#6b7580',
+        offBorder:!app?'#5b646e':'#cfd4da', offBg:!app?'#5b646e':'#fff', offFg:!app?'#fff':'#6b7580',
+        onSlide:e=>{ const v=parseFloat(e.target.value); this.setState(st=>({pending:Object.assign({},st.pending,{[p.id]:v})})); },
+        onType:e=>{ const v=parseFloat(e.target.value); this.setState(st=>({pending:Object.assign({},st.pending,{[p.id]:isNaN(v)?st.pending[p.id]:v})})); },
+        onKey:e=>{ if(e.key==='Enter') this.applyParam(p.id); },
+        apply:()=>this.applyParam(p.id),
+        setOn:()=>this.setState(st=>({pending:Object.assign({},st.pending,{[p.id]:1})}),()=>this.applyParam(p.id)),
+        setOff:()=>this.setState(st=>({pending:Object.assign({},st.pending,{[p.id]:0})}),()=>this.applyParam(p.id))};
+    });
+
+    const sc=this.chan(s.sel)||{name:'—',units:'—'};
+    const selIdx=this.channels.findIndex(c=>c.id===s.sel);
+    const scen=[['disconnected','DISCONNECTED'],['idle','LOADED / STOPPED'],['running','RUNNING'],['partial','PARTIAL STALL'],['dropout','FULL DROPOUT'],['stopped','STOPPED · FILE WRITTEN']];
+
+    return {r:this.r, tree:tree, subplots:subplots, subOptions:subOptions, grid:grid, tools:tools,
+      cursorOpts:cursorOpts, live:live, rtActions:rtActions,
+      dlPath:s.dlPath, clearSel:this.clearSel,
+      filesOpen:s.filesOpen, toggleFiles:this.toggleFiles,
+      logFilesHint: s.exec? 'stop the model to browse log files' : 'log files on the target',
+      filesBtnStyle:{border:s.filesOpen?A:'#cfd4da', bg:s.filesOpen?'#f2f7f7':'#fff'},
+      pickDl:()=>{ if(!s.exec) this.openPicker('dl'); },
+      dirLockLabel: s.exec? '· LOCKED WHILE RUNNING' : '',
+      dirColor: s.exec? '#8b939d' : '#3b444e',
+      dirHint: s.exec? 'stop the model to change the log folder' : 'choose where runs are written and downloaded',
+      picker: s.picker? {
+        title: 'DOWNLOAD FOLDER',
+        path: s.picker.path,
+        up: this.pickerUp, select: this.pickerSelect, cancel: this.pickerCancel,
+        entries: this.fsKids(s.picker.path.replace(/\/?$/,'/')).map(n=>({
+          name:n, go:()=>this.pickerGo(s.picker.path.replace(/\/?$/,'/')+n)}))
+      } : null,
+      insOpen:s.insOpen, insClosed:!s.insOpen, search:s.search,
+      sel:{name:sc.name, units:sc.units, idx:selIdx>=0?String(selIdx+1).padStart(2,'0')+' / 31':'—'},
+      dis:dis, params:params,
+      dirtyLabel:anyDirty?'PENDING WRITES':'IN SYNC', dirtyColor:anyDirty?'#9a6b00':'#8b939d',
+      log:s.log, logCount:s.log.length, logOpen:s.logOpen, dev:s.dev, toast:s.toast,
+      files:files, filesAny:s.files.length>0, filesEmpty:s.files.length===0, filesEmptyNote:filesEmptyNote,
+      filesTotal:filesTotal, filesBtn:s.filesLoaded?'REFRESH':'LOAD LIST',
+      loadFiles:this.loadFiles, downloadAll:this.downloadAll,
+      diagOpen:s.diagOpen, toggleDiag:this.toggleDiag,
+      diagBtn:{border:s.diagOpen?A:'#cfd4da', bg:s.diagOpen?'#f2f7f7':'#fff', fg:'#2b333c'},
+      faultsLabel:s.faults?'ON':'OFF', faultsColor:s.faults?'#9a6b00':'#8b939d', toggleFaults:this.toggleFaults,
+      logBtn:{alert:s.unread>0, count:String(s.unread),
+        border:s.unread>0?'#b4232a':s.logOpen?A:'#cfd4da',
+        bg:s.logOpen?'#f2f7f7':'#fff', fg:s.unread>0?'#b4232a':'#2b333c'},
+      stop:this.stop, setSearch:this.setSearch, clearPlots:this.clearPlots, clearLog:this.clearLog,
+      toggleLog:this.toggleLog, toggleIns:this.toggleIns, toggleDev:this.toggleDev,
+      goLive:this.toggleLive, fitAll:this.fitAll,
+      openReport:this.openReport,
+      zeroSensors:this.zeroSensors, applyAll:this.applyAll,
+      scenarios:scen.map(x=>({label:x[1], go:()=>this.scenario(x[0])}))};
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AFO Rig Console</title>
+<style>
+html,body{margin:0;padding:0;background:#f6f7f8;height:100%;}
+*{box-sizing:border-box;}
+a{color:#0f6b6b;text-decoration:none;}
+a:hover{color:#0b5252;text-decoration:underline;}
+input,select,textarea,button{font-family:inherit;}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#d3d8dd;border-radius:5px}
+@keyframes afoPulse{0%,100%{opacity:1}50%{opacity:.45}}
+:root{
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;
+  --accent:#0f6b6b;
+}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#14181c;overflow:hidden;}
+.mono{font-family:var(--mono);}
+button{cursor:pointer;}
+button:disabled{cursor:default;}
+.tbtn{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#6b7580;}
+.tbtn.on{border-color:var(--accent);background:var(--accent);color:#fff;}
+.hbtn{font-family:var(--mono);font-size:10px;letter-spacing:.08em;padding:6px 10px;border:1px solid #cfd4da;background:#fff;border-radius:3px;color:#2b333c;}
+.microlbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:#5b646e;font-weight:600;}
+.panel{background:#fff;border:1px solid #dcdfe4;border-radius:4px;}
+.phead{display:flex;align-items:center;justify-content:space-between;padding:5px 9px;border-bottom:1px solid #eceef1;background:#fcfcfd;}
+.xbtn{font-family:var(--mono);font-size:9px;padding:2px 6px;border:1px solid #e2e5e9;border-radius:2px;background:#fff;color:#6b7580;}
+</style>
+</head>
+<body>
+<div id="root" style="height:100vh;display:flex;flex-direction:column;background:#f6f7f8;color:#14181c;overflow:hidden;">
+
+  <!-- ======================= TOP STATUS BAR ======================= -->
+  <div style="flex:0 0 auto;display:flex;align-items:stretch;background:#ffffff;border-bottom:1px solid #dcdfe4;height:46px;">
+    <div style="display:flex;align-items:center;gap:10px;padding:0 12px;border-right:1px solid #eceef1;">
+      <div style="width:14px;height:14px;border:2px solid #0f6b6b;border-radius:2px;"></div>
+      <div style="display:flex;flex-direction:column;line-height:1.15;">
+        <span class="mono" style="font-size:11px;font-weight:600;letter-spacing:.06em;white-space:nowrap;">Ankle&nbsp;Foot&nbsp;Orthosis</span>
+        <span class="mono" style="font-size:9px;letter-spacing:.12em;color:#8b939d;">GAIT LAB &middot; CONSOLE</span>
+      </div>
+    </div>
+    <div id="rtActions" style="display:flex;align-items:center;gap:8px;padding:0 10px;border-right:1px solid #eceef1;"></div>
+    <div style="display:flex;align-items:center;gap:9px;padding:0 12px;border-right:1px solid #eceef1;">
+      <span data-live="conn" class="mono" style="font-size:11px;font-weight:600;letter-spacing:.09em;padding:4px 10px;border-radius:11px;background:#eef1f4;color:#5b646e;border:1px solid #dcdfe4;">DISCONNECTED</span>
+    </div>
+    <div style="flex:1 1 auto;display:flex;align-items:stretch;min-width:0;overflow:hidden;">
+      <div style="flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:0 14px;border-right:1px solid #f1f3f5;">
+        <span class="mono" style="font-size:8.5px;letter-spacing:.14em;color:#9aa2ac;">MODEL TIME</span>
+        <span data-live="mtime" class="mono" style="font-variant-numeric:tabular-nums;font-size:14px;font-weight:500;white-space:nowrap;">&mdash;.&mdash;&mdash;&mdash; s</span>
+      </div>
+      <div style="flex:1 1 auto;min-width:0;"></div>
+    </div>
+    <div style="flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:0 12px;border-left:1px solid #eceef1;">
+      <button id="btnLog" class="hbtn" data-act="toggleLog" style="display:flex;align-items:center;gap:7px;">EVENT LOG<span id="logBadge" style="display:none;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#b4232a;color:#fff;font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;animation:afoPulse 1.4s ease-in-out infinite;"></span></button>
+      <button id="btnFiles" class="hbtn" data-act="toggleFiles">EXPORT</button>
+      <button id="btnDiag" class="hbtn" data-act="toggleDiag" title="low-level target diagnostics">DIAGNOSTICS</button>
+      <button class="hbtn" data-act="toggleDev" title="dev panel (d)" style="color:#6b7580;padding:6px 8px;">DEV</button>
+    </div>
+  </div>
+
+  <!-- ======================= DIAGNOSTICS POPOVER ======================= -->
+  <div id="diagPop" style="display:none;position:fixed;z-index:22;top:50px;right:10px;width:352px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 10px 28px rgba(20,24,28,.16);">
+    <div class="phead" style="padding:6px 9px;">
+      <span class="microlbl">LOW-LEVEL DIAGNOSTICS</span>
+      <button class="xbtn" data-act="toggleDiag">CLOSE &#10005;</button>
+    </div>
+    <div class="mono" style="padding:9px;display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:10.5px;">
+      <span style="color:#9aa2ac;">ethercat</span><span data-live="ecat" style="font-weight:700;color:#b4232a;">INIT</span>
+      <span style="color:#9aa2ac;">target</span><span style="color:#3b444e;">speedgoat &middot; 192.168.7.5</span>
+      <span style="color:#9aa2ac;">application</span><span data-live="appfile" style="color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">sample time</span><span style="color:#3b444e;">1 ms &middot; 1000 Hz &middot; fixed step</span>
+      <span style="color:#9aa2ac;">exec time</span><span data-live="exectime" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">control link</span><span style="color:#3b444e;">slrealtime (MATLAB engine) &middot; TCP</span>
+      <span style="color:#9aa2ac;">telemetry</span><span data-live="linkrate" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">packet size</span><span style="color:#3b444e;">31 &times; float32 = 124 B &middot; UDP 5432</span>
+      <span style="color:#9aa2ac;">last packet age</span><span data-live="pktage" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">stream gaps</span><span data-live="diaggaps" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">ring buffer</span><span data-live="diagbuf" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+      <span style="color:#9aa2ac;">render</span><span data-live="diagfps" style="font-variant-numeric:tabular-nums;color:#3b444e;">&mdash;</span>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-top:1px solid #f1f3f5;">
+      <span class="mono" style="font-size:9.5px;color:#9aa2ac;letter-spacing:.06em;">MOCK FAULT INJECTION <span id="faultsState" style="font-weight:700;">ON</span></span>
+      <button class="mono" data-act="toggleFaults" style="font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;">TOGGLE</button>
+    </div>
+  </div>
+
+  <!-- ======================= MAIN ======================= -->
+  <div style="flex:1 1 auto;display:flex;gap:8px;padding:8px;min-height:0;">
+
+    <!-- Data inspector -->
+    <div id="insPanel" style="flex:0 0 296px;display:flex;flex-direction:column;background:#fff;border:1px solid #dcdfe4;border-radius:4px;min-height:0;overflow:hidden;">
+      <div class="phead">
+        <span class="microlbl">DATA INSPECTOR</span>
+        <button class="xbtn" data-act="toggleIns" title="hide inspector" style="font-size:10px;padding:1px 6px;">&#9664;</button>
+      </div>
+      <div style="flex:0 0 auto;display:flex;gap:6px;padding:7px 9px;border-bottom:1px solid #f1f3f5;">
+        <input id="searchBox" placeholder="filter signals&hellip;" class="mono" style="flex:1;font-size:11px;padding:4px 6px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#14181c;" />
+        <button class="mono" data-act="clearPlots" title="remove all signals from plots" style="font-size:9.5px;letter-spacing:.06em;padding:4px 7px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#6b7580;">CLEAR</button>
+      </div>
+      <div id="sigTree" style="flex:1 1 auto;min-height:0;overflow-y:auto;"></div>
+    </div>
+    <div id="insRail" style="display:none;flex:0 0 26px;flex-direction:column;align-items:center;gap:10px;padding:7px 0;background:#fff;border:1px solid #dcdfe4;border-radius:4px;">
+      <button class="xbtn" data-act="toggleIns" title="show inspector" style="font-size:10px;padding:1px 5px;">&#9654;</button>
+      <span class="mono" style="writing-mode:vertical-rl;font-size:9px;letter-spacing:.16em;color:#9aa2ac;">DATA INSPECTOR</span>
+    </div>
+
+    <!-- Plots column -->
+    <div style="flex:1 1 auto;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0;position:relative;">
+      <div data-live="banner" style="display:none;position:absolute;z-index:6;top:42px;left:50%;transform:translateX(-50%);background:#b4232a;color:#fff;font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.1em;padding:7px 18px;border-radius:3px;box-shadow:0 2px 10px rgba(180,35,42,.28);animation:afoPulse 1s ease-in-out infinite;">NO UDP PACKETS &middot; STREAM DROPOUT <span data-live="bannerdur" style="font-weight:400;opacity:.85;">0 ms</span></div>
+
+      <div id="plotBar" style="flex:0 0 auto;display:flex;align-items:center;gap:7px;flex-wrap:wrap;background:#fff;border:1px solid #dcdfe4;border-radius:4px;padding:5px 8px;"></div>
+
+      <div id="plotGrid" style="flex:1 1 auto;min-height:0;display:grid;gap:8px;"></div>
+
+      <div id="logDrawer" style="display:none;flex:0 0 186px;flex-direction:column;background:#fff;border:1px solid #dcdfe4;border-radius:4px;overflow:hidden;box-shadow:0 -2px 10px rgba(20,24,28,.06);">
+        <div class="phead">
+          <span class="microlbl">EVENT LOG</span>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span id="logCount" class="mono" style="font-size:9px;letter-spacing:.08em;color:#9aa2ac;"></span>
+            <button class="xbtn" data-act="clearLog" style="font-size:9px;letter-spacing:.08em;padding:3px 7px;border-radius:3px;">CLEAR</button>
+            <button class="xbtn" data-act="toggleLog" style="font-size:9px;letter-spacing:.08em;padding:3px 7px;border-radius:3px;">CLOSE &#10005;</button>
+          </div>
+        </div>
+        <div id="logRows" style="flex:1 1 auto;min-height:0;overflow-y:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Right rail: parameters -->
+    <div style="flex:0 0 296px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow-y:auto;overflow-x:hidden;">
+      <div class="panel">
+        <div class="phead">
+          <span class="microlbl">PARAMETERS</span>
+          <span id="dirtyLbl" class="mono" style="font-size:9px;letter-spacing:.08em;color:#8b939d;">IN SYNC</span>
+        </div>
+        <div id="paramTabs" style="display:flex;gap:4px;padding:7px 9px 0 9px;"></div>
+        <div id="paramList" style="padding:9px;display:flex;flex-direction:column;gap:9px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= DEV PANEL ======================= -->
+  <div id="devPanel" style="display:none;position:fixed;left:12px;bottom:12px;z-index:20;background:#14181c;color:#e6eaee;border:1px solid #2b333c;border-radius:4px;padding:9px 11px;box-shadow:0 8px 24px rgba(0,0,0,.28);min-width:252px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px;">
+      <span class="mono" style="font-size:9px;letter-spacing:.14em;color:#8b939d;">DEV &middot; STATE INJECT (d)</span>
+      <button class="mono" data-act="toggleDev" style="font-size:9px;padding:2px 6px;border:1px solid #39424c;border-radius:3px;background:#1d2328;color:#b9c1c9;">CLOSE</button>
+    </div>
+    <div id="devScen" style="display:grid;grid-template-columns:1fr 1fr;gap:5px;"></div>
+  </div>
+
+  <!-- ======================= LOG FILES POPOVER ======================= -->
+  <div id="filesPop" style="display:none;position:fixed;z-index:22;top:50px;right:10px;width:370px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 10px 28px rgba(20,24,28,.16);">
+    <div class="phead" style="padding:6px 9px;">
+      <span class="microlbl">LOG FILES &middot; /logs</span>
+      <div style="display:flex;align-items:center;gap:7px;">
+        <button id="filesLoadBtn" class="xbtn" data-act="loadFiles" style="letter-spacing:.08em;padding:3px 7px;border:1px solid #cfd4da;border-radius:3px;color:#2b333c;">LOAD LIST</button>
+        <button class="xbtn" data-act="toggleFiles">CLOSE &#10005;</button>
+      </div>
+    </div>
+    <div id="filesBody" style="padding:9px;display:flex;flex-direction:column;gap:8px;"></div>
+  </div>
+
+  <!-- ======================= FOLDER PICKER MODAL ======================= -->
+  <div id="pickerModal" style="display:none;position:fixed;inset:0;z-index:30;background:rgba(20,24,28,.28);align-items:center;justify-content:center;"></div>
+
+  <!-- ======================= TOAST ======================= -->
+  <div id="toastBox" style="display:none;position:fixed;right:16px;bottom:16px;z-index:20;background:#14181c;color:#f2f5f7;border-radius:4px;padding:9px 13px;font-family:var(--mono);font-size:11px;letter-spacing:.03em;box-shadow:0 6px 20px rgba(0,0,0,.25);"></div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   AFO Rig Console — implementation of the approved Claude Design mockup
+   (host_tools/design/AFO_Rig_Console.dc.html), translated to plain JS.
+
+   Runs standalone with a mock data engine. Backend seam: every place the
+   real system will plug in calls Backend.* — see the Backend object.
+   Control plane  -> MATLAB engine (slrealtime) via the future FastAPI app.
+   Data plane     -> UDP 31×float32 @ ~333 Hz from the Speedgoat, relayed
+                    over WebSocket by the same app.
+   ===================================================================== */
+
+const ACCENT = '#0f6b6b';
+const WINDOW_SEC = 10;
+const MDL = 'MotorTorqueControlTest_working_5_8_2022_ADC_FILT_Mo';
+
+/* ---------------- channel manifest (31 × float32, UDP order TBC) ------ */
+const channels = [
+  {id:'ankle_angle',  name:'ankle_angle',  group:'ankle',    units:'deg',   color:'#0072B2', prec:2},
+  {id:'pot_raw',      name:'pot_raw',      group:'ankle',    units:'deg',   color:'#56B4E9', prec:2},
+  {id:'torque_cmd',   name:'torque_cmd',   group:'actuator', units:'N·m',   color:'#D55E00', prec:2},
+  {id:'ins_p1',  name:'insole_p1', group:'pressure', units:'kPa', color:'#0b4f6c', prec:0},
+  {id:'ins_p2',  name:'insole_p2', group:'pressure', units:'kPa', color:'#12657f', prec:0},
+  {id:'ins_p3',  name:'insole_p3', group:'pressure', units:'kPa', color:'#1a7b92', prec:0},
+  {id:'ins_p4',  name:'insole_p4', group:'pressure', units:'kPa', color:'#2291a5', prec:0},
+  {id:'ins_p5',  name:'insole_p5', group:'pressure', units:'kPa', color:'#2aa7b8', prec:0},
+  {id:'ins_p6',  name:'insole_p6', group:'pressure', units:'kPa', color:'#32bdcb', prec:0},
+  {id:'ins_p7',  name:'insole_p7', group:'pressure', units:'kPa', color:'#3ad3de', prec:0},
+  {id:'ins_p8',  name:'insole_p8', group:'pressure', units:'kPa', color:'#42e9f1', prec:0},
+  {id:'heel_press', name:'heel_agg', group:'pressure', units:'kPa', color:'#0072B2', prec:0},
+  {id:'toe_press',  name:'toe_agg',  group:'pressure', units:'kPa', color:'#D55E00', prec:0},
+  {id:'imu_yaw',   name:'imu_yaw',   group:'imu', units:'deg',   color:'#0072B2', prec:1},
+  {id:'imu_pitch', name:'imu_pitch', group:'imu', units:'deg',   color:'#D55E00', prec:1},
+  {id:'imu_roll',  name:'imu_roll',  group:'imu', units:'deg',   color:'#009E73', prec:1},
+  {id:'imu_ax', name:'imu_ax', group:'imu', units:'m/s²',  color:'#CC79A7', prec:2},
+  {id:'imu_ay', name:'imu_ay', group:'imu', units:'m/s²',  color:'#8a6bbf', prec:2},
+  {id:'imu_az', name:'imu_az', group:'imu', units:'m/s²',  color:'#666f78', prec:2},
+  {id:'imu_gx', name:'imu_gx', group:'imu', units:'deg/s', color:'#8b939d', prec:1},
+  {id:'imu_gy', name:'imu_gy', group:'imu', units:'deg/s', color:'#a8b0b8', prec:1},
+  {id:'imu_gz', name:'imu_gz', group:'imu', units:'deg/s', color:'#c2c9d0', prec:1},
+  {id:'gait_phase', name:'gait_phase', group:'gait', units:'—',   color:'#5b646e', prec:0, step:true},
+  {id:'stride_vel', name:'stride_vel', group:'gait', units:'m/s', color:'#0072B2', prec:2, step:true},
+  {id:'stride_len', name:'stride_len', group:'gait', units:'m',   color:'#56B4E9', prec:2, step:true},
+  {id:'assist_uc',  name:'assist_Uc',  group:'gait', units:'N·m', color:'#D55E00', prec:2},
+  {id:'sync_led',   name:'sync_led',   group:'gait', units:'—',   color:'#009E73', prec:0, step:true},
+  {id:'motor_current', name:'motor_current', group:'actuator', units:'A',     color:'#009E73', prec:2},
+  {id:'motor_vel',     name:'motor_vel',     group:'actuator', units:'rad/s', color:'#CC79A7', prec:2},
+  {id:'ctrl_dt',       name:'ctrl_loop_dt',  group:'actuator', units:'ms',    color:'#8b939d', prec:3},
+  {id:'spare_31',      name:'spare_31',      group:'actuator', units:'—',     color:'#c2c9d0', prec:0, step:true}
+];
+const groups = [
+  {id:'ankle',    label:'ANKLE / ENCODER'},
+  {id:'pressure', label:'INSOLE PRESSURE'},
+  {id:'imu',      label:'IMU'},
+  {id:'gait',     label:'GAIT / RL ASSIST'},
+  {id:'actuator', label:'ACTUATOR / LOOP'}
+];
+
+/* ---------------- parameter manifest — real Simulink block targets ----
+   tab A: trial setup (locked while the model runs)
+   tab B: assistance + gait detection (live-tunable)
+   tab C: torque loop (live-tunable, handle with care)
+   block: path below the model root; param: tunable parameter name.
+   '//' inside a name escapes a literal '/' in the Simulink block name.  */
+const paramTabs = [ {id:'A',label:'TRIAL'}, {id:'B',label:'ASSIST'}, {id:'C',label:'TORQUE'} ];
+const paramDefs = [
+  /* -------- A · trial setup -------- */
+  {id:'leg_side', tab:'A', label:'leg side', type:'toggle', onLbl:'RIGHT', offLbl:'LEFT', def:0,
+   block:'Left 0//Right 1', param:'Value', hint:'root constant "Left 0/Right 1"'},
+  {id:'body_weight', tab:'A', label:'body weight', units:'kg', min:30, max:150, step:0.5, def:78,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/body weigth [Kg]', param:'Value'},
+  {id:'enable_assist', tab:'A', label:'enable assistance', type:'toggle', def:1,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/Enable_Assistance [0//1]', param:'Value'},
+  {id:'file_logging', tab:'A', label:'target file logging', type:'toggle', def:1,
+   block:'Sensor Readings/Constant3', param:'Value', hint:'feeds the Enable File Log block'},
+  {id:'min_cycles', tab:'A', label:'min_cycles', units:'—', min:0, max:50, step:1, def:10,
+   block:'min_cycles', param:'Value', hint:'strides before assistance engages'},
+  {id:'zero_sensors', tab:'A', label:'sensor zeroing', type:'action', btnLbl:'ZERO SENSORS',
+   hint:'tare encoder + insole at current pose'},
+  /* -------- B · assistance + gait detection -------- */
+  {id:'gain_pos', tab:'B', label:'gain_pos', units:'0–1', min:0, max:1, step:0.01, def:1,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/gain_pos [0->1]', param:'Value'},
+  {id:'gain_neg', tab:'B', label:'gain_neg', units:'0–1', min:0, max:1, step:0.01, def:1,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/gain_neg [0->1]', param:'Value'},
+  {id:'cycle_shift', tab:'B', label:'cycle_shift', units:'%', min:0, max:10, step:0.1, def:3.5,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/cycle_shift [%]', param:'Value'},
+  {id:'assist_threshold', tab:'B', label:'assist_threshold', units:'—', min:0, max:40, step:1, def:9,
+   block:'assist_threshold', param:'Value'},
+  {id:'null_assist', tab:'B', label:'null assistance', type:'toggle', def:0,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/null assistance', param:'Value'},
+  {id:'sv_target_min', tab:'B', label:'SV_Target_min', units:'m/s', min:0.3, max:2, step:0.05, def:0.8,
+   block:'SV_Target_min', param:'Value'},
+  {id:'sv_target_max', tab:'B', label:'SV_Target_max', units:'m/s', min:0.3, max:2.5, step:0.05, def:1.5,
+   block:'SV_Target_max', param:'Value'},
+  {id:'target_speed3', tab:'B', label:'target_speed3', units:'—', min:0, max:0.5, step:0.01, def:0.04,
+   block:'target_speed3', param:'Value'},
+  {id:'target_speed4', tab:'B', label:'target_speed4', units:'—', min:0, max:0.5, step:0.01, def:0.08,
+   block:'target_speed4', param:'Value'},
+  {id:'target_speed6', tab:'B', label:'target_speed6', units:'—', min:0, max:2, step:0.05, def:1.1,
+   block:'target_speed6', param:'Value'},
+  {id:'rl_gain', tab:'B', label:'gain (RL)', units:'—', min:0, max:10, step:0.1, def:4,
+   block:'gain', param:'Value'},
+  {id:'rl_gamma', tab:'B', label:'gamma (RL)', units:'—', min:0, max:3, step:0.05, def:1.15,
+   block:'gamma', param:'Value'},
+  {id:'time_to_hold', tab:'B', label:'time_to_hold', units:'s', min:0, max:60, step:1, def:10,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/time_to_hold', param:'Value'},
+  {id:'min_time_hlc', tab:'B', label:'min_time (HLC)', units:'s', min:0, max:5, step:0.1, def:1,
+   block:'Subsystem1/HIGH LEVEL CONTROL (200 Hz)1/min_time', param:'Value'},
+  {id:'threshold_pressure', tab:'B', label:'threshold_pressure', units:'—', min:0, max:500, step:10, def:200,
+   block:'threshold_pressure', param:'Value'},
+  {id:'threshold_angle', tab:'B', label:'threshold_angle', units:'deg', min:-30, max:30, step:1, def:0,
+   block:'threshold_angle', param:'Value'},
+  {id:'window_length', tab:'B', label:'window_length', units:'—', min:1, max:100, step:1, def:20,
+   block:'window_length', param:'Value'},
+  {id:'window_length1', tab:'B', label:'window_length1', units:'—', min:1, max:100, step:1, def:10,
+   block:'window_length1', param:'Value'},
+  {id:'gait_threshold', tab:'B', label:'threshold (gait)', units:'—', min:0, max:1, step:0.05, def:0.2,
+   block:'Subsystem1/threshold', param:'Value'},
+  {id:'min_time_gait', tab:'B', label:'min_time (gait)', units:'s', min:0, max:3, step:0.1, def:0.7,
+   block:'Subsystem1/min_time', param:'Value'},
+  /* -------- C · torque loop -------- */
+  {id:'pid_p', tab:'C', label:'P (torque PI)', units:'—', min:0, max:5, step:0.05, def:0.6,
+   block:'P', param:'Value'},
+  {id:'pid_i', tab:'C', label:'I (torque PI)', units:'—', min:0, max:5, step:0.05, def:0.8,
+   block:'I', param:'Value'},
+  {id:'spring_k', tab:'C', label:'spring constant', units:'N·m/deg', min:-3, max:0, step:0.0001, def:-0.7651,
+   block:'Spring Constant Nm//deg', param:'Value'},
+  {id:'motor_out', tab:'C', label:'motor torque output', type:'toggle', def:1,
+   block:'Controller/Manual Switch11', param:'sw',
+   hint:'OFF routes 0 N·m to the drive · verify switch is runtime-tunable in phase 1'}
+];
+
+/* =====================================================================
+   Backend seam. mock = built-in simulator (this file, standalone).
+   When the FastAPI app exists, set API to its origin, implement the
+   TODO branches (fetch + WebSocket), and everything else stays as-is.
+   ===================================================================== */
+const API = null;   // e.g. 'http://localhost:8321' once the Python app exists
+const Backend = {
+  mock: !API,
+  connect(){    if(API){/* TODO: fetch(API+'/api/connect',{method:'POST'}) */} },
+  disconnect(){ if(API){/* TODO */} },
+  build(){      if(API){/* TODO: engine slbuild — long-running */} },
+  load(){       if(API){/* TODO: tg.load(mldatx) */} },
+  start(){      if(API){/* TODO: tg.start */} },
+  stop(){       if(API){/* TODO: tg.stop */} },
+  setparam(def, value){
+    if(API){/* TODO: POST /api/param {block:def.block, param:def.param, value} -> setparam(tg, [MDL,'/',block], param, value) */}
+  },
+  zeroSensors(){ if(API){/* TODO */} },
+  listLogs(){    if(API){/* TODO: GET /api/logs */} },
+  downloadLog(name){ if(API){/* TODO */} }
+};
+
+/* ---------------- state ---------------- */
+const S = {
+  link:false, built:false, loaded:false, exec:false, stalled:false, ecat:'INIT',
+  runNo:14, dlPath:'/home/gaitlab/Downloads/afo/', picker:null,
+  assign:{ankle_angle:[1], torque_cmd:[1], heel_press:[2], toe_press:[2], assist_uc:[2]},
+  nSub:2, sel:'ankle_angle', selSub:1, search:'', open:{}, insOpen:true,
+  tool:'pan', curOn:[false,false], viewOn:false, faults:true,
+  files:[], filesLoaded:false, diagOpen:false, filesOpen:false,
+  log:[], unread:0, logOpen:false, dev:false,
+  paramTab:'B', applied:{}, pending:{}
+};
+groups.forEach(g=>S.open[g.id]=true);
+paramDefs.forEach(p=>{ if(p.type!=='action'){ S.applied[p.id]=p.def; S.pending[p.id]=p.def; } });
+
+/* ---------------- ring buffer + stream bookkeeping ---------------- */
+const N = 16384;
+const buf = {}; channels.forEach(c=>buf[c.id]=new Float32Array(N));
+const ts = new Float64Array(N);
+let head=-1, count=0;
+const last={}, lastChange={};
+let pktTimes=[], simT=0, recT=0, gaps=0, lastPktWall=0;
+let dropUntil=0, imuStallUntil=0, nextPartial=12, nextDrop=26;
+let strideV=1.24, strideL=1.31, syncLed=0, _lastP=0, zeroOff=0;
+const yr={}, yLock={};
+let view=null, cur=[null,null], drag=null;
+
+const chanMap={}; channels.forEach(c=>chanMap[c.id]=c);
+const chan=id=>chanMap[id];
+const paramMap={}; paramDefs.forEach(p=>paramMap[p.id]=p);
+
+/* ---------------- tiny dom helpers ---------------- */
+const $=s=>document.querySelector(s);
+const root=$('#root');
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const MONO="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+
+/* ---------------- event log + toast ---------------- */
+function fmtClock(){ const d=new Date(),p=n=>String(n).padStart(2,'0');
+  return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())+'.'+String(d.getMilliseconds()).padStart(3,'0'); }
+function log(sev,msg,raw){
+  const e={t:fmtClock(), sev:sev.toUpperCase(), msg:msg, raw:raw||'',
+    sevColor: sev==='error'?'#b4232a':sev==='warn'?'#9a6b00':sev==='ok'?'#0f6b6b':'#6b7580',
+    bg: sev==='error'?'#fdf3f3':sev==='warn'?'#fffaee':'#fff'};
+  S.log.unshift(e); S.log=S.log.slice(0,240);
+  if((sev==='error'||sev==='warn') && !S.logOpen) S.unread++;
+  renderLog();
+}
+let _tt=null;
+function toast(m){
+  const el=$('#toastBox'); el.textContent=m; el.style.display='block';
+  clearTimeout(_tt); _tt=setTimeout(()=>{ el.style.display='none'; },1900);
+}
+
+/* =====================================================================
+   MOCK STREAM ENGINE (replaced by WebSocket packets when API is set)
+   ===================================================================== */
+function genPacket(t){
+  const P=1.14, p=(t/P)%1, tau=Math.PI*2;
+  const en=S.applied.enable_assist && !S.applied.null_assist;
+  const g=S.applied.gain_pos!==undefined?S.applied.gain_pos:1, lim=12;
+  const nz=a=>(Math.random()-0.5)*a, bell=(x,c,w)=>Math.exp(-((x-c)*(x-c))/(2*w*w));
+  const ang=-11*Math.sin(tau*p)+5.5*Math.sin(2*tau*p+0.6)+nz(0.35)-zeroOff;
+  const tq=Math.max(-lim,Math.min(lim,4.2*Math.sin(tau*p+0.5)+1.3*Math.sin(3*tau*p)+nz(0.2)));
+  const stance=p<0.62?1:0, peaks=[210,190,150,120,145,175,200,165], ins=[];
+  for(let i=0;i<8;i++) ins.push(stance*peaks[i]*bell(p,0.06+i*0.068,0.075)+nz(2.5)+1.2);
+  const heel=(ins[0]+ins[1]+ins[2])/3*1.08, toe=(ins[5]+ins[6]+ins[7])/3*1.05;
+  if(p<0.02 && _lastP>0.5){ strideV=1.18+Math.random()*0.14; strideL=1.26+Math.random()*0.12; syncLed=syncLed?0:1; }
+  _lastP=p;
+  const ph=p<0.14?0:p<0.4?1:p<0.62?2:3;
+  const assist=en?Math.max(0,g*(9.5*bell(p,0.5,0.085)+2.2*bell(p,0.12,0.06))+nz(0.12)):0;
+  return {ankle_angle:ang, pot_raw:ang*1.015+nz(0.5), torque_cmd:tq,
+    ins_p1:ins[0],ins_p2:ins[1],ins_p3:ins[2],ins_p4:ins[3],ins_p5:ins[4],ins_p6:ins[5],ins_p7:ins[6],ins_p8:ins[7],
+    heel_press:heel, toe_press:toe,
+    imu_yaw:2.8*Math.sin(tau*p*0.5)+nz(0.3), imu_pitch:7.5*Math.sin(tau*p+0.3)+nz(0.4), imu_roll:4.2*Math.sin(tau*p+1.4)+nz(0.3),
+    imu_ax:1.8*Math.sin(tau*p+0.2)+nz(0.3), imu_ay:1.1*Math.sin(tau*p+1.1)+nz(0.3), imu_az:9.81+1.4*Math.sin(2*tau*p)+nz(0.3),
+    imu_gx:44*Math.cos(tau*p)+nz(4), imu_gy:26*Math.cos(tau*p+0.8)+nz(4), imu_gz:15*Math.cos(tau*p+2)+nz(4),
+    gait_phase:ph, stride_vel:strideV, stride_len:strideL, assist_uc:assist, sync_led:syncLed,
+    motor_current:tq*0.42+nz(0.05), motor_vel:-11*Math.cos(tau*p)+nz(0.4), ctrl_dt:1.0+nz(0.04), spare_31:0};
+}
+function push(t,pkt){
+  head=(head+1)%N; if(count<N) count++;
+  ts[head]=t;
+  const stallImu=t<imuStallUntil;
+  for(const c of channels){
+    let v=pkt[c.id];
+    if(stallImu && c.group==='imu') v=last[c.id]!==undefined?last[c.id]:v;
+    buf[c.id][head]=v;
+    if(last[c.id]===undefined || Math.abs(v-last[c.id])>1e-6) lastChange[c.id]=t;
+    last[c.id]=v;
+  }
+}
+let _w=0,_acc=0;
+function step(){
+  const wall=performance.now();
+  if(!S.exec){ _w=wall; return; }
+  const dt=Math.min(120, wall-(_w||wall)); _w=wall;
+  simT+=dt/1000; recT+=dt/1000;
+  if(S.faults && Backend.mock){
+    if(simT>nextPartial && imuStallUntil<simT){
+      imuStallUntil=simT+2.0; nextPartial=simT+90;
+      log('warn','sensor freeze detected · IMU block held (9 ch)','dt_hold=2.00 s');
+    }
+    if(simT>nextDrop && dropUntil<wall){ dropUntil=wall+820; nextDrop=simT+180; }
+  }
+  if(wall<dropUntil) return;
+  const acc=_acc+dt, n=Math.floor(acc/3); _acc=acc-n*3;
+  for(let i=0;i<n;i++){
+    const t=simT-(n-1-i)*0.003;
+    push(t,genPacket(t));
+    pktTimes.push(wall-(n-1-i)*3);
+  }
+  if(n>0){
+    if(lastPktWall && wall-lastPktWall>250){
+      gaps++;
+      log('error','UDP stream gap recovered','gap='+Math.round(wall-lastPktWall)+' ms · packets_lost≈'+Math.round((wall-lastPktWall)/3));
+      if(S.stalled){ S.stalled=false; }
+    }
+    lastPktWall=wall;
+  }
+  const cut=wall-1000; while(pktTimes.length && pktTimes[0]<cut) pktTimes.shift();
+}
+
+/* =====================================================================
+   PLOTTING
+   ===================================================================== */
+const winSec=()=>WINDOW_SEC;
+function subsOf(id){ const v=S.assign[id]; return Array.isArray(v)?v:(v?[v]:[]); }
+function chansIn(i){ return channels.filter(c=>subsOf(c.id).indexOf(i)>=0); }
+function setPlot(id,sub,on){
+  const cur=subsOf(id).slice(), k=cur.indexOf(sub);
+  if(on&&k<0) cur.push(sub);
+  if(!on&&k>=0) cur.splice(k,1);
+  S.assign[id]=cur;
+  renderTree(); renderSubplots();
+}
+function domain(){
+  if(view) return {t0:view.t0,t1:view.t1};
+  const t1=simT, W=winSec();
+  return {t0:t1-W,t1:t1};
+}
+function idxIn(t0,t1){
+  const out=[];
+  for(let k=0;k<count;k++){
+    const i=(head-k+N*2)%N, t=ts[i];
+    if(t>t1) continue;
+    if(t<t0) break;
+    out.push(i);
+  }
+  out.reverse(); return out;
+}
+function geom(c){ const L=52,R=14,T=8,B=18; return {L,R,T,B,pw:c.clientWidth-L-R,ph:c.clientHeight-T-B}; }
+function setView(t0,t1){
+  const span=Math.max(0.02,t1-t0);
+  view={t0:t0,t1:t0+span};
+  if(!S.viewOn){ S.viewOn=true; renderToolbar(); }
+}
+function goLive(){ view=null; for(const k in yLock) delete yLock[k]; S.viewOn=false; renderToolbar(); }
+function toggleLive(){
+  if(S.viewOn) goLive();
+  else { const d=domain(); view={t0:d.t0,t1:d.t1}; S.viewOn=true; renderToolbar(); }
+}
+function nearestIdx(t){
+  let best=-1,bd=Infinity;
+  for(let k=0;k<count;k++){
+    const i=(head-k+N*2)%N, d=Math.abs(ts[i]-t);
+    if(d<bd){ bd=d; best=i; }
+    if(ts[i]<t-1) break;
+  }
+  return best;
+}
+function niceRange(mn,mx){
+  if(!isFinite(mn)||!isFinite(mx)) return {min:-1,max:1};
+  if(mx-mn<1e-6){ const c=(mx+mn)/2||0; return {min:c-1,max:c+1}; }
+  const pad=(mx-mn)*0.12; mn-=pad; mx+=pad;
+  const span=mx-mn, mag=Math.pow(10,Math.floor(Math.log10(span/4)));
+  const st=[1,2,2.5,5,10].map(m=>m*mag).find(s=>span/s<=5.5)||mag*10;
+  return {min:Math.floor(mn/st)*st, max:Math.ceil(mx/st)*st};
+}
+
+function wire(canvas,i){
+  if(canvas._wired) return; canvas._wired=true;
+  canvas.style.touchAction='none';
+  const tAt=ev=>{ const r=canvas.getBoundingClientRect(), gm=geom(canvas), d=domain();
+    return d.t0+((ev.clientX-r.left-gm.L)/gm.pw)*(d.t1-d.t0); };
+  const vAt=ev=>{ const r=canvas.getBoundingClientRect(), gm=geom(canvas), y=yr[i];
+    if(!y) return 0;
+    return y.max-((ev.clientY-r.top-gm.T)/gm.ph)*(y.max-y.min); };
+  const xOf=t=>{ const gm=geom(canvas), d=domain(); return gm.L+gm.pw*((t-d.t0)/(d.t1-d.t0)); };
+
+  canvas.addEventListener('pointerdown',ev=>{
+    ev.preventDefault(); ev.stopPropagation();
+    try{ canvas.setPointerCapture(ev.pointerId); }catch(e){}
+    if(S.selSub!==i){ S.selSub=i; renderTree(); updateSubplotSel(); }
+    const t=tAt(ev), v=vAt(ev), tool=S.tool, on=S.curOn;
+    const px=ev.clientX-canvas.getBoundingClientRect().left;
+    let ck=-1, cd=1e9;
+    for(let k=0;k<2;k++){ if(!on[k]||cur[k]===null) continue;
+      const dd=Math.abs(xOf(cur[k])-px); if(dd<cd){ cd=dd; ck=k; } }
+    if(ck>=0 && cd<12){ cur[ck]=t; drag={mode:'cursor',k:ck,i:i}; }
+    else if(tool==='zoomx'||tool==='zoomy') drag={mode:tool,i:i,t0:t,v0:v,t1:t,v1:v};
+    else drag={mode:'pan',i:i,d0:domain(),y0:yr[i]?Object.assign({},yr[i]):null,x:ev.clientX,y:ev.clientY};
+  });
+  canvas.addEventListener('pointermove',ev=>{
+    const dg=drag; if(!dg||dg.i!==i) return;
+    if(dg.mode==='cursor') cur[dg.k]=tAt(ev);
+    else if(dg.mode==='zoomx'||dg.mode==='zoomy'){ dg.t1=tAt(ev); dg.v1=vAt(ev); }
+    else {
+      const gm=geom(canvas), d=dg.d0;
+      const dt=-((ev.clientX-dg.x)/gm.pw)*(d.t1-d.t0);
+      view={t0:d.t0+dt,t1:d.t1+dt};
+      if(!S.viewOn){ S.viewOn=true; renderToolbar(); }
+      if(dg.y0){ const y=dg.y0, dv=((ev.clientY-dg.y)/gm.ph)*(y.max-y.min);
+        yLock[i]={min:y.min+dv,max:y.max+dv}; }
+    }
+  });
+  const end=()=>{
+    const dg=drag; drag=null; if(!dg) return;
+    if(dg.mode==='zoomx'){
+      const dt=Math.abs(dg.t1-dg.t0);
+      if(dt>0.02) setView(Math.min(dg.t0,dg.t1),Math.max(dg.t0,dg.t1));
+      else { const d=domain(), sp=(d.t1-d.t0)/3; setView(dg.t0-sp/2,dg.t0+sp/2); }
+    } else if(dg.mode==='zoomy'){
+      const dv=Math.abs(dg.v1-dg.v0), y=yr[dg.i];
+      if(dv>1e-9) yLock[dg.i]={min:Math.min(dg.v0,dg.v1),max:Math.max(dg.v0,dg.v1)};
+      else if(y){ const sp=(y.max-y.min)/3; yLock[dg.i]={min:dg.v0-sp/2,max:dg.v0+sp/2}; }
+    }
+  };
+  canvas.addEventListener('pointerup',end);
+  canvas.addEventListener('pointercancel',end);
+  canvas.addEventListener('dblclick',goLive);
+  canvas.addEventListener('wheel',ev=>{
+    ev.preventDefault();
+    const f=ev.deltaY>0?1.25:0.8;
+    if(ev.shiftKey || S.tool==='zoomy'){
+      const y=yr[i]; if(!y) return;
+      const v=vAt(ev);
+      yLock[i]={min:v-(v-y.min)*f, max:v+(y.max-v)*f};
+    } else {
+      const d=domain(), t=tAt(ev);
+      setView(t-(t-d.t0)*f, t+(d.t1-t)*f);
+    }
+  },{passive:false});
+}
+
+let _yT=0;
+function draw(i,c){
+  const w=c.clientWidth,h=c.clientHeight; if(!w||!h) return;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  const bw=Math.round(w*dpr), bh=Math.round(h*dpr);
+  if(c.width!==bw||c.height!==bh){ c.width=bw; c.height=bh; }
+  const g=c.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,w,h);
+  const gm=geom(c), L=gm.L,T=gm.T,pw=gm.pw,ph=gm.ph;
+  const d=domain(), span=d.t1-d.t0;
+  const magx=Math.pow(10,Math.floor(Math.log10(span/6)));
+  const xs=[1,2,2.5,5,10].map(m=>m*magx).find(s=>span/s<=8)||magx*10;
+  g.lineWidth=1;
+  for(let t=Math.ceil(d.t0/xs)*xs; t<=d.t1; t+=xs){
+    const x=Math.round(L+pw*((t-d.t0)/span))+0.5;
+    g.strokeStyle='#f0f2f4'; g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke();
+    g.strokeStyle='#c8ced4'; g.beginPath(); g.moveTo(x,T+ph); g.lineTo(x,T+ph+3); g.stroke();
+    g.fillStyle='#aab2ba'; g.font='9px '+MONO; g.textAlign='center';
+    g.fillText((span<2?t.toFixed(2):span<20?t.toFixed(1):t.toFixed(0))+'s', x, T+ph+13);
+  }
+  g.strokeStyle='#dcdfe4'; g.strokeRect(L+0.5,T+0.5,pw-1,ph-1);
+
+  const sigs=chansIn(i);
+  if(!S.loaded && !count){
+    g.fillStyle='#aab2ba'; g.font='10px '+MONO; g.textAlign='center';
+    g.fillText('NO APPLICATION LOADED · CONNECT → BUILD → LOAD → START', L+pw/2, T+ph/2); return;
+  }
+  if(!sigs.length) return;
+  const idx=idxIn(d.t0,d.t1);
+  let rng;
+  if(yLock[i]) rng=yLock[i];
+  else {
+    let mn=Infinity,mx=-Infinity;
+    for(const s of sigs){ const b=buf[s.id];
+      for(let k=0;k<idx.length;k++){ const v=b[idx[k]]; if(v<mn)mn=v; if(v>mx)mx=v; } }
+    const cur0=yr[i];
+    const inside=cur0 && mn>=cur0.min && mx<=cur0.max;
+    const loose=cur0 && (mx-mn)<(cur0.max-cur0.min)*0.45;
+    const due=_yT+500<performance.now();
+    if(inside && !(loose&&due)) rng=cur0;
+    else { rng=niceRange(mn,mx); if(due) _yT=performance.now(); }
+  }
+  yr[i]=rng;
+  const n=4; g.font='9px '+MONO; g.textAlign='right';
+  for(let k=0;k<=n;k++){
+    const v=rng.min+(rng.max-rng.min)*k/n, y=Math.round(T+ph-ph*k/n)+0.5;
+    if(k>0&&k<n){ g.strokeStyle='#f0f2f4'; g.beginPath(); g.moveTo(L,y); g.lineTo(L+pw,y); g.stroke(); }
+    g.strokeStyle='#c8ced4'; g.beginPath(); g.moveTo(L,y); g.lineTo(L-3,y); g.stroke();
+    const sp=rng.max-rng.min;
+    g.fillStyle='#8b939d';
+    g.fillText(sp>=20?v.toFixed(0):sp>=2?v.toFixed(1):v.toFixed(2), L-6, y+3);
+  }
+  if(rng.min<0&&rng.max>0){
+    const y0=Math.round(T+ph-ph*((0-rng.min)/(rng.max-rng.min)))+0.5;
+    g.strokeStyle='#dee2e6'; g.beginPath(); g.moveTo(L,y0); g.lineTo(L+pw,y0); g.stroke();
+  }
+  const units=Array.from(new Set(sigs.map(s=>s.units)));
+  g.save(); g.fillStyle='#aab2ba'; g.textAlign='center'; g.translate(L-38,T+ph/2); g.rotate(-Math.PI/2);
+  g.fillText(units.length===1?units[0]:'mixed',0,0); g.restore();
+  if(yLock[i]){ g.fillStyle='#9a6b00'; g.font='8.5px '+MONO; g.textAlign='left'; g.fillText('Y LOCKED',L+6,T+ph-6); }
+
+  const X=t=>L+pw*((t-d.t0)/span);
+  const Y=v=>Math.max(T-4,Math.min(T+ph+4, T+ph-ph*((v-rng.min)/(rng.max-rng.min))));
+  for(const s of sigs){
+    const b=buf[s.id]; g.beginPath(); g.strokeStyle=s.color; g.lineWidth=1.2;
+    let started=false,py=0;
+    for(let k=0;k<idx.length;k++){
+      const ii=idx[k], x=X(ts[ii]), y=Y(b[ii]);
+      if(!started){ g.moveTo(x,y); started=true; }
+      else if(s.step){ g.lineTo(x,py); g.lineTo(x,y); }
+      else g.lineTo(x,y);
+      py=y;
+    }
+    g.stroke();
+  }
+  for(let k=0;k<2;k++){
+    if(!S.curOn[k]) continue;
+    const t=cur[k]; if(t===null||t<d.t0||t>d.t1) continue;
+    const x=Math.round(X(t))+0.5;
+    g.strokeStyle=k===0?'#b4232a':'#0057b8'; g.lineWidth=1;
+    g.setLineDash(k===0?[]:[4,3]); g.beginPath(); g.moveTo(x,T); g.lineTo(x,T+ph); g.stroke(); g.setLineDash([]);
+    g.fillStyle=k===0?'#b4232a':'#0057b8'; g.font='bold 8.5px '+MONO; g.textAlign='left';
+    g.fillText('C'+(k+1), x+3, T+9);
+    const ii=nearestIdx(t);
+    if(ii>=0){
+      let ly=T+20;
+      for(const s of sigs){
+        const v=buf[s.id][ii], y=Y(v);
+        g.fillStyle=s.color; g.beginPath(); g.arc(x,y,2.6,0,Math.PI*2); g.fill();
+        const txt=v.toFixed(s.prec);
+        g.font='9px '+MONO; g.textAlign=x>L+pw*0.72?'right':'left';
+        const tx=x>L+pw*0.72?x-5:x+5;
+        g.fillStyle='rgba(255,255,255,0.86)';
+        const wm=g.measureText(txt).width;
+        g.fillRect(g.textAlign==='right'?tx-wm-2:tx-2, ly-8, wm+4, 11);
+        g.fillStyle=s.color; g.fillText(txt,tx,ly);
+        ly+=12;
+      }
+    }
+  }
+  if(drag && drag.i===i && (drag.mode==='zoomx'||drag.mode==='zoomy')){
+    const a=drag;
+    g.fillStyle='rgba(15,107,107,0.10)'; g.strokeStyle='rgba(15,107,107,0.6)';
+    if(a.mode==='zoomx'){
+      const x0=X(a.t0), x1=X(a.t1);
+      g.fillRect(Math.min(x0,x1),T,Math.abs(x1-x0),ph);
+      g.strokeRect(Math.min(x0,x1)+0.5,T+0.5,Math.abs(x1-x0),ph-1);
+    } else {
+      const y0=Y(a.v0), y1=Y(a.v1);
+      g.fillRect(L,Math.min(y0,y1),pw,Math.abs(y1-y0));
+      g.strokeRect(L+0.5,Math.min(y0,y1)+0.5,pw-1,Math.abs(y1-y0));
+    }
+  }
+  if(simT<imuStallUntil && sigs.some(s=>s.group==='imu')){
+    g.fillStyle='rgba(244,192,0,0.13)'; g.fillRect(L,T,pw,ph);
+    g.fillStyle='#8a6a00'; g.font='bold 10px '+MONO; g.textAlign='left';
+    g.fillText('IMU BLOCK HELD · PARTIAL STALL',L+8,T+14);
+  }
+}
+
+/* =====================================================================
+   FRAME LOOP (data-live text + canvases, throttled ~30 fps)
+   ===================================================================== */
+let _lf=0,_prevF=0,raf=0;
+function frame(){
+  raf=requestAnimationFrame(frame);
+  const now=performance.now();
+  if(now-_lf<32) return; _lf=now;
+  const running=S.exec;
+  const rate=pktTimes.length;
+  const stalled=running && (now-lastPktWall>250);
+  if(stalled && !S.stalled){ S.stalled=true; log('error','no UDP packets for >250 ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
+
+  const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
+  set('mtime', running? simT.toFixed(3)+' s' : (S.loaded?'0.000 s':'—.——— s'));
+  set('appfile', S.built? 'afo_ctrl.mldatx' : MDL+'.slx (source)');
+  set('linkrate', running? (stalled?'0 Hz · stalled':rate+' Hz · 31 ch × f32') : 'idle');
+  set('exectime', running? simT.toFixed(1)+' s / inf' : '—');
+  if(S.diagOpen){
+    set('pktage', running? Math.round(now-lastPktWall)+' ms' : '—');
+    set('diaggaps', gaps+' since record start');
+    set('diagbuf', count+' / '+N+' samples ('+(count/333).toFixed(1)+' s)');
+    set('diagfps', Math.round(1000/Math.max(1,now-(_prevF||now-33)))+' fps · dpr '+(window.devicePixelRatio||1));
+  }
+  _prevF=now;
+
+  const pill=root.querySelector('[data-live="conn"]');
+  if(pill){
+    const st=!S.link?'DISCONNECTED': stalled?'STALL': running?'RUNNING': S.loaded?'LOADED':'CONNECTED';
+    const map={DISCONNECTED:['#eef1f4','#5b646e','#dcdfe4'],CONNECTED:['#f2f5f7','#2b333c','#cfd4da'],
+      LOADED:['#eef4f4','#0b5252','#bcd6d6'],RUNNING:[ACCENT,'#ffffff',ACCENT],STALL:['#b4232a','#ffffff','#b4232a']};
+    const m=map[st];
+    if(pill.textContent!==st) pill.textContent=st;
+    pill.style.background=m[0]; pill.style.color=m[1]; pill.style.borderColor=m[2];
+    pill.style.animation=st==='STALL'?'afoPulse 0.9s ease-in-out infinite':'none';
+  }
+  const ec=root.querySelector('[data-live="ecat"]');
+  if(ec){ const op=S.ecat==='OP'; if(ec.textContent!==S.ecat) ec.textContent=S.ecat; ec.style.color=op?'#1a7a4a':'#b4232a'; }
+  const banner=root.querySelector('[data-live="banner"]');
+  if(banner){ banner.style.display=stalled?'block':'none';
+    if(stalled){ const dd=root.querySelector('[data-live="bannerdur"]'); if(dd) dd.textContent=Math.round(now-lastPktWall)+' ms'; } }
+
+  for(let i=1;i<=S.nSub;i++){
+    const cv=root.querySelector('canvas[data-sub="'+i+'"]');
+    if(cv){
+      wire(cv,i);
+      const c=S.tool==='zoomx'?'col-resize':S.tool==='zoomy'?'row-resize':drag?'grabbing':'grab';
+      if(cv.style.cursor!==c) cv.style.cursor=c;
+      draw(i,cv);
+    }
+  }
+}
+
+/* =====================================================================
+   RT ACTIONS (Simulink Real-Time chain)
+   ===================================================================== */
+function rtConnect(){ Backend.connect(); S.link=true; renderRt(); renderFiles();
+  log('ok','target connected · slrealtime','speedgoat · 192.168.7.5 · ping 0.4 ms'); toast('Target connected'); }
+function rtDisconnect(){ Backend.disconnect(); S.link=false; S.exec=false; S.loaded=false; S.ecat='INIT'; S.stalled=false;
+  renderRt(); renderFiles(); log('info','target disconnected','session closed'); }
+function rtBuild(){ Backend.build(); S.built=true; renderRt();
+  log('ok','build complete · afo_ctrl.mldatx','codegen · 31 log signals · Ts=1 ms'); toast('Build complete'); }
+function rtLoad(){ Backend.load(); S.loaded=true; S.ecat='OP'; renderRt();
+  log('ok','application loaded on target · EtherCAT PREOP→SAFEOP→OP','1000 Hz'); toast('Application loaded'); }
+function rtStart(){
+  Backend.start();
+  lastPktWall=performance.now(); nextPartial=simT+25; nextDrop=simT+55;
+  S.exec=true; S.stalled=false; S.filesOpen=false;
+  renderRt(); renderFiles(); renderParams(); renderTopButtons();
+  log('ok','model start · execution running','t=0.000 s · stop time inf');
+  sessionStart();
+}
+function rtStop(){
+  Backend.stop();
+  S.exec=false; S.stalled=false;
+  renderRt(); renderFiles(); renderParams(); renderTopButtons();
+  log('info','model stop · execution halted','t='+simT.toFixed(3)+' s');
+  sessionEnd();
+}
+function runFile(n){ return 'run'+String(n).padStart(3,'0')+'_afo.mat'; }
+function sessionStart(){
+  recT=0; gaps=0;
+  log('ok','logging started · '+runFile(S.runNo),'/logs · 1000 Hz · 31 signals · mat v7.3');
+}
+function sessionEnd(){
+  const d=recT; if(d<0.2) return;
+  const n=S.runNo, name=runFile(n);
+  const mb=Math.max(0.1, d*1000*31*4/1e6);
+  const meta=mb.toFixed(1)+' MB · '+Math.floor(d/60)+':'+String(Math.round(d%60)).padStart(2,'0')+' @ 1000 Hz · just now';
+  log('ok','logging stopped · file written '+name,'/logs/'+name+' · '+mb.toFixed(1)+' MB · gaps='+gaps);
+  toast('Saved /logs/'+name);
+  S.runNo=n+1; S.filesLoaded=true;
+  S.files.unshift({name:name, mb:mb, got:false, meta:meta});
+  renderFiles();
+}
+
+/* dev scenarios */
+function scenario(kind){
+  if(kind==='disconnected'){ S.link=false;S.built=false;S.loaded=false;S.exec=false;S.ecat='INIT';
+    renderRt();renderFiles();renderParams();renderTopButtons(); log('error','target unreachable','icmp timeout 3/3'); return; }
+  if(kind==='idle'){ S.link=true;S.built=true;S.loaded=true;S.exec=false;S.ecat='OP';
+    renderRt();renderFiles();renderParams();renderTopButtons(); log('ok','application loaded · execution stopped','ready'); return; }
+  if(kind==='running'){ S.link=true;S.built=true;S.loaded=true;S.ecat='OP'; renderRt(); setTimeout(rtStart,40); return; }
+  if(kind==='partial'){ scenario('running'); setTimeout(()=>{ imuStallUntil=simT+2.0;
+    log('warn','sensor freeze detected · IMU block held (9 ch)','dt_hold=2.00 s'); },80); return; }
+  if(kind==='dropout'){ scenario('running'); setTimeout(()=>{ dropUntil=performance.now()+1400; },80); return; }
+  if(kind==='stopped'){ scenario('running'); setTimeout(()=>{ recT=42.6; rtStop(); },200); return; }
+}
+
+/* zero sensors (tab A action) */
+function zeroSensors(){
+  Backend.zeroSensors();
+  zeroOff=(last['ankle_angle']||0)+zeroOff;
+  log('ok','zero sensors · encoder + insole tare','ankle_offset='+zeroOff.toFixed(3)+' deg');
+  toast('Sensors zeroed');
+}
+
+/* parameters */
+function applyParam(id){
+  const p=paramMap[id], v=S.pending[id];
+  if(S.applied[id]===v) return;
+  Backend.setparam(p,v);
+  log('info','param applied · '+p.label, S.applied[id]+' → '+v+(p.units?' '+p.units:'')+' · setparam '+MDL+'/'+p.block);
+  S.applied[id]=v;
+  renderParams();
+  toast(p.label+' = '+v+(p.units?' '+p.units:''));
+}
+function applyAll(){ paramDefs.forEach(p=>{ if(p.type!=='action' && S.applied[p.id]!==S.pending[p.id]) applyParam(p.id); }); }
+
+/* log files (mock target /logs) */
+function loadFiles(){
+  if(!S.link||S.exec) return;
+  Backend.listLogs();
+  const mk=(n,secs,mb,when)=>({name:n, mb:mb, got:false,
+    meta:mb.toFixed(1)+' MB · '+Math.floor(secs/60)+':'+String(Math.round(secs%60)).padStart(2,'0')+' @ 1000 Hz · '+when});
+  const list=[
+    mk('run013_afo_assist_rl.mat',161,19.4,'today 10:52'),
+    mk('run012_afo_fixed_gain.mat',204,24.6,'today 10:31'),
+    mk('run011_baseline_no_afo.mat',186,22.4,'today 10:08'),
+    mk('run010_afo_passive.mat',242,29.1,'yesterday 17:44')
+  ];
+  const keep={}; S.files.forEach(f=>keep[f.name]=f.got);
+  S.files=list.map(f=>Object.assign({},f,{got:!!keep[f.name]}));
+  S.filesLoaded=true;
+  renderFiles();
+  log('ok','target file list read · /logs','4 files · 95.5 MB used · 1.7 GB free');
+}
+function downloadFile(name){
+  Backend.downloadLog(name);
+  const dir=S.dlPath.replace(/\/?$/,'/');
+  const f=S.files.find(x=>x.name===name); if(f) f.got=true;
+  renderFiles();
+  log('ok','file downloaded · '+name,'→ '+dir+name+' · '+(f?f.mb.toFixed(1):'?')+' MB');
+  toast('Saved '+dir+name);
+}
+function downloadAll(){
+  const dir=S.dlPath.replace(/\/?$/,'/');
+  const n=S.files.filter(f=>!f.got).length;
+  S.files.forEach(f=>f.got=true);
+  renderFiles();
+  log('ok','downloaded all target logs','('+n+' files) → '+dir);
+  toast('Saved '+n+' files to '+dir);
+}
+
+/* folder picker (mock fs) */
+const fsTree={
+  '/':['data/','home/','mnt/'],
+  '/data/':['s07/','s08/','pilot_2026_07/','archive/'],
+  '/data/s07/':['2026_07_30/','baseline/','rl_assist/'],
+  '/data/s08/':['2026_07_28/','baseline/'],
+  '/home/':['gaitlab/'],
+  '/home/gaitlab/':['Downloads/','Documents/','matlab/'],
+  '/home/gaitlab/Downloads/':['afo/','tmp/'],
+  '/home/gaitlab/Documents/':['gait_lab/','reports/']
+};
+const fsKids=p=>fsTree[p]||['session_01/','session_02/','archive/'];
+function openPicker(){ if(S.exec) return; S.picker={path:S.dlPath}; renderPicker(); }
+function pickerGo(p){ S.picker.path=p; renderPicker(); }
+function pickerUp(){
+  const p=S.picker.path.replace(/\/$/,''), up=p.slice(0,p.lastIndexOf('/')+1)||'/';
+  S.picker.path=up; renderPicker();
+}
+function pickerSelect(){
+  const p=S.picker.path.replace(/\/?$/,'/');
+  S.dlPath=p; S.picker=null; renderPicker(); renderFiles();
+  log('info','download folder set',p);
+}
+function pickerCancel(){ S.picker=null; renderPicker(); }
+
+/* =====================================================================
+   RENDERERS
+   ===================================================================== */
+function renderRt(){
+  const A=ACCENT;
+  const defs=[
+    {id:'connect', label:S.link?'DISCONNECT':'CONNECT', icon:S.link?'⏻':'⇄', dis:false,
+     hint:'connect to Speedgoat target', act:S.link?'rtDisconnect':'rtConnect', primary:!S.link},
+    {id:'build', label:'BUILD', icon:'⚙', dis:!S.link||S.exec, hint:'build & download application (codegen)', act:'rtBuild', primary:S.link&&!S.built},
+    {id:'load', label:'LOAD', icon:'↧', dis:!S.link||!S.built||S.exec, hint:'load application on target', act:'rtLoad', primary:S.link&&S.built&&!S.loaded},
+    S.exec
+      ? {id:'stop', label:'STOP', icon:'■', dis:false, hint:'stop model execution', act:'rtStop', stopBtn:true}
+      : {id:'start', label:'START', icon:'▶', dis:!S.loaded, hint:'start model execution', act:'rtStart', primary:S.loaded}
+  ];
+  $('#rtActions').innerHTML=defs.map(a=>{
+    const border=a.stopBtn?'#b4232a':a.primary?A:'#cfd4da';
+    const bg=a.stopBtn?'#b4232a':a.primary?A:'#fff';
+    const fg=a.stopBtn?'#fff':a.primary?'#fff':'#2b333c';
+    return '<button data-act="'+a.act+'" '+(a.dis?'disabled':'')+' title="'+esc(a.hint)+'" class="mono" '+
+      'style="display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.07em;padding:7px 10px;'+
+      'border:1px solid '+border+';border-radius:3px;background:'+bg+';color:'+fg+';opacity:'+(a.dis?0.35:1)+';">'+
+      '<span style="font-size:10px;">'+a.icon+'</span>'+a.label+'</button>';
+  }).join('');
+}
+
+function renderTopButtons(){
+  const fb=$('#btnFiles');
+  fb.disabled=S.exec;
+  fb.style.opacity=S.exec?0.4:1;
+  fb.title=S.exec?'stop the model to browse log files':'log files on the target';
+  fb.style.borderColor=S.filesOpen?ACCENT:'#cfd4da';
+  fb.style.background=S.filesOpen?'#f2f7f7':'#fff';
+  const db=$('#btnDiag');
+  db.style.borderColor=S.diagOpen?ACCENT:'#cfd4da';
+  db.style.background=S.diagOpen?'#f2f7f7':'#fff';
+  const lb=$('#btnLog'), badge=$('#logBadge');
+  lb.style.borderColor=S.unread>0?'#b4232a':S.logOpen?ACCENT:'#cfd4da';
+  lb.style.background=S.logOpen?'#f2f7f7':'#fff';
+  lb.style.color=S.unread>0?'#b4232a':'#2b333c';
+  badge.style.display=S.unread>0?'inline-flex':'none';
+  badge.textContent=String(S.unread);
+}
+
+function renderTree(){
+  const q=S.search.trim().toLowerCase();
+  $('#sigTree').innerHTML=groups.map(gr=>{
+    const all=channels.filter(c=>c.group===gr.id);
+    const rows=all.filter(c=>!q||c.name.toLowerCase().indexOf(q)>=0);
+    const onCount=all.filter(c=>subsOf(c.id).length>0).length;
+    const open=S.open[gr.id]!==false;
+    const rowsHtml=!open?'':rows.map(c=>{
+      const subs=subsOf(c.id), here=subs.indexOf(S.selSub)>=0, any=subs.length>0;
+      return '<div data-act="selChan" data-arg="'+c.id+'" style="display:grid;grid-template-columns:16px 10px 1fr;gap:6px;align-items:center;padding:3px 9px;border-bottom:1px solid #f8f9fa;background:'+(S.sel===c.id?'#eef5f5':'#fff')+';cursor:pointer;">'+
+        '<input type="checkbox" data-act="togChan" data-arg="'+c.id+'" '+(here?'checked':'')+' title="plot in selected subplot" style="margin:0;width:12px;height:12px;accent-color:#0f6b6b;cursor:pointer;" />'+
+        '<span style="width:9px;height:9px;border-radius:1px;background:'+(any?c.color:'#dfe3e7')+';"></span>'+
+        '<span class="mono" style="font-size:11px;color:'+(any?'#14181c':'#8b939d')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+c.name+'</span></div>';
+    }).join('');
+    return '<div><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 9px;background:#f7f8f9;border-bottom:1px solid #f1f3f5;border-top:1px solid #f1f3f5;">'+
+      '<button data-act="togGroup" data-arg="'+gr.id+'" class="mono" style="display:flex;align-items:center;gap:6px;border:0;background:transparent;padding:0;font-size:9.5px;letter-spacing:.1em;color:#3b444e;font-weight:600;">'+
+      '<span style="color:#9aa2ac;font-size:9px;">'+(open?'▾':'▸')+'</span>'+gr.label+
+      ' <span style="color:#aab2ba;font-weight:400;">('+onCount+'/'+all.length+')</span></button></div>'+rowsHtml+'</div>';
+  }).join('');
+}
+
+function renderSubplots(){
+  const grid=$('#plotGrid');
+  const g=S.nSub===1?{c:'1fr',r:'1fr'}:S.nSub===2?{c:'1fr',r:'1fr 1fr'}:{c:'1fr 1fr',r:'1fr 1fr'};
+  grid.style.gridTemplateColumns=g.c; grid.style.gridTemplateRows=g.r;
+  let html='';
+  for(let i=1;i<=S.nSub;i++){
+    const cs=chansIn(i), on=S.selSub===i;
+    html+='<div data-act="selSub" data-arg="'+i+'" style="min-height:0;min-width:0;display:flex;flex-direction:column;background:#fff;border:1px solid '+(on?ACCENT:'#dcdfe4')+';box-shadow:'+(on?('0 0 0 1px '+ACCENT):'none')+';border-radius:4px;overflow:hidden;">'+
+      '<div style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 9px;border-bottom:1px solid #eceef1;background:'+(on?'#f2f7f7':'#fcfcfd')+';">'+
+      '<span style="width:6px;height:6px;border-radius:50%;background:'+(on?ACCENT:'#dfe3e7')+';flex:0 0 auto;"></span>'+
+      '<div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">'+
+      cs.map(c=>'<button data-act="rmChan" data-arg="'+c.id+':'+i+'" title="remove from subplot" class="mono" style="display:inline-flex;align-items:center;gap:5px;border:1px solid #e2e5e9;background:#fff;border-radius:3px;padding:2px 7px;font-size:9.5px;color:#3b444e;">'+
+        '<span style="width:8px;height:8px;border-radius:1px;background:'+c.color+';"></span><span>'+c.name+'</span></button>').join('')+
+      '</div></div>'+
+      '<div style="flex:1 1 auto;min-height:0;position:relative;"><canvas data-sub="'+i+'" style="position:absolute;inset:0;width:100%;height:100%;display:block;"></canvas></div></div>';
+  }
+  grid.innerHTML=html;
+}
+
+/* update selected-subplot highlight without rebuilding the DOM
+   (a rebuild mid-gesture would destroy the canvas being dragged) */
+function updateSubplotSel(){
+  document.querySelectorAll('[data-act="selSub"]').forEach(el=>{
+    const on=+el.getAttribute('data-arg')===S.selSub;
+    el.style.borderColor=on?ACCENT:'#dcdfe4';
+    el.style.boxShadow=on?('0 0 0 1px '+ACCENT):'none';
+    const head=el.firstElementChild;
+    if(head){ head.style.background=on?'#f2f7f7':'#fcfcfd';
+      const dot=head.firstElementChild;
+      if(dot) dot.style.background=on?ACCENT:'#dfe3e7'; }
+  });
+}
+
+function renderToolbar(){
+  const A=ACCENT;
+  const btn=(act,arg,on,label,hint,onColor)=>{
+    const col=onColor||A;
+    return '<button data-act="'+act+'" data-arg="'+arg+'" title="'+esc(hint||'')+'" class="mono" style="font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid '+(on?col:'#cfd4da')+';border-radius:3px;background:'+(on?col:'#fff')+';color:'+(on?'#fff':'#6b7580')+';">'+label+'</button>';
+  };
+  const lbl='<span class="mono" style="font-size:9px;letter-spacing:.13em;color:#9aa2ac;">';
+  const sep='<span style="width:1px;height:20px;background:#eceef1;"></span>';
+  const live=S.viewOn
+    ?'<button data-act="toggleLive" class="mono" style="font-size:10px;font-weight:700;letter-spacing:.07em;padding:5px 10px;border:1px solid #b4232a;border-radius:3px;background:#fff;color:#b4232a;">GO LIVE</button>'
+    :'<button data-act="toggleLive" class="mono" style="font-size:10px;font-weight:700;letter-spacing:.07em;padding:5px 10px;border:1px solid '+A+';border-radius:3px;background:'+A+';color:#fff;">● LIVE</button>';
+  $('#plotBar').innerHTML=
+    lbl+'TOOL</span>'+
+    btn('setTool','pan',S.tool==='pan','PAN','drag to pan x/y · wheel zoom x · shift+wheel zoom y')+
+    btn('setTool','zoomx',S.tool==='zoomx','ZOOM X','drag horizontally to zoom the time axis · click = zoom in')+
+    btn('setTool','zoomy',S.tool==='zoomy','ZOOM Y','drag vertically to zoom this subplot y axis · click = zoom in')+
+    sep+lbl+'CURSORS</span>'+
+    btn('togCursor','0',S.curOn[0],'C1','toggle cursor 1 · click again to remove','#b4232a')+
+    btn('togCursor','1',S.curOn[1],'C2','toggle cursor 2 · click again to remove','#0057b8')+
+    '<span style="flex:1 1 auto;"></span>'+
+    live+
+    '<button data-act="fitAll" title="autoscale y axes" class="mono" style="font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;">FIT Y</button>'+
+    '<button data-act="clearSel" title="remove all signals from the selected subplot" class="mono" style="font-size:10px;font-weight:600;letter-spacing:.06em;padding:5px 9px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;">CLEAR PLOT</button>'+
+    sep+lbl+'LAYOUT</span>'+
+    btn('setSub','1',S.nSub===1,'1','single plot')+
+    btn('setSub','2',S.nSub===2,'2','2 stacked')+
+    btn('setSub','4',S.nSub===4,'4','4 plots, 2×2 grid');
+}
+
+function renderParams(){
+  const A=ACCENT;
+  $('#paramTabs').innerHTML=paramTabs.map(t=>{
+    const on=S.paramTab===t.id;
+    return '<button data-act="setParamTab" data-arg="'+t.id+'" class="mono" style="flex:1;font-size:9.5px;font-weight:700;letter-spacing:.1em;padding:5px 0;border:1px solid '+(on?A:'#cfd4da')+';border-radius:3px;background:'+(on?A:'#fff')+';color:'+(on?'#fff':'#6b7580')+';">'+t.id+' · '+t.label+'</button>';
+  }).join('');
+  const lockA=S.exec && S.paramTab==='A';
+  const defs=paramDefs.filter(p=>p.tab===S.paramTab);
+  let html='';
+  if(lockA) html+='<div class="mono" style="font-size:9px;color:#9a6b00;background:#fffaee;border:1px solid #f0e6c8;border-radius:3px;padding:5px 7px;letter-spacing:.05em;">TRIAL SETUP LOCKED WHILE RUNNING · stop the model to edit</div>';
+  html+=defs.map(p=>{
+    const tt=' title="'+esc(MDL+'/'+p.block+(p.hint?' — '+p.hint:''))+'"';
+    if(p.type==='action'){
+      return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;">'+
+        '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
+        '<button data-act="zeroSensors" '+(S.exec?'':'disabled')+' class="mono" title="'+esc(p.hint||'')+'" style="font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(S.exec?A:'#cfd4da')+';border-radius:3px;background:#fff;color:'+(S.exec?A:'#aab2ba')+';">'+p.btnLbl+'</button>'+
+        '<span class="mono" style="font-size:9px;color:#9aa2ac;">'+(S.exec?'model running · ready':'available while running')+'</span></div>';
+    }
+    const pend=S.pending[p.id], app=S.applied[p.id], dirty=pend!==app;
+    const dis=lockA?'disabled':'';
+    if(p.type==='toggle'){
+      const onL=p.onLbl||'ON', offL=p.offLbl||'OFF';
+      return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;opacity:'+(lockA?0.55:1)+';">'+
+        '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
+        '<div style="display:flex;gap:6px;">'+
+        '<button data-act="togParam" data-arg="'+p.id+':1" '+dis+' class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(app?A:'#cfd4da')+';border-radius:3px;background:'+(app?A:'#fff')+';color:'+(app?'#fff':'#6b7580')+';">'+onL+'</button>'+
+        '<button data-act="togParam" data-arg="'+p.id+':0" '+dis+' class="mono" style="flex:1;font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 0;border:1px solid '+(!app?'#5b646e':'#cfd4da')+';border-radius:3px;background:'+(!app?'#5b646e':'#fff')+';color:'+(!app?'#fff':'#6b7580')+';">'+offL+'</button>'+
+        '</div></div>';
+    }
+    return '<div style="display:flex;flex-direction:column;gap:4px;padding-bottom:8px;border-bottom:1px solid #f4f5f7;opacity:'+(lockA?0.55:1)+';">'+
+      '<span class="mono" style="font-size:10.5px;color:#2b333c;"'+tt+'>'+p.label+'</span>'+
+      '<div style="display:flex;align-items:center;gap:7px;">'+
+      '<input type="range" data-act="slideParam" data-arg="'+p.id+'" min="'+p.min+'" max="'+p.max+'" step="'+p.step+'" value="'+pend+'" '+dis+' style="flex:1;accent-color:#0f6b6b;height:14px;" />'+
+      '<input data-act="typeParam" data-arg="'+p.id+'" value="'+pend+'" '+dis+' class="mono" style="width:56px;font-variant-numeric:tabular-nums;font-size:11.5px;text-align:right;padding:4px 5px;border:1px solid '+(dirty?'#f4c000':'#cfd4da')+';border-radius:3px;background:'+(dirty?'#fffbee':'#fff')+';color:#14181c;" />'+
+      '<span class="mono" style="font-size:9.5px;color:#9aa2ac;min-width:26px;">'+(p.units||'')+'</span>'+
+      '<button data-act="applyParam" data-arg="'+p.id+'" '+dis+' class="mono" style="font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 7px;border:1px solid '+(dirty?A:'#e2e5e9')+';border-radius:3px;background:'+(dirty?A:'#fff')+';color:'+(dirty?'#fff':'#aab2ba')+';">APPLY</button>'+
+      '</div>'+
+      '<span class="mono" style="font-size:9px;color:#9aa2ac;">applied '+app+'</span></div>';
+  }).join('');
+  $('#paramList').innerHTML=html;
+  const anyDirty=paramDefs.some(p=>p.type!=='action' && S.applied[p.id]!==S.pending[p.id]);
+  const dl=$('#dirtyLbl');
+  dl.textContent=anyDirty?'PENDING WRITES':'IN SYNC';
+  dl.style.color=anyDirty?'#9a6b00':'#8b939d';
+}
+
+function renderLog(){
+  $('#logDrawer').style.display=S.logOpen?'flex':'none';
+  renderTopButtons();
+  if(!S.logOpen) return;
+  $('#logCount').textContent=S.log.length+' ROWS · NEWEST FIRST';
+  $('#logRows').innerHTML=S.log.map(e=>
+    '<div style="display:grid;grid-template-columns:96px 70px 1fr auto;gap:10px;align-items:baseline;padding:3px 9px;border-bottom:1px solid #f6f7f8;background:'+e.bg+';">'+
+    '<span class="mono" style="font-variant-numeric:tabular-nums;font-size:10.5px;color:#8b939d;">'+e.t+'</span>'+
+    '<span class="mono" style="font-size:9px;font-weight:700;letter-spacing:.08em;color:'+e.sevColor+';">'+e.sev+'</span>'+
+    '<span class="mono" style="font-size:11px;color:#2b333c;">'+esc(e.msg)+'</span>'+
+    '<span class="mono" style="font-variant-numeric:tabular-nums;font-size:10.5px;color:#6b7580;">'+esc(e.raw)+'</span></div>').join('');
+}
+
+function renderFiles(){
+  $('#filesPop').style.display=S.filesOpen?'block':'none';
+  renderTopButtons();
+  if(!S.filesOpen) return;
+  $('#filesLoadBtn').textContent=S.filesLoaded?'REFRESH':'LOAD LIST';
+  const emptyNote=!S.link?'Connect to the target to browse /logs.'
+    :'File list not loaded. LOAD LIST reads /logs on the target SSD. Runs are written there automatically while the model executes.';
+  let html='<div style="display:flex;flex-direction:column;gap:3px;">'+
+    '<span class="mono" style="font-size:8.5px;letter-spacing:.13em;color:#9aa2ac;">LOG FOLDER'+(S.exec?' · LOCKED WHILE RUNNING':'')+'</span>'+
+    '<div style="display:flex;gap:6px;align-items:stretch;">'+
+    '<span class="mono" style="flex:1 1 auto;min-width:0;font-size:10.5px;padding:5px 6px;border:1px solid #e2e5e9;border-radius:3px;background:#f7f8f9;color:'+(S.exec?'#8b939d':'#3b444e')+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;">'+esc(S.dlPath)+'</span>'+
+    '<button data-act="openPicker" '+(S.exec?'disabled':'')+' title="'+(S.exec?'stop the model to change the log folder':'choose where runs are written and downloaded')+'" class="mono" style="flex:0 0 auto;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:5px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;opacity:'+(S.exec?0.4:1)+';">BROWSE…</button>'+
+    '</div></div>';
+  if(!S.files.length){
+    html+='<span class="mono" style="font-size:10px;color:#9aa2ac;line-height:1.4;">'+emptyNote+'</span>';
+  } else {
+    html+=S.files.map(f=>
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:6px;border-bottom:1px solid #f4f5f7;">'+
+      '<div style="display:flex;flex-direction:column;gap:1px;min-width:0;">'+
+      '<span class="mono" style="font-size:10.5px;color:#14181c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(f.name)+'</span>'+
+      '<span class="mono" style="font-variant-numeric:tabular-nums;font-size:9px;color:#9aa2ac;">'+esc(f.meta)+'</span></div>'+
+      '<button data-act="dlFile" data-arg="'+esc(f.name)+'" class="mono" style="flex:0 0 auto;font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid '+(f.got?'#e2e5e9':ACCENT)+';border-radius:3px;background:#fff;color:'+(f.got?'#9aa2ac':ACCENT)+';">'+(f.got?'✓ SAVED':'DOWNLOAD')+'</button></div>').join('');
+    const tot=S.files.reduce((a,f)=>a+f.mb,0);
+    html+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+
+      '<span class="mono" style="font-variant-numeric:tabular-nums;font-size:9px;color:#9aa2ac;">'+S.files.length+' files · '+tot.toFixed(1)+' MB</span>'+
+      '<button data-act="dlAll" class="mono" style="font-size:9.5px;font-weight:600;letter-spacing:.06em;padding:4px 8px;border:1px solid '+ACCENT+';border-radius:3px;background:#fff;color:'+ACCENT+';">DOWNLOAD ALL</button></div>';
+  }
+  $('#filesBody').innerHTML=html;
+}
+
+function renderPicker(){
+  const m=$('#pickerModal');
+  if(!S.picker){ m.style.display='none'; m.innerHTML=''; return; }
+  const p=S.picker.path.replace(/\/?$/,'/');
+  m.style.display='flex';
+  m.innerHTML='<div style="width:420px;background:#fff;border:1px solid #cfd4da;border-radius:4px;box-shadow:0 18px 44px rgba(20,24,28,.28);overflow:hidden;">'+
+    '<div class="phead" style="padding:7px 10px;"><span class="microlbl">SELECT FOLDER · DOWNLOAD FOLDER</span>'+
+    '<button data-act="pickerCancel" class="xbtn">✕</button></div>'+
+    '<div style="display:flex;align-items:center;gap:7px;padding:7px 10px;border-bottom:1px solid #f1f3f5;">'+
+    '<button data-act="pickerUp" class="mono" style="font-size:10px;padding:4px 8px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;">↑ UP</button>'+
+    '<span class="mono" style="flex:1 1 auto;min-width:0;font-size:11px;color:#14181c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left;">'+esc(S.picker.path)+'</span></div>'+
+    '<div style="max-height:236px;overflow-y:auto;">'+
+    fsKids(p).map(n=>'<button data-act="pickerGo" data-arg="'+esc(p+n)+'" class="mono" style="display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:6px 10px;border:0;border-bottom:1px solid #f6f7f8;background:#fff;font-size:11px;color:#14181c;"><span style="color:#9aa2ac;">▸</span>'+esc(n)+'</button>').join('')+
+    '</div>'+
+    '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;padding:8px 10px;border-top:1px solid #eceef1;background:#fcfcfd;">'+
+    '<button data-act="pickerCancel" class="mono" style="font-size:10.5px;font-weight:600;letter-spacing:.06em;padding:6px 12px;border:1px solid #cfd4da;border-radius:3px;background:#fff;color:#2b333c;">CANCEL</button>'+
+    '<button data-act="pickerSelect" class="mono" style="font-size:10.5px;font-weight:700;letter-spacing:.06em;padding:6px 12px;border:1px solid '+ACCENT+';border-radius:3px;background:'+ACCENT+';color:#fff;">SELECT THIS FOLDER</button>'+
+    '</div></div>';
+}
+
+function renderDiag(){
+  $('#diagPop').style.display=S.diagOpen?'block':'none';
+  const f=$('#faultsState');
+  f.textContent=S.faults?'ON':'OFF';
+  f.style.color=S.faults?'#9a6b00':'#8b939d';
+  renderTopButtons();
+}
+
+function renderDev(){
+  $('#devPanel').style.display=S.dev?'block':'none';
+  if(!S.dev) return;
+  const scen=[['disconnected','DISCONNECTED'],['idle','LOADED / STOPPED'],['running','RUNNING'],
+    ['partial','PARTIAL STALL'],['dropout','FULL DROPOUT'],['stopped','STOPPED · FILE WRITTEN']];
+  $('#devScen').innerHTML=scen.map(x=>
+    '<button data-act="scenario" data-arg="'+x[0]+'" class="mono" style="font-size:10px;letter-spacing:.05em;text-align:left;padding:6px 7px;border:1px solid #39424c;border-radius:3px;background:#1d2328;color:#dfe5ea;">'+x[1]+'</button>').join('');
+}
+
+function renderIns(){
+  $('#insPanel').style.display=S.insOpen?'flex':'none';
+  $('#insRail').style.display=S.insOpen?'none':'flex';
+}
+
+/* =====================================================================
+   ACTION DISPATCH (event delegation)
+   ===================================================================== */
+const actions={
+  rtConnect, rtDisconnect, rtBuild, rtLoad, rtStart, rtStop,
+  toggleLog(){ S.logOpen=!S.logOpen; if(S.logOpen) S.unread=0; renderLog(); },
+  clearLog(){ S.log=[]; S.unread=0; renderLog(); },
+  toggleFiles(){ if(S.exec){ S.filesOpen=false; } else { S.filesOpen=!S.filesOpen; S.diagOpen=false; renderDiag(); } renderFiles(); },
+  toggleDiag(){ S.diagOpen=!S.diagOpen; renderDiag(); },
+  toggleFaults(){ S.faults=!S.faults; renderDiag(); },
+  toggleDev(){ S.dev=!S.dev; renderDev(); },
+  toggleIns(){ S.insOpen=!S.insOpen; renderIns(); },
+  clearPlots(){ S.assign={}; renderTree(); renderSubplots(); },
+  clearSel(){
+    const sub=S.selSub;
+    Object.keys(S.assign).forEach(k=>{ S.assign[k]=subsOf(k).filter(v=>v!==sub); });
+    renderTree(); renderSubplots();
+    log('info','subplot '+sub+' cleared','');
+  },
+  fitAll(){ for(const k in yLock) delete yLock[k]; },
+  toggleLive, goLive,
+  setTool(a){ S.tool=a; renderToolbar(); },
+  togCursor(a,ev){
+    const k=+a;
+    if(S.curOn[k]){ S.curOn[k]=false; cur[k]=null; }
+    else { S.curOn[k]=true; const d=domain(); cur[k]=d.t0+(d.t1-d.t0)*(k===0?0.45:0.70); }
+    renderToolbar();
+  },
+  setSub(a){ S.nSub=+a; S.selSub=Math.min(S.selSub,S.nSub); renderToolbar(); renderTree(); renderSubplots(); },
+  selSub(a){ if(S.selSub!==+a){ S.selSub=+a; renderTree(); updateSubplotSel(); } },
+  selChan(a){ S.sel=a; renderTree(); },
+  togChan(a,ev){ ev.stopPropagation(); const here=subsOf(a).indexOf(S.selSub)>=0; setPlot(a,S.selSub,!here); },
+  rmChan(a,ev){ ev.stopPropagation(); const [id,sub]=a.split(':'); setPlot(id,+sub,false); },
+  togGroup(a){ S.open[a]=S.open[a]===false; renderTree(); },
+  setParamTab(a){ S.paramTab=a; renderParams(); },
+  togParam(a){ const [id,v]=a.split(':'); S.pending[id]=+v; applyParam(id); },
+  applyParam(a){ applyParam(a); },
+  zeroSensors,
+  scenario(a){ scenario(a); },
+  loadFiles, dlAll:downloadAll,
+  dlFile(a){ downloadFile(a); },
+  openPicker, pickerCancel, pickerUp, pickerSelect,
+  pickerGo(a){ pickerGo(a); }
+};
+document.addEventListener('click',ev=>{
+  const el=ev.target.closest('[data-act]');
+  if(!el || el.disabled) return;
+  if(el.tagName==='INPUT' && el.type==='checkbox'){ return; } // handled in change
+  if(el.tagName==='INPUT') return;                            // text/range handled below
+  const fn=actions[el.getAttribute('data-act')];
+  if(fn) fn(el.getAttribute('data-arg'),ev);
+});
+document.addEventListener('change',ev=>{
+  const el=ev.target.closest('[data-act]');
+  if(!el) return;
+  const act=el.getAttribute('data-act'), arg=el.getAttribute('data-arg');
+  if(act==='togChan'){ const here=subsOf(arg).indexOf(S.selSub)>=0; setPlot(arg,S.selSub,!here); }
+  if(act==='slideParam'){ S.pending[arg]=parseFloat(el.value); renderParams(); }
+  if(act==='typeParam'){ const v=parseFloat(el.value); if(!isNaN(v)) S.pending[arg]=v; renderParams(); }
+});
+document.addEventListener('input',ev=>{
+  const el=ev.target;
+  if(el.id==='searchBox'){ S.search=el.value; renderTree(); }
+  if(el.getAttribute && el.getAttribute('data-act')==='slideParam'){
+    S.pending[el.getAttribute('data-arg')]=parseFloat(el.value);
+    // live-update the number box without a full re-render (keeps slider drag smooth)
+    const row=el.parentElement.querySelector('[data-act="typeParam"]');
+    if(row) row.value=el.value;
+  }
+});
+document.addEventListener('keydown',ev=>{
+  if(ev.target && /input|textarea|select/i.test(ev.target.tagName)){
+    if(ev.key==='Enter' && ev.target.getAttribute && ev.target.getAttribute('data-act')==='typeParam'){
+      const id=ev.target.getAttribute('data-arg');
+      const v=parseFloat(ev.target.value); if(!isNaN(v)) S.pending[id]=v;
+      applyParam(id);
+    }
+    return;
+  }
+  if(ev.key==='d'||ev.key==='D'){ S.dev=!S.dev; renderDev(); }
+  if(ev.key==='Escape') goLive();
+});
+
+/* ---------------- boot ---------------- */
+renderRt(); renderTopButtons(); renderTree(); renderSubplots(); renderToolbar();
+renderParams(); renderLog(); renderFiles(); renderDiag(); renderDev(); renderIns();
+log('info','console ready · target not connected','build 1.0.0 · mock mode');
+setInterval(step,25);
+raf=requestAnimationFrame(frame);
+/* mock demo boots into a live run; with a real backend the console starts DISCONNECTED */
+if(Backend.mock) setTimeout(()=>scenario('running'),150);
+</script>
+</body>
+</html>
