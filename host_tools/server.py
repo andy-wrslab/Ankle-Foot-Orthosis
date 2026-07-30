@@ -347,9 +347,18 @@ class MatlabRT:
     def status(self):
         if not self.eng:
             return {"connected": False, "available": bool(self._import()), "err": self.err}
-        r = self._eval(
-            "try, s=struct('ok',true,'status',char(tg.Status),'app',char(tg.Application));"
-            "catch e, s=struct('ok',false,'err',e.message); end; jsonencode(s)", nargout=1)
+        # statements and value-returning expression must be separate evals
+        # (multi-statement eval with nargout=1 is rejected by MATLAB).
+        # R2024b slrealtime.Target API: isConnected/isLoaded/isRunning methods,
+        # TargetStatus property, getLastApplication for the app name.
+        self._eval(
+            "slrt_s=struct('ok',true);"
+            "try, slrt_s.target_conn=isConnected(tg); catch slrt_e, slrt_s.ok=false; slrt_s.err=slrt_e.message; end;"
+            "try, slrt_s.loaded=isLoaded(tg); catch, end;"
+            "try, slrt_s.running=isRunning(tg); catch, end;"
+            "try, slrt_s.app=char(getLastApplication(tg)); catch, end;"
+            "try, slrt_s.target_status=char(string(tg.TargetStatus)); catch, end;")
+        r = self._eval("jsonencode(slrt_s)", nargout=1)
         out = {"connected": True, "available": True, "mode": self.mode}
         if r["ok"]:
             with contextlib.suppress(Exception):

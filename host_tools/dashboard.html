@@ -1260,9 +1260,9 @@ function wsConnect(){
         head=-1; count=0;   // fresh server session: drop samples from the previous epoch
         renderTree(); renderSubplots();
       } else if(m.type==='status'){
-        S.exec = !!(m.stream && m.stream.running) || (m.matlab && m.matlab.status==='running') || false;
+        S.exec = !!(m.stream && m.stream.running) || !!(m.matlab && m.matlab.running) || false;
         S.link = !!(m.matlab && m.matlab.connected);
-        S.loaded = !!(m.matlab && m.matlab.app);
+        S.loaded = !!(m.matlab && m.matlab.loaded);
         S.built = true;                                        // builds live in the Simulink desktop
         S.ecat = (m.stream && m.stream.running) ? 'OP' : 'INIT';   // heuristic until StateWord is streamed
         gaps = (m.stream && m.stream.gaps) || 0;
