@@ -542,6 +542,9 @@ class EngineStream:
         self.setup_ok = False
         self.next_setup_wall = 0.0    # backoff: retry setup at most every 5 s
         self.last_setup_err = ""
+        self.next_rec_wall = 0.0      # backoff for recording start attempts
+        self.last_rec_err = ""
+        self.last_diag = ""
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
         self.grid_t = None
@@ -640,6 +643,11 @@ async def engine_loop():
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
         if not r.get("ok"):
             continue
+        # unknown buffer shapes are described by the drain — surface each once
+        diag = " · ".join(r.get("diag") or [])
+        if diag and diag != ES.last_diag:
+            note("warn", "instrument buffer shape not recognized", diag)
+            ES.last_diag = diag
         changed, _rows = ES.ingest(r.get("signals") or [])
         if changed:
             note("ok", "signal set discovered", f"{len(CH.names)} channels (cached)")
@@ -648,15 +656,28 @@ async def engine_loop():
                 REC.stop("channel set changed")
             await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
                              binary=False)
-        # target-side SDI/FileLog recording follows the model state
+        # target-side SDI/FileLog recording follows the model state.
+        # afo_recording is tolerant: "already recording" (startup app or
+        # Explorer-initiated) counts as success and prints nothing in MATLAB.
         running = bool(m.get("running"))
         if running and not ES.sdi_recording:
-            rr = await asyncio.to_thread(ML._eval, "startRecording(tg);")
-            if rr.get("ok"):
-                ES.sdi_recording = True
-                note("ok", "target recording started", "SDI + File Log on target")
+            noww = time.monotonic()
+            if noww >= ES.next_rec_wall:
+                ES.next_rec_wall = noww + 5.0
+                rr = await asyncio.to_thread(ML.call_json, "afo_recording('start')")
+                if rr.get("ok"):
+                    ES.sdi_recording = True
+                    ES.last_rec_err = ""
+                    note("ok", "target recording active",
+                         "was already recording" if rr.get("state") == "already"
+                         else "SDI + File Log on target")
+                else:
+                    err = rr.get("err", "")
+                    if err != ES.last_rec_err:
+                        note("warn", "target recording start failed", err)
+                        ES.last_rec_err = err
         elif not running and ES.sdi_recording:
-            await asyncio.to_thread(ML._eval, "stopRecording(tg);")
+            await asyncio.to_thread(ML.call_json, "afo_recording('stop')")
             ES.sdi_recording = False
             note("info", "target recording stopped — importing file log…", "")
             asyncio.create_task(_import_filelog())

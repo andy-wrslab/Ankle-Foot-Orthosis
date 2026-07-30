@@ -20,6 +20,10 @@ try
     inst = slrealtime.Instrument(appname);
     inst.AxesTimeSpan = 5;              % keep the host-side buffer bounded
     inst.addInstrumentedSignals();
+    % Streaming only delivers data when a callback is connected (signals are
+    % streamed "to be available in callback") — register a no-op so the
+    % buffer that getBufferedData reads actually fills.
+    inst.connectCallback(@(varargin) []);
     tg.addInstrument(inst);
     AFO_INST = inst;
     out = jsonencode(struct('ok', true, 'app', appname));
