@@ -383,6 +383,14 @@ class MatlabRT:
         if ARGS.gp_mat and load_gp:
             gp = self.call_json("afo_load_gp('%s')" % ARGS.gp_mat.replace("'", "''"))
         rr = self._eval("tg.connect;")
+        if not rr.get("ok") and "another MATLAB session" in str(rr.get("err", "")):
+            # the target still holds a dead session's slot (its MATLAB was
+            # closed without disconnecting) — take over: disconnect frees
+            # the stale slot, then connect claims it for this session
+            note("warn", "target held by a dead MATLAB session — taking over", "")
+            self._eval("try, tg.disconnect; catch, end")
+            time.sleep(2.0)
+            rr = self._eval("tg.connect;")
         chk = self._eval("jsonencode(logical(isConnected(tg)))", nargout=1)
         conn = False
         if chk.get("ok"):
