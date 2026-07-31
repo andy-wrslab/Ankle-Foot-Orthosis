@@ -2,36 +2,28 @@
 """
 AFO Rig Console backend.
 
-Data plane (primary): MATLAB engine + slrealtime Instrument streaming.
-    After CONNECT, the server attaches an slrealtime.Instrument with
-    addInstrumentedSignals() — every SDI-instrumented (blue badge) signal
-    in the running app — and drains its buffer a few times per second.
-    Vector signals are expanded into per-element channels (name(1..w)).
-    The discovered channel set is cached (signals_cache.json) and pushed
-    to the dashboard, which adopts it automatically.
+Data plane: the live SDI run, read through the MATLAB engine.
+    startRecording on the target streams every SDI-instrumented (blue
+    badge) signal into a live Simulation Data Inspector run in the shared
+    MATLAB session. The server reads that run incrementally a few times
+    per second (afo_stream_drain.m), expands vector signals into
+    per-element channels (name(1..w)), re-emits rows on a uniform 100 Hz
+    grid, and relays them to the dashboard over WebSocket. The discovered
+    channel set is cached (signals_cache.json) and adopted by the
+    dashboard automatically.
 
 Recording:
-    While the model runs, the target records everything instrumented
-    (tg.startRecording -> SDI + File Log on the target SSD). When the
-    model stops, the server imports the newest file log and exports a
-    full-rate wide CSV (target_<stamp>.csv). Independently, the live
-    stream is also written to a host-side CSV (runNNN_*.csv, zero-order
-    hold on a uniform grid) as a belt-and-braces copy.
-
-Data plane (optional, for demos): UDP packets from the model's UDP Send
-    blocks. Disabled by default; enable with --udp-port 5432. Real
-    Speedgoat data cannot be contaminated by the demo sender (loopback
-    is locked out once a non-loopback source appears).
+    While the model runs, the target records all instrumented signals
+    (SDI + File Log on the target SSD). When the model stops, the server
+    imports the newest file log and exports a full-rate wide CSV
+    (target_<stamp>.csv). Independently, the live stream is mirrored to
+    a host-side CSV (runNNN_*.csv) as a belt-and-braces copy.
 
 Control plane: MATLAB engine (shared desktop session first, headless
-    fallback) -> slrealtime start / stop / setparam. Without the
-    matlabengine package the endpoints return errors the dashboard
-    shows as toasts.
+    fallback) -> slrealtime start / stop / setparam. CONNECT in the UI
+    means the Speedgoat target; the engine is background plumbing.
 
-Run:
-    python server.py                  # engine data plane (normal)
-    python server.py --udp-port 5432  # + UDP listener (demo / legacy)
-Then open http://localhost:8321.
+Run:  python server.py        then open http://localhost:8321.
 """
 
 import argparse
@@ -59,95 +51,40 @@ CACHE_FILE = HERE / "signals_cache.json"
 ap = argparse.ArgumentParser(description="AFO Rig Console backend")
 ap.add_argument("--http-host", default="127.0.0.1", help="bind for the web UI (0.0.0.0 to reach it from other lab PCs)")
 ap.add_argument("--http-port", type=int, default=8321)
-ap.add_argument("--udp-bind", default="0.0.0.0", help="bind address for the optional UDP listener")
-ap.add_argument("--udp-port", type=int, default=0, help="0 = UDP disabled (default); 5432/5431 = listen to the model's UDP Send stream (demo/legacy)")
 ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
 ap.add_argument("--target", default="TargetPC1", help="Speedgoat target name for slrealtime()")
 ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe (ping)")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine entirely")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
-ap.add_argument("--record-demo", action="store_true", help="also auto-record demo (loopback UDP) data")
 ARGS = ap.parse_args()
 
-GAP_S = 0.25          # UDP: no packets for this long while active -> gap
-ENGINE_GAP_S = 1.5    # engine stream: drain cadence is ~0.4 s, so be lenient
-AUTOREC_STOP_S = 5.0  # close the host CSV after this much stream silence
+ENGINE_GAP_S = 6.0    # stream gap threshold (drain slices arrive every ~1 s)
+AUTOREC_STOP_S = 15.0 # close the host CSV after this much stream silence
 FLAT_S = 0.10         # channel unchanged this long while stream alive -> flat
 BATCH_S = 0.05        # WebSocket flush interval
 STATUS_S = 0.5        # status broadcast interval
 BACKFILL_S = 10.0     # history replayed to a newly connected client
-GRID_DT = 0.01        # engine stream is re-emitted on this uniform grid (ZOH)
-DRAIN_S = 0.4         # instrument buffer drain interval
-
-# --------------------------------------------------------------------------
-# channel set (dynamic — discovered from the instrumented signals)
-# --------------------------------------------------------------------------
-# Static fallback manifest: matches the model's 31-channel UDP payload.
-# Used for the optional UDP mode and as the boot default until discovery.
-STATIC_DEFS = [
-    {"id": "ankle_angle", "name": "ankle_angle", "group": "ankle",    "units": "deg",   "prec": 2},
-    {"id": "pot_raw",     "name": "pot_raw",     "group": "ankle",    "units": "deg",   "prec": 2},
-    {"id": "torque_cmd",  "name": "torque_cmd",  "group": "actuator", "units": "N·m",   "prec": 2},
-    {"id": "ins_p1", "name": "insole_p1", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p2", "name": "insole_p2", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p3", "name": "insole_p3", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p4", "name": "insole_p4", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p5", "name": "insole_p5", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p6", "name": "insole_p6", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p7", "name": "insole_p7", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "ins_p8", "name": "insole_p8", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "heel_press", "name": "heel_agg", "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "toe_press",  "name": "toe_agg",  "group": "pressure", "units": "kPa", "prec": 0},
-    {"id": "imu_yaw",   "name": "imu_yaw",   "group": "imu", "units": "deg",   "prec": 1},
-    {"id": "imu_pitch", "name": "imu_pitch", "group": "imu", "units": "deg",   "prec": 1},
-    {"id": "imu_roll",  "name": "imu_roll",  "group": "imu", "units": "deg",   "prec": 1},
-    {"id": "imu_ax", "name": "imu_ax", "group": "imu", "units": "m/s²",  "prec": 2},
-    {"id": "imu_ay", "name": "imu_ay", "group": "imu", "units": "m/s²",  "prec": 2},
-    {"id": "imu_az", "name": "imu_az", "group": "imu", "units": "m/s²",  "prec": 2},
-    {"id": "imu_gx", "name": "imu_gx", "group": "imu", "units": "deg/s", "prec": 1},
-    {"id": "imu_gy", "name": "imu_gy", "group": "imu", "units": "deg/s", "prec": 1},
-    {"id": "imu_gz", "name": "imu_gz", "group": "imu", "units": "deg/s", "prec": 1},
-    {"id": "gait_phase", "name": "gait_phase", "group": "gait", "units": "—",   "prec": 0, "step": True},
-    {"id": "stride_vel", "name": "stride_vel", "group": "gait", "units": "m/s", "prec": 2, "step": True},
-    {"id": "stride_len", "name": "stride_len", "group": "gait", "units": "m",   "prec": 2, "step": True},
-    {"id": "assist_uc",  "name": "assist_Uc",  "group": "gait", "units": "N·m", "prec": 2},
-    {"id": "sync_led",   "name": "sync_led",   "group": "gait", "units": "—",   "prec": 0, "step": True},
-    {"id": "motor_current", "name": "motor_current", "group": "actuator", "units": "A",     "prec": 2},
-    {"id": "motor_vel",     "name": "motor_vel",     "group": "actuator", "units": "rad/s", "prec": 2},
-    {"id": "ctrl_dt",       "name": "ctrl_loop_dt",  "group": "actuator", "units": "ms",    "prec": 3, "hold": True},
-    {"id": "spare_31",      "name": "spare_31",      "group": "actuator", "units": "—",     "prec": 0, "step": True},
-]
-STATIC_GROUPS = [
-    {"id": "ankle",    "label": "ANKLE / ENCODER"},
-    {"id": "pressure", "label": "INSOLE PRESSURE"},
-    {"id": "imu",      "label": "IMU"},
-    {"id": "gait",     "label": "GAIT / RL ASSIST"},
-    {"id": "actuator", "label": "ACTUATOR / LOOP"},
-]
+GRID_DT = 0.01        # stream is re-emitted on this uniform grid (ZOH)
+DRAIN_S = 0.4         # SDI-run drain interval
 
 
 def _san(name):
-    return re.sub(r"[^0-9A-Za-z_()\[\] .:/-]", "_", str(name)).strip() or "signal"
+    return re.sub(r"[^0-9A-Za-z_()\[\] .:/#-]", "_", str(name)).strip() or "signal"
 
 
+# --------------------------------------------------------------------------
+# channel set — discovered from the live SDI run, cached across sessions
+# --------------------------------------------------------------------------
 class ChannelSet:
     def __init__(self):
         self.defs = []
         self.groups = []
         self.names = []
         self.flat_excluded = set()
-        if ARGS.udp_port:
-            # UDP mode needs the fixed packet layout
-            self.defs, self.groups = STATIC_DEFS, STATIC_GROUPS
-        else:
-            # engine mode: no placeholders — start empty (or from the cache of
-            # a previous discovery) and adopt the real set from the instrument
-            cached = self._load_cache()
-            if cached:
-                self.defs, self.groups = cached
-            else:
-                self.defs, self.groups = [], []
+        cached = self._load_cache()
+        if cached:
+            self.defs, self.groups = cached
         self._finish()
 
     def _finish(self):
@@ -196,19 +133,14 @@ class ChannelSet:
 CH = ChannelSet()
 
 # --------------------------------------------------------------------------
-# stream state (rows of float values on a shared clock)
+# stream state (rows of float values on the model clock)
 # --------------------------------------------------------------------------
 class Stream:
     def __init__(self):
-        self.t0 = time.monotonic()
         self.reset()
         self.gaps = 0
-        self.bad_packets = 0
         self.src = None
-        self.demo = False
-        self.real_seen = False
-        self.ignored_demo = 0
-        self.mode = "none"          # engine | udp | none
+        self.mode = "none"          # engine | none
         self.gap_window = ENGINE_GAP_S
 
     def reset(self):
@@ -221,9 +153,6 @@ class Stream:
         self.rate_win = deque(maxlen=4000)
         self.last_vals = {}
         self.last_change = {}
-
-    def now(self):
-        return time.monotonic() - self.t0
 
     def alive(self):
         return self.last_wall and (time.monotonic() - self.last_wall) < self.gap_window
@@ -240,7 +169,7 @@ class Stream:
             self.gaps += 1
             note("error", "data stream gap recovered", f"gap={round((wall-self.last_wall)*1000)} ms")
         if not self.was_active:
-            note("ok", "data stream active", f"{self.mode} · {len(CH.names)} channels")
+            note("ok", "data stream active", f"{len(CH.names)} channels")
             self.was_active = True
         for name, v in zip(CH.names, vals):
             lv = self.last_vals.get(name)
@@ -259,7 +188,7 @@ class Stream:
     def flat_channels(self):
         if not self.alive():
             return []
-        t = self.now() if self.mode == "udp" else self.last_t
+        t = self.last_t
         out = [n for n in CH.names
                if n not in CH.flat_excluded and t - self.last_change.get(n, 0.0) > FLAT_S]
         return out if len(out) < max(1, len(CH.names) - len(CH.flat_excluded)) else []
@@ -334,10 +263,7 @@ class Recorder:
             "stream_gaps_during_run": STREAM.gaps - self.gaps_at_start,
             "channels": CH.names,
             "source": STREAM.src,
-            "mode": STREAM.mode,
-            "demo_data": STREAM.demo,
-            "note": reason or ("host-side live copy; full-rate record is the imported target file log"
-                               if STREAM.mode == "engine" else ""),
+            "note": reason or "host-side live copy; full-rate record is the imported target file log",
         }
         self.path.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
         note("ok", f"recording stopped · {self.path.name}",
@@ -350,37 +276,7 @@ REC = Recorder(Path(ARGS.logs_dir))
 
 
 # --------------------------------------------------------------------------
-# optional UDP listener (demo / legacy)
-# --------------------------------------------------------------------------
-class UdpProto(asyncio.DatagramProtocol):
-    def datagram_received(self, data, addr):
-        n = len(CH.names)
-        if len(data) != 4 * n:
-            STREAM.bad_packets += 1
-            return
-        ip = addr[0]
-        is_demo = ip.startswith("127.")
-        if is_demo and STREAM.real_seen:
-            STREAM.ignored_demo += 1
-            if STREAM.ignored_demo == 1:
-                note("warn", "demo sender ignored — real data has priority",
-                     "close the demo_data window; its packets are being dropped")
-            return
-        if not is_demo and not STREAM.real_seen:
-            STREAM.real_seen = True
-            if STREAM.demo:
-                note("warn", "real Speedgoat stream detected — demo sender now ignored", ip)
-        if STREAM.src != ip:
-            STREAM.src = ip
-            STREAM.demo = is_demo
-            STREAM.mode = "udp"
-            STREAM.gap_window = GAP_S
-        vals = struct.unpack(f"<{n}f", data)
-        STREAM.push(STREAM.now(), vals)
-
-
-# --------------------------------------------------------------------------
-# MATLAB engine (control plane + instrument data plane)
+# MATLAB engine (control plane + SDI data plane)
 # --------------------------------------------------------------------------
 class MatlabRT:
     def __init__(self):
@@ -535,7 +431,7 @@ ML_STATUS_CACHE = {"connected": False, "available": None}
 
 
 # --------------------------------------------------------------------------
-# engine data plane: instrument drains -> dedup -> uniform-grid rows
+# data plane: incremental reads of the live SDI run -> uniform-grid rows
 # --------------------------------------------------------------------------
 class EngineStream:
     def __init__(self):
@@ -551,6 +447,7 @@ class EngineStream:
         self.next_guidance_wall = 0.0
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
+        self.known = {}           # persistent discovered set: name -> width
         self.grid_t = None
         self.sdi_recording = False
 
@@ -559,15 +456,23 @@ class EngineStream:
         self.next_setup_wall = 0.0
         self.last_sig_t = {}
         self.lastv = {}
+        self.known = {}
         self.grid_t = None
         self.last_rows_wall = 0.0
         self.restart_tried = False
         self.next_guidance_wall = 0.0
 
     def ingest(self, signals):
-        """Returns (changed, rows). signals: [{name,w,t:[...],v:[flat]}]."""
-        sig_list = [(s.get("name", "?"), int(s.get("w", 1) or 1)) for s in signals]
-        sig_list.sort(key=lambda x: x[0])
+        """Returns (changed, rows). signals: [{name,w,t:[...],v:[flat]}].
+        Drains deliver round-robin slices, so discovery merges into a
+        persistent set — the channel manifest only changes when a genuinely
+        new signal appears, not per slice."""
+        for s in signals:
+            nm = s.get("name", "?")
+            w = int(s.get("w", 1) or 1)
+            if self.known.get(nm) != w:
+                self.known[nm] = w
+        sig_list = sorted(self.known.items())
         changed = CH.adopt_discovered(sig_list) if sig_list else False
         if changed:
             self.lastv = {}
@@ -620,17 +525,15 @@ ES = EngineStream()
 async def engine_loop():
     while True:
         await asyncio.sleep(DRAIN_S + ES.extra_sleep)
-        if ARGS.udp_port:                       # UDP mode owns the stream
-            continue
         m = ML_STATUS_CACHE
         if not (ML.eng and m.get("connected") and m.get("target_conn")):
             if ES.setup_ok:
                 ES.reset()
             continue
         # target-side SDI/FileLog recording follows the model state — and must
-        # run BEFORE stream setup, whose signal enumeration needs the live SDI
-        # run that recording creates. afo_recording is tolerant: "already
-        # recording" (startup app or Explorer-initiated) counts as success.
+        # run BEFORE stream setup, whose live SDI run only exists once
+        # recording is active. afo_recording is tolerant: "already recording"
+        # (startup app or Explorer-initiated) counts as success.
         running = bool(m.get("running"))
         if running and not ES.sdi_recording:
             noww = time.monotonic()
@@ -660,19 +563,16 @@ async def engine_loop():
             ES.next_setup_wall = noww + 5.0     # gentle retry — never hammer the engine
             r = await asyncio.to_thread(ML.call_json, "afo_stream_setup()")
             if r.get("ok") and not r.get("nsignames"):
-                # signal enumeration comes from the live SDI recording run;
-                # keep retrying until it exists (model running + recording)
-                err = "no instrumented signals enumerable yet (model running & recording?)"
+                err = "live SDI run has no signals yet (model running & recording?)"
                 if err != ES.last_setup_err:
-                    note("warn", "instrument setup incomplete — will retry", err)
+                    note("warn", "stream setup incomplete — will retry", err)
                     ES.last_setup_err = err
                 continue
             if r.get("ok"):
                 ES.setup_ok = True
                 ES.last_setup_err = ""
                 STREAM.mode = "engine"
-                STREAM.src = "slrealtime instrument"
-                STREAM.demo = False
+                STREAM.src = "instrument stream (XCP)"
                 STREAM.gap_window = ENGINE_GAP_S
                 ES.last_rows_wall = time.monotonic()   # grace period starts now
                 note("ok", "live SDI run pinned",
@@ -683,15 +583,18 @@ async def engine_loop():
             else:
                 err = r.get("err", "")
                 if err != ES.last_setup_err:    # log each distinct failure once
-                    note("warn", "instrument stream setup failed", err)
+                    note("warn", "stream setup failed", err)
                     ES.last_setup_err = err
                 continue
         t0 = time.monotonic()
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
         dur = time.monotonic() - t0
-        # keep the shared MATLAB responsive: leave >2x the drain cost idle
-        ES.extra_sleep = max(0.0, min(5.0, 2.5 * dur - DRAIN_S))
+        # keep the shared MATLAB responsive: engine duty <= ~50%
+        ES.extra_sleep = max(0.0, min(5.0, dur - DRAIN_S))
         if not r.get("ok"):
+            if "re-setup" in str(r.get("err", "")):
+                ES.setup_ok = False          # a new recording run started
+                ES.next_setup_wall = 0.0
             continue
         # drain diagnostics — surface each distinct message once
         diag = " · ".join(r.get("diag") or [])
@@ -757,8 +660,7 @@ def index():
 
 @app.get("/api/config")
 def config():
-    return {"channel_defs": CH.defs, "groups": CH.groups,
-            "udp_port": ARGS.udp_port, "logs_dir": str(REC.root)}
+    return {"channel_defs": CH.defs, "groups": CH.groups, "logs_dir": str(REC.root)}
 
 
 def _stream_status():
@@ -772,12 +674,9 @@ def _stream_status():
             "age_ms": round((now - STREAM.last_wall) * 1000) if STREAM.last_wall else None,
             "gaps": STREAM.gaps,
             "rows": STREAM.n_rows,
-            "bad": STREAM.bad_packets,
             "flat": STREAM.flat_channels(),
             "t": STREAM.last_t,
             "source": STREAM.src,
-            "demo": STREAM.demo,
-            "ignored_demo": STREAM.ignored_demo,
             "stall_ms": int(STREAM.gap_window * 1000),
             "nch": len(CH.names),
         },
@@ -798,7 +697,7 @@ def status():
 async def rt_connect():
     r = await asyncio.to_thread(ML.connect_target)
     if r.get("ok"):
-        note("ok", f"target connected · {ARGS.target}", "192.168.7.5 · signal discovery follows")
+        note("ok", f"target connected · {ARGS.target}", f"{ARGS.target_ip} · signal discovery follows")
     else:
         note("warn", f"target not reachable · {ARGS.target}", r.get("err", ""))
     return JSONResponse(r, status_code=200 if r.get("ok") else 503)
@@ -925,7 +824,7 @@ async def status_loop():
         await asyncio.sleep(STATUS_S)
         tick += 1
         # host CSV auto-record follows the live stream
-        if CH.names and STREAM.alive() and not REC.on and (not STREAM.demo or ARGS.record_demo):
+        if CH.names and STREAM.alive() and not REC.on:
             REC.start()
         if REC.on and STREAM.last_wall and (time.monotonic() - STREAM.last_wall) > AUTOREC_STOP_S:
             REC.stop()
@@ -954,19 +853,12 @@ async def _quiet_engine_attach():
 
 @app.on_event("startup")
 async def startup():
-    loop = asyncio.get_running_loop()
-    if ARGS.udp_port:
-        await loop.create_datagram_endpoint(UdpProto, local_addr=(ARGS.udp_bind, ARGS.udp_port))
-        STREAM.mode = "udp"
-        STREAM.gap_window = GAP_S
-        print(f"UDP listener  : {ARGS.udp_bind}:{ARGS.udp_port}  ({len(CH.names)} x float32)", flush=True)
-    else:
-        print("Data plane    : MATLAB engine instrument stream (UDP disabled)", flush=True)
     asyncio.create_task(batch_loop())
     asyncio.create_task(status_loop())
     asyncio.create_task(event_loop())
     asyncio.create_task(engine_loop())
     asyncio.create_task(_quiet_engine_attach())
+    print("Data plane    : live SDI run via the MATLAB engine", flush=True)
     print(f"Dashboard     : http://{ARGS.http_host}:{ARGS.http_port}/", flush=True)
     print(f"Trial logs    : {REC.root}", flush=True)
 
