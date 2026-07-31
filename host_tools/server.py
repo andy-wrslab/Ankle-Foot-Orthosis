@@ -521,10 +521,20 @@ class EngineStream:
         # per-signal last-t and the watermark are ahead of the new epoch, so
         # nothing would ever count as advancing again — start over. Seen
         # live 2026-07-31 (second Speedgoat reboot of the day).
-        try:
-            newest = max(float(s["t"][-1]) for s in signals if s.get("t"))
-        except ValueError:
-            newest = None
+        # NB: a 1-point drain JSON-encodes t as a scalar, not a list.
+        newest = None
+        for s in signals:
+            tv = s.get("t")
+            if isinstance(tv, (list, tuple)):
+                if not tv:
+                    continue
+                tt = float(tv[-1])
+            elif isinstance(tv, (int, float)):
+                tt = float(tv)
+            else:
+                continue
+            if newest is None or tt > newest:
+                newest = tt
         if newest is not None and self.grid_t is not None and newest < self.grid_t - 60.0:
             note("warn", "model time jumped backward — resetting stream state",
                  f"{self.grid_t:.1f} s -> {newest:.1f} s (target reboot / model restart)")
@@ -709,7 +719,16 @@ async def engine_loop():
         if diag and diag != ES.last_diag:
             note("info", "live stream diagnostic", diag)
             ES.last_diag = diag
-        changed, _rows = ES.ingest(r.get("signals") or [])
+        # an ingest bug must never silently kill the engine loop (a TypeError
+        # here did exactly that on 2026-07-31 — the server became a zombie)
+        try:
+            changed, _rows = ES.ingest(r.get("signals") or [])
+        except Exception as ex:
+            err = f"{type(ex).__name__}: {ex}"
+            if err != ES.last_diag:
+                note("error", "stream ingest failed — dropping this batch", err)
+                ES.last_diag = err
+            continue
         if _rows > 0:
             ES.last_rows_wall = time.monotonic()
         # stale-stream watchdog: model runs but no samples arrive — the app's
