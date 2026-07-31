@@ -72,7 +72,6 @@ STATUS_S = 0.5        # status broadcast interval
 BACKFILL_S = 10.0     # history replayed to a newly connected client
 GRID_DT = 0.01        # stream is re-emitted on this uniform grid (ZOH)
 DRAIN_S = 0.4         # SDI-run drain interval
-RUN_ROTATE_S = 120.0  # rotate the recording run so sg.Values stays cheap
                       # (its cost grows with run length; the model's own File
                       # Log blocks record continuously regardless)
 
@@ -472,7 +471,7 @@ class EngineStream:
         self.restart_tried = False    # escalation 1: recording restart
         self.flush_tried = False      # escalation 2: full recovery (afo_recover)
         self.next_guidance_wall = 0.0
-        self.run_pinned_wall = 0.0    # when the current SDI run was pinned
+        self.run_pinned_wall = 0.0    # when the current SDI run was pinned (diagnostic)
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.adv_wall = {}        # raw signal name -> wall time it last advanced
         self.pend = {}            # raw signal name -> deque[(t, [element values])]
@@ -743,22 +742,13 @@ async def engine_loop():
                 REC.stop("channel set changed")
             await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
                              binary=False)
-        # rotate the recording run periodically: bounds the SDI run so the
-        # fallback plane's sg.Values reads stay fast and desktop SDI memory
-        # stays bounded. The instrument push plane is insensitive to run
-        # changes, and rotation's re-setup also heals partial enumeration.
-        if (ES.setup_ok and running and ES.run_pinned_wall
-                and time.monotonic() - ES.run_pinned_wall > RUN_ROTATE_S):
-            note("info", "rotating recording run",
-                 "bounded run keeps live streaming fast · target File Log unaffected")
-            await asyncio.to_thread(ML.call_json, "afo_recording('stop')")
-            await asyncio.sleep(0.5)
-            await asyncio.to_thread(ML.call_json, "afo_recording('start')")
-            ES.sdi_recording = True
-            ES.setup_ok = False            # re-pin the fresh run
-            ES.next_setup_wall = 0.0
-            ES.last_rows_wall = time.monotonic()
-            ES.run_pinned_wall = 0.0
+        # runs are TRIAL-ALIGNED (user request 2026-07-31): one SDI run per
+        # device run, like the Data Inspector — no time-based rotation. A
+        # model restart creates a fresh run naturally; the drain's run-change
+        # re-pin and the backward-time reset in ingest() handle the boundary.
+        # Cost: the polling fallback's sg.Values reads slow down over very
+        # long trials (the 10 s tail cap keeps them correct); the push plane,
+        # once its extraction is fixed, is insensitive to run length.
 
 
 async def _import_filelog():
