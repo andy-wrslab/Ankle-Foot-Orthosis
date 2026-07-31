@@ -729,7 +729,11 @@ async def engine_loop():
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
         dur = time.monotonic() - t0
         # keep the shared MATLAB responsive: engine duty <= ~50%
-        ES.extra_sleep = max(0.0, min(5.0, dur - DRAIN_S))
+        # smoothed pacing: a single slow call (usually engine-lock contention
+        # with the status poll) must not stretch the whole cadence — average
+        # it out; sustained slowness still backs the loop off
+        ES.extra_sleep = max(0.0, min(2.0, 0.6 * ES.extra_sleep
+                                          + 0.4 * max(0.0, dur - DRAIN_S)))
         if not r.get("ok"):
             if "re-setup" in str(r.get("err", "")):
                 ES.setup_ok = False          # a new recording run started
@@ -1023,7 +1027,9 @@ async def status_loop():
             REC.start()
         if REC.on and STREAM.last_wall and (time.monotonic() - STREAM.last_wall) > AUTOREC_STOP_S:
             REC.stop()
-        if tick % 4 == 0:
+        if tick % 8 == 0:
+            # engine status polls serialize with drains on the engine lock —
+            # keep them rare so the 1 kHz cadence stays tight
             ML_STATUS_CACHE = await asyncio.to_thread(ML.status)
         if CLIENTS:
             await _broadcast(json.dumps(_stream_status()), binary=False)
