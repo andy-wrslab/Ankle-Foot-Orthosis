@@ -413,7 +413,18 @@ class MatlabRT:
             out = self.eng.eval(code, nargout=nargout)
             return {"ok": True, "out": out}
         except Exception as e:
-            return {"ok": False, "err": str(e)}
+            msg = str(e)
+            # engine death (e.g. the shared desktop MATLAB was closed) leaves
+            # a zombie handle that fails every call with "Unknown exception" —
+            # drop it so ensure_engine can reattach or start a headless one
+            if (type(e).__name__ in ("EngineError", "RejectedExecutionError",
+                                     "MatlabTerminated", "CancelledError")
+                    or "Unknown exception" in msg or "MATLAB session" in msg):
+                self.eng = None
+                self.mode = "none"
+                note("warn", "MATLAB engine lost — will reattach or go headless",
+                     msg[:140])
+            return {"ok": False, "err": msg}
 
     def call_json(self, expr):
         """Evaluate an expression returning a JSON string; parse it."""
@@ -499,6 +510,7 @@ class EngineStream:
         self.slow = set()         # polled stragglers: never gate the watermark
         self.link_down_wall = 0.0     # when the target link dropped (wireless blip)
         self.next_reconnect_wall = 0.0
+        self.ever_connected = False   # auto-recovery arms after the first connect
 
     def reset(self):
         self.setup_ok = False
@@ -662,27 +674,30 @@ async def engine_loop():
         await asyncio.sleep(DRAIN_S + ES.extra_sleep)
         m = ML_STATUS_CACHE
         if not (ML.eng and m.get("connected") and m.get("target_conn")):
-            # wireless rig: a WiFi blip must not tear down stream state — the
-            # target keeps running through it, so incremental reads resume
-            # seamlessly once the link is back. Auto-reconnect while down.
-            if ML.eng and m.get("connected") and ES.setup_ok:
+            # self-heal the whole chain — a WiFi blip dropping the target
+            # link, or engine death (desktop MATLAB closed). Never tear down
+            # stream state: the target usually kept running through it, so
+            # incremental reads resume seamlessly. Auto-recover only after
+            # the user has connected once (deliberate DISCONNECT stays off).
+            if ES.ever_connected:
                 noww = time.monotonic()
                 if not ES.link_down_wall:
                     ES.link_down_wall = noww
                     ES.next_reconnect_wall = noww + 3.0
-                    note("warn", "target link lost — keeping stream state",
-                         "wireless blip? auto-reconnecting")
+                    note("warn", "target/engine link lost — keeping stream state",
+                         "auto-recovering (wireless blip / MATLAB closed?)")
                 elif noww >= ES.next_reconnect_wall:
                     ES.next_reconnect_wall = noww + 10.0
                     rr = await asyncio.to_thread(ML.connect_target, False)
                     if rr.get("ok"):
                         ML_STATUS_CACHE = await asyncio.to_thread(ML.status)
-                        note("ok", "target link restored",
+                        note("ok", "link restored",
                              f"down {int(noww - ES.link_down_wall)} s · stream resumes")
                         ES.link_down_wall = 0.0
                         ES.last_rows_wall = time.monotonic()   # watchdog grace
             continue
         ES.link_down_wall = 0.0
+        ES.ever_connected = True
         # target-side SDI/FileLog recording follows the model state — and must
         # run BEFORE stream setup, whose live SDI run only exists once
         # recording is active. afo_recording is tolerant: "already recording"
@@ -925,6 +940,7 @@ async def rt_connect():
 @app.post("/api/rt/disconnect")
 async def rt_disconnect():
     ES.reset()
+    ES.ever_connected = False     # deliberate disconnect: stay disconnected
     r = await asyncio.to_thread(ML.disconnect_target)
     note("info", f"target disconnected · {ARGS.target}", "")
     return r
