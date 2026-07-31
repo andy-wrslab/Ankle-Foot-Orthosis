@@ -505,6 +505,18 @@ class EngineStream:
         Drains deliver round-robin slices, so discovery merges into a
         persistent set — the channel manifest only changes when a genuinely
         new signal appears, not per slice."""
+        # model time jumped backward (target reboot or model restart): every
+        # per-signal last-t and the watermark are ahead of the new epoch, so
+        # nothing would ever count as advancing again — start over. Seen
+        # live 2026-07-31 (second Speedgoat reboot of the day).
+        try:
+            newest = max(float(s["t"][-1]) for s in signals if s.get("t"))
+        except ValueError:
+            newest = None
+        if newest is not None and self.grid_t is not None and newest < self.grid_t - 60.0:
+            note("warn", "model time jumped backward — resetting stream state",
+                 f"{self.grid_t:.1f} s -> {newest:.1f} s (target reboot / model restart)")
+            self.reset()
         for s in signals:
             nm = s.get("name", "?")
             w = int(s.get("w", 1) or 1)
