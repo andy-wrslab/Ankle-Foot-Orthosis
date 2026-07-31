@@ -354,7 +354,7 @@ groups.forEach(g=>S.open[g.id]=true);
 paramDefs.forEach(p=>{ if(p.type!=='action'){ S.applied[p.id]=p.def; S.pending[p.id]=p.def; } });
 
 /* ---------------- ring buffer + stream bookkeeping ---------------- */
-const N = 16384;
+const N = 32768;   /* ring depth in samples: ~32 s of scrollback at the 1 kHz grid */
 const buf = {}; channels.forEach(c=>buf[c.id]=new Float32Array(N));
 const ts = new Float64Array(N);
 let head=-1, count=0;
@@ -510,7 +510,17 @@ function idxIn(t0,t1){
     if(t<t0) break;
     out.push(i);
   }
-  out.reverse(); return out;
+  out.reverse();
+  /* draw-side decimation: cap at ~2600 pts (≈2 per pixel) so 1 kHz data
+     stays smooth to render; zooming in restores full resolution */
+  const cap=2600;
+  if(out.length>cap){
+    const st=Math.ceil(out.length/cap), dec=[];
+    for(let k=0;k<out.length;k+=st) dec.push(out[k]);
+    if(dec[dec.length-1]!==out[out.length-1]) dec.push(out[out.length-1]);
+    return dec;
+  }
+  return out;
 }
 function geom(c){ const L=52,R=14,T=8,B=18; return {L,R,T,B,pw:c.clientWidth-L-R,ph:c.clientHeight-T-B}; }
 function setView(t0,t1){
@@ -757,7 +767,7 @@ function frame(){
   if(S.diagOpen){
     set('pktage', running? Math.round(now-lastPktWall)+' ms' : '—');
     set('diaggaps', gaps+' since record start');
-    set('diagbuf', count+' / '+N+' samples ('+(count/333).toFixed(1)+' s)');
+    set('diagbuf', count+' / '+N+' samples ('+(count/1000).toFixed(1)+' s)');
     set('diagfps', Math.round(1000/Math.max(1,now-(_prevF||now-33)))+' fps · dpr '+(window.devicePixelRatio||1));
   }
   _prevF=now;

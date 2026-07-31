@@ -2,12 +2,14 @@ function out = afo_stream_drain()
 %AFO_STREAM_DRAIN Return new live samples as JSON {ok, signals, nkeys, diag}.
 %   signals: [{name, w, t:[...], v:[row-major flatten of numel(t)-by-w]}].
 %   Two planes (chosen by afo_stream_setup):
-%     instrument — consume the AFO_BUF push accumulator filled by
-%       afo_stream_cb at the full ~1 kHz push rate, decimated here to
-%       ~100 Hz for the live view (the full-rate record is the target
-%       File Log). O(new samples): cost does not grow with run length.
-%     run — incremental sg.Values reads of the live SDI run (fallback;
-%       cost grows with run length, bounded by run rotation).
+%     instrument — consume the AFO_BUF push accumulator at the FULL push
+%       rate (~1 kHz; the browser decimates for drawing, the host CSV
+%       records everything). Signals the instrument cannot stream (not in
+%       the event map — e.g. fixed-point skips) are polled from the live
+%       SDI run on a slow stride so no channel ever goes stale. O(new
+%       samples) for pushed signals regardless of run length.
+%     run — incremental sg.Values polling of the live SDI run (fallback;
+%       cost grows with run length on trial-aligned runs).
 global AFO_MODE
 try
     if strcmp(AFO_MODE, 'instrument')
@@ -21,16 +23,9 @@ end
 end
 
 function out = drain_inst()
-%Consume the push accumulator. Entries are removed as they are read;
-%the callback keeps appending concurrently (MATLAB event dispatch is
-%serialized with engine evals, so map access never races).
-%   HYBRID GUARANTEE: whenever the push buffer yields nothing this call,
-%   fall through to the run-polling extraction. A valid-but-silent
-%   instrument (callback firing yet extracting nothing — seen live
-%   2026-07-31 after hot-deploying v4) must never cost data the SDI run
-%   already has. Push simply wins whenever it actually delivers.
-global AFO_MODE AFO_INST AFO_BUF AFO_EVTINFO
-DECIM = 10;   % ~1 kHz push -> ~100 Hz live view, newest sample always kept
+%Consume the push accumulator; poll only what push cannot deliver.
+global AFO_MODE AFO_INST AFO_BUF AFO_EVTINFO AFO_RUNID AFO_KEYS
+global AFO_PUSHSEEN AFO_MISSTICK
 if isempty(AFO_INST) || ~isvalid(AFO_INST)
     % instrument vanished (afo_recover detaches everything) - fall back
     % and make the server re-run setup, which builds a fresh one
@@ -38,21 +33,46 @@ if isempty(AFO_INST) || ~isvalid(AFO_INST)
     out = jsonencode(struct('ok', false, 'err', 'instrument gone - re-setup'));
     return
 end
+% a new run means a new trial (or recovery): re-pin so the missing-signal
+% polling and key map follow it. Push rows survive in AFO_BUF meanwhile.
+ids = Simulink.sdi.getAllRunIDs;
+if ~isempty(ids) && ~isempty(AFO_RUNID) && ids(end) ~= AFO_RUNID
+    AFO_RUNID = [];
+    out = jsonencode(struct('ok', false, 'err', 'run changed - re-setup'));
+    return
+end
+if ~isa(AFO_PUSHSEEN, 'containers.Map')
+    AFO_PUSHSEEN = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+end
 sigs = {};
-if ~isempty(AFO_BUF)
+if isa(AFO_BUF, 'containers.Map') && AFO_BUF.Count > 0
     ks = keys(AFO_BUF);
     for i = 1:numel(ks)
         v = AFO_BUF(ks{i});
         remove(AFO_BUF, ks{i});
         if isempty(v) || size(v, 2) < 2, continue; end
-        idx = 1:DECIM:size(v, 1);
-        if idx(end) ~= size(v, 1)
-            idx(end+1) = size(v, 1); %#ok<AGROW>
-        end
-        t = v(idx, 1);
-        d = v(idx, 2:end);
+        AFO_PUSHSEEN(ks{i}) = true;
+        t = v(:, 1);
+        d = v(:, 2:end);
         sigs{end+1} = struct('name', ks{i}, 'w', size(d, 2), ...
             't', t(:).', 'v', reshape(d.', 1, [])); %#ok<AGROW>
+    end
+end
+% every 5th drain, poll signals push has never delivered (slow stride:
+% their Values cost grows with run length on trial-aligned runs)
+if isempty(AFO_MISSTICK), AFO_MISSTICK = 0; end
+AFO_MISSTICK = AFO_MISSTICK + 1;
+if ~isempty(sigs) && mod(AFO_MISSTICK, 5) == 0 && ~isempty(AFO_RUNID)
+    try
+        r = Simulink.sdi.getRun(AFO_RUNID);
+        n = min(r.SignalCount, numel(AFO_KEYS));
+        for i = 1:n
+            key = AFO_KEYS{i};
+            if isKey(AFO_PUSHSEEN, key), continue; end
+            s = pull_run_signal(r, i, key, 10);
+            if ~isempty(s), sigs{end+1} = s; end %#ok<AGROW>
+        end
+    catch
     end
 end
 if isempty(sigs)
@@ -112,50 +132,8 @@ diag = {};
 take = min(SLICE, n);
 for k = 0:take-1
     i = mod(AFO_RR + k, n) + 1;
-    try
-        sg = r.getSignalByIndex(i);
-        key = AFO_KEYS{i};
-        v = sg.Values;
-        if isempty(v), continue; end
-        t = double(v.Time(:));
-        N = numel(t);
-        if N == 0, continue; end
-        last = -inf;
-        if isKey(AFO_LASTT, key), last = AFO_LASTT(key); end
-        idx = find(t > last);
-        if isempty(idx), continue; end
-        % fresh attach to a long run: stream only the recent tail —
-        % capped by time (10 s) plus a hard point cap
-        tcap = t(idx(end)) - 10;
-        idx = idx(t(idx) >= tcap);
-        % decimate to ~100 Hz for the live view (the full-rate record is
-        % the target file log). Keeps drains small so the sweep stays
-        % fast and nothing is ever truncated mid-window.
-        lastIdx = idx(end);
-        idx = idx(1:10:end);
-        if idx(end) ~= lastIdx
-            idx(end+1) = lastIdx;      %#ok<AGROW> always deliver the newest sample
-        end
-        if numel(idx) > 2000
-            idx = idx(end-1999:end);
-        end
-        d = v.Data;
-        if ndims(d) == 3
-            d = reshape(d, [], N);           % [w x N] view, cheap
-            d2 = d(:, idx).';
-        elseif size(d, 1) == N
-            d2 = d(idx, :);
-        elseif size(d, 2) == N
-            d2 = d(:, idx).';
-        else
-            continue
-        end
-        t2 = t(idx);
-        AFO_LASTT(key) = t2(end);
-        sigs{end+1} = struct('name', key, 'w', size(d2, 2), ...
-            't', t2(:).', 'v', reshape(double(d2).', 1, [])); %#ok<AGROW>
-    catch
-    end
+    s = pull_run_signal(r, i, AFO_KEYS{i}, 10);
+    if ~isempty(s), sigs{end+1} = s; end %#ok<AGROW>
 end
 AFO_RR = mod(AFO_RR + take, n);
 if isempty(sigs)
@@ -163,4 +141,51 @@ if isempty(sigs)
 end
 out = jsonencode(struct('ok', true, 'signals', {sigs}, ...
     'nkeys', numel(sigs), 'diag', {diag}));
+end
+
+function s = pull_run_signal(r, i, key, DEC)
+%Extract new samples for run-signal index i (shared by both planes).
+%   Incremental past AFO_LASTT(key); 10 s time cap on fresh attach;
+%   decimation by DEC for the live view; newest sample always delivered.
+global AFO_LASTT
+s = [];
+try
+    sg = r.getSignalByIndex(i);
+    v = sg.Values;
+    if isempty(v), return; end
+    t = double(v.Time(:));
+    Npt = numel(t);
+    if Npt == 0, return; end
+    last = -inf;
+    if isKey(AFO_LASTT, key), last = AFO_LASTT(key); end
+    idx = find(t > last);
+    if isempty(idx), return; end
+    tcap = t(idx(end)) - 10;
+    idx = idx(t(idx) >= tcap);
+    lastIdx = idx(end);
+    idx = idx(1:DEC:end);
+    if idx(end) ~= lastIdx
+        idx(end+1) = lastIdx; %#ok<AGROW>
+    end
+    if numel(idx) > 2000
+        idx = idx(end-1999:end);
+    end
+    d = v.Data;
+    if ndims(d) == 3
+        d = reshape(d, [], Npt);             % [w x N] view, cheap
+        d2 = d(:, idx).';
+    elseif size(d, 1) == Npt
+        d2 = d(idx, :);
+    elseif size(d, 2) == Npt
+        d2 = d(:, idx).';
+    else
+        return
+    end
+    t2 = t(idx);
+    AFO_LASTT(key) = t2(end);
+    s = struct('name', key, 'w', size(d2, 2), ...
+        't', t2(:).', 'v', reshape(double(d2).', 1, []));
+catch
+    s = [];
+end
 end

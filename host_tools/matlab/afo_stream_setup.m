@@ -20,7 +20,7 @@ function out = afo_stream_setup()
 %   identical keys in both modes), so the console's channel set does not
 %   change when the mode falls back. Returns JSON
 %   {ok, mode:'instrument'|'run', app, nsignames, notes} / {ok:false, err}.
-global AFO_MODE AFO_INST AFO_BUF AFO_SIGNAMES AFO_EVTINFO
+global AFO_MODE AFO_INST AFO_BUF AFO_SIGNAMES AFO_KEYMAP AFO_EVTINFO
 global AFO_RUNID AFO_LASTT AFO_KEYS AFO_RR
 try
     % ---- enumerate signal names from the live SDI run (needed by both
@@ -102,6 +102,12 @@ try
             AFO_BUF = containers.Map('KeyType', 'char', 'ValueType', 'any');
         end
         AFO_SIGNAMES = signames;
+        % event-map lookup: the instrument event routes data by
+        % 'blockpath:port' (see afo_stream_cb) — map those to display keys
+        AFO_KEYMAP = containers.Map('KeyType', 'char', 'ValueType', 'char');
+        for i = 1:numel(signames)
+            AFO_KEYMAP(sprintf('%s:%d', signames(i).bp, signames(i).pi)) = signames(i).key;
+        end
         AFO_EVTINFO = '';
         mode = 'instrument';
     catch instErr

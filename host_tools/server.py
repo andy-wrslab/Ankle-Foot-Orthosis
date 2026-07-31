@@ -58,9 +58,12 @@ ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
 ap.add_argument("--target", default="TargetPC1", help="Speedgoat target name for slrealtime()")
 ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe (ping)")
-ap.add_argument("--gp-mat", default=r"C:\Users\Andy\Desktop\AFO\best_gp_Haoran_synced_.mat",
+ap.add_argument("--gp-mat", default=str(HERE / "gp" / "best_gp_Haoran_synced_.mat"),
                 help="subject GP ensemble MAT-file the model requires; loaded into the base "
                      "workspace on every CONNECT (empty string disables)")
+ap.add_argument("--own-engine", action="store_true",
+                help="always start a private headless MATLAB engine (ignore shared sessions) — "
+                     "no manually-opened MATLAB needed")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine entirely")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
 ARGS = ap.parse_args()
@@ -73,7 +76,9 @@ LIVELY_WIN_S = 5.0    # ...within this window to be freeze-eligible
 BATCH_S = 0.05        # WebSocket flush interval
 STATUS_S = 0.5        # status broadcast interval
 BACKFILL_S = 10.0     # history replayed to a newly connected client
-GRID_DT = 0.01        # stream is re-emitted on this uniform grid (ZOH)
+GRID_DT = 0.001       # stream is re-emitted on this uniform grid (ZOH) —
+                      # 1 kHz, matching the model base rate, so the console
+                      # records and shows full-resolution data like the SDI
 DRAIN_S = 0.4         # SDI-run drain interval
                       # (its cost grows with run length; the model's own File
                       # Log blocks record continuously regardless)
@@ -334,7 +339,7 @@ class MatlabRT:
             return {"ok": True, "mode": self.mode}
         import matlab.engine
         try:
-            names = matlab.engine.find_matlab()
+            names = [] if ARGS.own_engine else matlab.engine.find_matlab()
             if names:
                 self.eng = matlab.engine.connect_matlab(names[0])
                 self.mode = f"shared:{names[0]}"
