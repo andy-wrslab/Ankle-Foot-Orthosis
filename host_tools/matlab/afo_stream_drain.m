@@ -6,7 +6,7 @@ function out = afo_stream_drain()
 %   as a whole never pauses. Returns {ok, signals:[{name,w,t,v}], nkeys,
 %   diag}. If a newer run appears (new recording), switches and resets.
 global AFO_RUNID AFO_LASTT AFO_KEYS AFO_RR
-SLICE = 16;
+SLICE = 22;
 try
     if isempty(AFO_RUNID)
         out = jsonencode(struct('ok', false, 'err', 'stream not set up'));
@@ -47,6 +47,14 @@ try
             % capped by time (10 s) plus a hard point cap
             tcap = t(idx(end)) - 10;
             idx = idx(t(idx) >= tcap);
+            % decimate to ~100 Hz for the live view (the full-rate record is
+            % the target file log). Keeps drains small so the sweep stays
+            % fast and nothing is ever truncated mid-window.
+            lastIdx = idx(end);
+            idx = idx(1:10:end);
+            if idx(end) ~= lastIdx
+                idx(end+1) = lastIdx;      % always deliver the newest sample
+            end
             if numel(idx) > 2000
                 idx = idx(end-1999:end);
             end

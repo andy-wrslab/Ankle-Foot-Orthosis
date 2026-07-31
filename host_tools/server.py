@@ -61,12 +61,17 @@ ARGS = ap.parse_args()
 
 ENGINE_GAP_S = 6.0    # stream gap threshold (drain slices arrive every ~1 s)
 AUTOREC_STOP_S = 15.0 # close the host CSV after this much stream silence
-FLAT_S = 0.10         # channel unchanged this long while stream alive -> flat
+FREEZE_AFTER_S = 2.0  # a lively channel unchanged this long -> frozen
+LIVELY_N = 20         # channel must change this many times...
+LIVELY_WIN_S = 5.0    # ...within this window to be freeze-eligible
 BATCH_S = 0.05        # WebSocket flush interval
 STATUS_S = 0.5        # status broadcast interval
 BACKFILL_S = 10.0     # history replayed to a newly connected client
 GRID_DT = 0.01        # stream is re-emitted on this uniform grid (ZOH)
 DRAIN_S = 0.4         # SDI-run drain interval
+RUN_ROTATE_S = 120.0  # rotate the recording run so sg.Values stays cheap
+                      # (its cost grows with run length; the model's own File
+                      # Log blocks record continuously regardless)
 
 
 def _san(name):
@@ -153,6 +158,7 @@ class Stream:
         self.rate_win = deque(maxlen=4000)
         self.last_vals = {}
         self.last_change = {}
+        self.change_hist = {}       # name -> deque of recent change times
 
     def alive(self):
         return self.last_wall and (time.monotonic() - self.last_wall) < self.gap_window
@@ -175,6 +181,10 @@ class Stream:
             lv = self.last_vals.get(name)
             if lv is None or abs(v - lv) > 1e-9:
                 self.last_change[name] = t
+                h = self.change_hist.get(name)
+                if h is None:
+                    h = self.change_hist[name] = deque(maxlen=LIVELY_N)
+                h.append(t)
             self.last_vals[name] = v
         self.n_rows += 1
         self.last_t = t
@@ -186,12 +196,23 @@ class Stream:
         REC.write(t, vals)
 
     def flat_channels(self):
+        """Frozen channels: only channels that were recently lively (>=LIVELY_N
+        changes within LIVELY_WIN_S — i.e. noisy analog signals) can be flagged.
+        Constants, status codes and step signals are never eligible."""
         if not self.alive():
             return []
         t = self.last_t
-        out = [n for n in CH.names
-               if n not in CH.flat_excluded and t - self.last_change.get(n, 0.0) > FLAT_S]
-        return out if len(out) < max(1, len(CH.names) - len(CH.flat_excluded)) else []
+        out = []
+        for n in CH.names:
+            h = self.change_hist.get(n)
+            if not h or len(h) < LIVELY_N:
+                continue
+            lc = self.last_change.get(n, 0.0)
+            if t - lc <= FREEZE_AFTER_S:
+                continue
+            if (h[-1] - h[0]) <= LIVELY_WIN_S:      # it WAS changing fast, then stopped
+                out.append(n)
+        return out
 
 STREAM = Stream()
 EVENTS = asyncio.Queue()
@@ -427,6 +448,8 @@ class MatlabRT:
         return out
 
 ML = MatlabRT()
+ML._import()   # heavy DLL import on the MAIN thread — importing matlab.engine
+               # inside a worker thread can hang indefinitely
 ML_STATUS_CACHE = {"connected": False, "available": None}
 
 
@@ -446,7 +469,11 @@ class EngineStream:
         self.restart_tried = False    # escalation 1: recording restart
         self.flush_tried = False      # escalation 2: full recovery (afo_recover)
         self.next_guidance_wall = 0.0
+        self.run_pinned_wall = 0.0    # when the current SDI run was pinned
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
+        self.adv_wall = {}        # raw signal name -> wall time it last advanced
+        self.pend = {}            # raw signal name -> deque[(t, [element values])]
+        self.chan_map = {}        # raw signal name -> expanded channel ids
         self.lastv = {}           # expanded channel name -> last value (ZOH)
         self.known = {}           # persistent discovered set: name -> width
         self.grid_t = None
@@ -456,6 +483,9 @@ class EngineStream:
         self.setup_ok = False
         self.next_setup_wall = 0.0
         self.last_sig_t = {}
+        self.adv_wall = {}
+        self.pend = {}
+        self.chan_map = {}
         self.lastv = {}
         self.known = {}
         self.grid_t = None
@@ -474,13 +504,15 @@ class EngineStream:
             w = int(s.get("w", 1) or 1)
             if self.known.get(nm) != w:
                 self.known[nm] = w
+                base = _san(nm)
+                self.chan_map[nm] = [base] if w <= 1 else [f"{base}({k})" for k in range(1, w + 1)]
         sig_list = sorted(self.known.items())
         changed = CH.adopt_discovered(sig_list) if sig_list else False
         if changed:
             self.lastv = {}
-            self.grid_t = None
-        # collect fresh samples as (t, {channel: value})
-        events = []
+        # buffer fresh samples per signal — drains deliver round-robin slices,
+        # so different signals lag each other by up to one sweep
+        noww = time.monotonic()
         for s in signals:
             name = s.get("name", "?")
             w = int(s.get("w", 1) or 1)
@@ -490,8 +522,7 @@ class EngineStream:
                 ts = [ts]
             if isinstance(vs, (int, float)):
                 vs = [vs]
-            base = _san(name)
-            chans = [base] if w <= 1 else [f"{base}({k})" for k in range(1, w + 1)]
+            q = self.pend.setdefault(name, deque())
             newest = self.last_sig_t.get(name, -1.0)
             for i, t in enumerate(ts):
                 if t <= newest:
@@ -499,24 +530,34 @@ class EngineStream:
                 row = vs[i * w:(i + 1) * w]
                 if len(row) != w:
                     continue
-                events.append((float(t), dict(zip(chans, [float(x) for x in row]))))
-            if ts:
-                self.last_sig_t[name] = max(newest, float(ts[-1]))
-        if not events:
+                q.append((float(t), [float(x) for x in row]))
+            if ts and float(ts[-1]) > newest:
+                self.last_sig_t[name] = float(ts[-1])
+                self.adv_wall[name] = noww
+            while len(q) > 60000:
+                q.popleft()
+        # watermark: only emit rows where EVERY actively-advancing signal has
+        # delivered its samples, so no channel is ever fabricated as flat.
+        # Sparse/triggered signals (not advancing for >15 s) are excluded from
+        # the watermark and simply zero-order hold — correct for them anyway.
+        active = [n for n in self.known
+                  if n in self.last_sig_t and (noww - self.adv_wall.get(n, 0.0)) < 15.0]
+        if not active:
             return changed, 0
-        events.sort(key=lambda e: e[0])
-        rows = 0
+        wm = min(self.last_sig_t[n] for n in active)
         if self.grid_t is None:
-            self.grid_t = events[0][0]
-        for t, upd in events:
-            while self.grid_t + GRID_DT <= t:
-                self.grid_t += GRID_DT
-                STREAM.push(self.grid_t, [self.lastv.get(n, 0.0) for n in CH.names])
-                rows += 1
-            self.lastv.update(upd)
-        # emit the final instant so the newest values are visible immediately
-        if events[-1][0] >= self.grid_t + GRID_DT:
-            self.grid_t = events[-1][0]
+            self.grid_t = wm - GRID_DT
+        rows = 0
+        while self.grid_t + GRID_DT <= wm and rows < 2000:
+            self.grid_t += GRID_DT
+            for name, q in self.pend.items():
+                chans = self.chan_map.get(name)
+                if not chans:
+                    continue
+                while q and q[0][0] <= self.grid_t:
+                    _, valsrow = q.popleft()
+                    for c, vv in zip(chans, valsrow):
+                        self.lastv[c] = vv
             STREAM.push(self.grid_t, [self.lastv.get(n, 0.0) for n in CH.names])
             rows += 1
         return changed, rows
@@ -577,6 +618,7 @@ async def engine_loop():
                 STREAM.src = "instrument stream (XCP)"
                 STREAM.gap_window = ENGINE_GAP_S
                 ES.last_rows_wall = time.monotonic()   # grace period starts now
+                ES.run_pinned_wall = time.monotonic()
                 note("ok", "live SDI run pinned",
                      f"{r.get('app','?')} · {r.get('nsignames')} signals")
                 notes = (r.get("notes") or "").strip()
@@ -649,6 +691,21 @@ async def engine_loop():
                 REC.stop("channel set changed")
             await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
                              binary=False)
+        # rotate the recording run periodically: sg.Values extraction cost is
+        # proportional to run length, so a bounded run keeps drains fast for
+        # arbitrarily long sessions (rotation pause << gap window)
+        if (ES.setup_ok and running and ES.run_pinned_wall
+                and time.monotonic() - ES.run_pinned_wall > RUN_ROTATE_S):
+            note("info", "rotating recording run",
+                 "bounded run keeps live streaming fast · target File Log unaffected")
+            await asyncio.to_thread(ML.call_json, "afo_recording('stop')")
+            await asyncio.sleep(0.5)
+            await asyncio.to_thread(ML.call_json, "afo_recording('start')")
+            ES.sdi_recording = True
+            ES.setup_ok = False            # re-pin the fresh run
+            ES.next_setup_wall = 0.0
+            ES.last_rows_wall = time.monotonic()
+            ES.run_pinned_wall = 0.0
 
 
 async def _import_filelog():
@@ -706,6 +763,26 @@ def _stream_status():
 @app.get("/api/status")
 def status():
     return _stream_status()
+
+
+@app.get("/api/debug/es")
+def debug_es():
+    """Internal state of the stream assembler (diagnostics)."""
+    noww = time.monotonic()
+    lag = sorted(ES.last_sig_t.items(), key=lambda kv: kv[1])
+    return {
+        "grid_t": ES.grid_t,
+        "n_known": len(ES.known),
+        "n_with_t": len(ES.last_sig_t),
+        "n_active": len([n for n in ES.known
+                         if n in ES.last_sig_t and (noww - ES.adv_wall.get(n, 0.0)) < 15.0]),
+        "watermark_laggards": [{"name": n, "t": round(t, 3),
+                                "adv_age_s": round(noww - ES.adv_wall.get(n, 0.0), 1)}
+                               for n, t in lag[:8]],
+        "newest": [{"name": n, "t": round(t, 3)} for n, t in lag[-3:]],
+        "pend_backlogs": [{"name": n, "qlen": len(q)}
+                          for n, q in sorted(ES.pend.items(), key=lambda kv: -len(kv[1]))[:8]],
+    }
 
 
 @app.post("/api/rt/connect")
