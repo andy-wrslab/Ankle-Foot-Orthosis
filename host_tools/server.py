@@ -443,7 +443,8 @@ class EngineStream:
         self.last_diag = ""
         self.extra_sleep = 0.0        # adaptive cadence: drains slow as runs grow
         self.last_rows_wall = 0.0     # when the live stream last produced samples
-        self.restart_tried = False    # one automatic recording restart per attach
+        self.restart_tried = False    # escalation 1: recording restart
+        self.flush_tried = False      # escalation 2: full recovery (afo_recover)
         self.next_guidance_wall = 0.0
         self.last_sig_t = {}      # raw signal name -> newest timestamp ingested
         self.lastv = {}           # expanded channel name -> last value (ZOH)
@@ -460,6 +461,7 @@ class EngineStream:
         self.grid_t = None
         self.last_rows_wall = 0.0
         self.restart_tried = False
+        self.flush_tried = False
         self.next_guidance_wall = 0.0
 
     def ingest(self, signals):
@@ -620,6 +622,19 @@ async def engine_loop():
                     await asyncio.to_thread(ML.call_json, "afo_recording('start')")
                     ES.sdi_recording = True
                     ES.setup_ok = False           # re-pin the (hopefully new) run
+                    ES.next_setup_wall = 0.0
+                    ES.last_rows_wall = time.monotonic()
+                elif not ES.flush_tried:
+                    ES.flush_tried = True
+                    note("warn", "live stream still silent — running full recovery",
+                         "flush stale instruments · reconnect target · restart recording")
+                    rr = await asyncio.to_thread(ML.call_json, f"afo_recover('{ARGS.target}')")
+                    if rr.get("ok"):
+                        note("ok", "recovery sequence completed — waiting for the stream", "")
+                    else:
+                        note("warn", "recovery sequence failed", rr.get("err", ""))
+                    ES.sdi_recording = True
+                    ES.setup_ok = False
                     ES.next_setup_wall = 0.0
                     ES.last_rows_wall = time.monotonic()
                 elif time.monotonic() >= ES.next_guidance_wall:
