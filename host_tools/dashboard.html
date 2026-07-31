@@ -359,7 +359,7 @@ const buf = {}; channels.forEach(c=>buf[c.id]=new Float32Array(N));
 const ts = new Float64Array(N);
 let head=-1, count=0;
 const last={}, lastChange={};
-let pktTimes=[], simT=0, recT=0, gaps=0, lastPktWall=0;
+let pktTimes=[], simT=0, recT=0, gaps=0, lastPktWall=0, execWall=0;
 let dropUntil=0, imuStallUntil=0, nextPartial=12, nextDrop=26;
 let strideV=1.24, strideL=1.31, syncLed=0, _lastP=0, zeroOff=0;
 const yr={}, yLock={};
@@ -741,9 +741,12 @@ function frame(){
   if(now-_lf<32) return; _lf=now;
   const running=S.exec;
   const rate=pktTimes.length;
-  /* STALL means a stream that existed went silent — never fires before the
-     first data arrives (e.g., model running but instrument not attached yet) */
-  const stalled=running && lastPktWall>0 && (now-lastPktWall>(S.stallMs||250));
+  /* STALL: a stream that existed went silent, OR the model has been running
+     for 15+ s in this tab and no data has ever arrived (post-reboot dead
+     stream). The 15 s grace covers a normal connect -> discovery -> data. */
+  if(running && !execWall) execWall=now; else if(!running) execWall=0;
+  const stalled=running && ((lastPktWall>0 && now-lastPktWall>(S.stallMs||250))
+                         || (lastPktWall===0 && now-execWall>15000));
   if(stalled && !S.stalled){ S.stalled=true; log('error','no live data for >'+(S.stallMs||250)+' ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
 
   const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
