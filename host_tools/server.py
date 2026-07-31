@@ -482,6 +482,7 @@ class EngineStream:
         self.grid_t = None
         self.sdi_recording = False
         self.plane = "none"       # active data plane: instrument push / run polling
+        self.setup_fail_wall = 0.0    # when setup started failing with the model running
 
     def reset(self):
         self.setup_ok = False
@@ -497,6 +498,7 @@ class EngineStream:
         self.restart_tried = False
         self.flush_tried = False
         self.next_guidance_wall = 0.0
+        self.setup_fail_wall = 0.0
 
     def ingest(self, signals):
         """Returns (changed, rows). signals: [{name,w,t:[...],v:[flat]}].
@@ -569,6 +571,35 @@ class EngineStream:
 ES = EngineStream()
 
 
+async def _setup_fail_escalate(running):
+    """Post-reboot deadlock breaker. After a Speedgoat reboot the host XCP
+    session is stale: every new recording run stays empty, so stream setup
+    can never succeed and the silent-stream watchdog (which requires
+    setup_ok) never arms. Seen live 2026-07-31 — recovery had to be run by
+    hand. If setup keeps failing for >25 s while the model runs, fire one
+    full recovery from here as well."""
+    if not running:
+        ES.setup_fail_wall = 0.0
+        return
+    noww = time.monotonic()
+    if not ES.setup_fail_wall:
+        ES.setup_fail_wall = noww
+        return
+    if noww - ES.setup_fail_wall < 25 or ES.flush_tried:
+        return
+    ES.flush_tried = True
+    ES.setup_fail_wall = 0.0
+    note("warn", "setup keeps failing with the model running — full recovery",
+         "stale host XCP session suspected (target reboot?) · afo_recover")
+    rr = await asyncio.to_thread(ML.call_json, f"afo_recover('{ARGS.target}')")
+    if rr.get("ok"):
+        note("ok", "recovery sequence completed — retrying stream setup", "")
+    else:
+        note("warn", "recovery sequence failed", rr.get("err", ""))
+    ES.sdi_recording = True
+    ES.next_setup_wall = 0.0
+
+
 async def engine_loop():
     while True:
         await asyncio.sleep(DRAIN_S + ES.extra_sleep)
@@ -614,10 +645,12 @@ async def engine_loop():
                 if err != ES.last_setup_err:
                     note("warn", "stream setup incomplete — will retry", err)
                     ES.last_setup_err = err
+                await _setup_fail_escalate(running)
                 continue
             if r.get("ok"):
                 ES.setup_ok = True
                 ES.last_setup_err = ""
+                ES.setup_fail_wall = 0.0
                 ES.plane = r.get("mode", "run")
                 STREAM.mode = "engine"
                 STREAM.src = ("instrument push (XCP)" if ES.plane == "instrument"
@@ -635,6 +668,7 @@ async def engine_loop():
                 if err != ES.last_setup_err:    # log each distinct failure once
                     note("warn", "stream setup failed", err)
                     ES.last_setup_err = err
+                await _setup_fail_escalate(running)
                 continue
         t0 = time.monotonic()
         r = await asyncio.to_thread(ML.call_json, "afo_stream_drain()")
