@@ -2,15 +2,18 @@
 """
 AFO Rig Console backend.
 
-Data plane: the live SDI run, read through the MATLAB engine.
-    startRecording on the target streams every SDI-instrumented (blue
-    badge) signal into a live Simulation Data Inspector run in the shared
-    MATLAB session. The server reads that run incrementally a few times
-    per second (afo_stream_drain.m), expands vector signals into
-    per-element channels (name(1..w)), re-emits rows on a uniform 100 Hz
-    grid, and relays them to the dashboard over WebSocket. The discovered
-    channel set is cached (signals_cache.json) and adopted by the
-    dashboard automatically.
+Data plane: instrument push over XCP, with SDI-run polling as fallback.
+    A single long-lived slrealtime.Instrument (created once per MATLAB
+    session, never removed — churn wedges XCP; see afo_stream_setup.m)
+    receives every SDI-instrumented (blue badge) signal by push callback
+    at the full ~1 kHz stream rate into an accumulator, which the server
+    drains about once per second (afo_stream_drain.m). If the instrument
+    plane cannot be established, the server falls back to incrementally
+    reading the live SDI run that startRecording creates. Either way,
+    vector signals expand into per-element channels (name(1..w)), rows
+    re-emit on a uniform 100 Hz grid, and the dashboard receives them
+    over WebSocket. The discovered channel set is cached
+    (signals_cache.json) and adopted by the dashboard automatically.
 
 Recording:
     While the model runs, the target records all instrumented signals
@@ -478,6 +481,7 @@ class EngineStream:
         self.known = {}           # persistent discovered set: name -> width
         self.grid_t = None
         self.sdi_recording = False
+        self.plane = "none"       # active data plane: instrument push / run polling
 
     def reset(self):
         self.setup_ok = False
@@ -614,12 +618,14 @@ async def engine_loop():
             if r.get("ok"):
                 ES.setup_ok = True
                 ES.last_setup_err = ""
+                ES.plane = r.get("mode", "run")
                 STREAM.mode = "engine"
-                STREAM.src = "instrument stream (XCP)"
+                STREAM.src = ("instrument push (XCP)" if ES.plane == "instrument"
+                              else "SDI run polling (XCP)")
                 STREAM.gap_window = ENGINE_GAP_S
                 ES.last_rows_wall = time.monotonic()   # grace period starts now
                 ES.run_pinned_wall = time.monotonic()
-                note("ok", "live SDI run pinned",
+                note("ok", f"live data plane ready · {ES.plane}",
                      f"{r.get('app','?')} · {r.get('nsignames')} signals")
                 notes = (r.get("notes") or "").strip()
                 if notes:
@@ -691,9 +697,10 @@ async def engine_loop():
                 REC.stop("channel set changed")
             await _broadcast(json.dumps({"type": "hello", "channels": CH.defs, "groups": CH.groups}),
                              binary=False)
-        # rotate the recording run periodically: sg.Values extraction cost is
-        # proportional to run length, so a bounded run keeps drains fast for
-        # arbitrarily long sessions (rotation pause << gap window)
+        # rotate the recording run periodically: bounds the SDI run so the
+        # fallback plane's sg.Values reads stay fast and desktop SDI memory
+        # stays bounded. The instrument push plane is insensitive to run
+        # changes, and rotation's re-setup also heals partial enumeration.
         if (ES.setup_ok and running and ES.run_pinned_wall
                 and time.monotonic() - ES.run_pinned_wall > RUN_ROTATE_S):
             note("info", "rotating recording run",
@@ -771,6 +778,7 @@ def debug_es():
     noww = time.monotonic()
     lag = sorted(ES.last_sig_t.items(), key=lambda kv: kv[1])
     return {
+        "plane": ES.plane,
         "grid_t": ES.grid_t,
         "n_known": len(ES.known),
         "n_with_t": len(ES.last_sig_t),
