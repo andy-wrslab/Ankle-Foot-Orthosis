@@ -32,7 +32,6 @@ Run:  python server.py        then open http://localhost:8321.
 import argparse
 import array
 import asyncio
-import base64
 import contextlib
 import json
 import re
@@ -497,6 +496,7 @@ class EngineStream:
         self.sdi_recording = False
         self.plane = "none"       # active data plane: instrument push / run polling
         self.setup_fail_wall = 0.0    # when setup started failing with the model running
+        self.slow = set()         # polled stragglers: never gate the watermark
 
     def reset(self):
         self.setup_ok = False
@@ -513,27 +513,40 @@ class EngineStream:
         self.flush_tried = False
         self.next_guidance_wall = 0.0
         self.setup_fail_wall = 0.0
+        self.slow = set()
 
-    def ingest(self, signals):
-        """Returns (changed, rows). signals arrive either binary-packed
-        ({name,w,tb,vb}: base64 float64 times / float32 row-major values —
-        what the 1 kHz drain sends; ~3x smaller and far cheaper to parse
-        than JSON numbers) or as legacy JSON arrays ({name,w,t,v}).
-        Drains may deliver subsets, so discovery merges into a persistent
-        set — the channel manifest only changes when a genuinely new
-        signal appears."""
+    def ingest(self, signals, binpath=None):
+        """Returns (changed, rows). Samples arrive via a binary side file
+        (drain manifest {name,w,n,slow} + per-signal [t f64][v f32] blocks
+        in `binpath` — multi-MB payloads must not cross the engine as
+        strings) or as legacy JSON arrays ({name,w,t,v}). Drains may
+        deliver subsets, so discovery merges into a persistent set — the
+        channel manifest only changes when a genuinely new signal appears.
+        Signals flagged slow=1 (polled stragglers) never gate the
+        watermark; they zero-order hold like any sparse signal."""
+        blob = b""
+        if binpath and signals:
+            try:
+                with open(binpath, "rb") as f:
+                    blob = f.read()
+            except Exception as ex:
+                note("warn", "drain binary unreadable — batch dropped", str(ex))
+                return False, 0
         norm = []
+        off = 0
         for s in signals:
             nm = s.get("name", "?")
             w = int(s.get("w", 1) or 1)
-            if "tb" in s:
-                try:
-                    ts = array.array("d", base64.b64decode(s["tb"]))
-                    vs = array.array("f", base64.b64decode(s["vb"]))
-                except Exception:
-                    continue
-                if len(vs) != len(ts) * w:
-                    continue
+            if "n" in s and binpath:
+                n = int(s.get("n", 0) or 0)
+                tb, vb = 8 * n, 4 * n * w
+                if off + tb + vb > len(blob):
+                    break                     # truncated file: keep what parsed
+                ts = array.array("d")
+                ts.frombytes(blob[off:off + tb])
+                vs = array.array("f")
+                vs.frombytes(blob[off + tb:off + tb + vb])
+                off += tb + vb
             else:
                 ts = s.get("t") or []
                 vs = s.get("v") or []
@@ -541,6 +554,8 @@ class EngineStream:
                     ts = [ts]
                 if isinstance(vs, (int, float)):
                     vs = [vs]
+            if s.get("slow"):
+                self.slow.add(nm)
             norm.append((nm, w, ts, vs))
         # model time jumped backward (target reboot or model restart): every
         # per-signal last-t and the watermark are ahead of the new epoch, so
@@ -586,14 +601,15 @@ class EngineStream:
         # Sparse/triggered signals (not advancing for >15 s) are excluded from
         # the watermark and simply zero-order hold — correct for them anyway.
         active = [n for n in self.known
-                  if n in self.last_sig_t and (noww - self.adv_wall.get(n, 0.0)) < 15.0]
+                  if n in self.last_sig_t and n not in self.slow
+                  and (noww - self.adv_wall.get(n, 0.0)) < 15.0]
         if not active:
             return changed, 0
         wm = min(self.last_sig_t[n] for n in active)
         if self.grid_t is None:
             self.grid_t = wm - GRID_DT
         rows = 0
-        while self.grid_t + GRID_DT <= wm and rows < 2000:
+        while self.grid_t + GRID_DT <= wm and rows < 6000:
             self.grid_t += GRID_DT
             for name, q in self.pend.items():
                 chans = self.chan_map.get(name)
@@ -727,7 +743,7 @@ async def engine_loop():
         # an ingest bug must never silently kill the engine loop (a TypeError
         # here did exactly that on 2026-07-31 — the server became a zombie)
         try:
-            changed, _rows = ES.ingest(r.get("signals") or [])
+            changed, _rows = ES.ingest(r.get("signals") or [], r.get("bin"))
         except Exception as ex:
             err = f"{type(ex).__name__}: {ex}"
             if err != ES.last_diag:

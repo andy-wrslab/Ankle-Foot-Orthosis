@@ -1,13 +1,15 @@
 function out = afo_stream_drain()
-%AFO_STREAM_DRAIN Return new live samples as JSON {ok, signals, nkeys, diag}.
-%   signals: [{name, w, t:[...], v:[row-major flatten of numel(t)-by-w]}].
+%AFO_STREAM_DRAIN Return new live samples: tiny JSON manifest + binary file.
+%   Multi-MB payloads must not cross the MATLAB engine as strings (string
+%   marshalling dominated the drain at 1 kHz), so samples are written to
+%   one binary file per drain — per signal: [t float64 xN][v float32 xN*w]
+%   in manifest order — and the JSON carries {ok, bin, signals:[{name,w,n,
+%   slow}]}. Signals flagged slow=1 are polled stragglers the instrument
+%   cannot stream: the server keeps them out of the watermark (they ZOH).
 %   Two planes (chosen by afo_stream_setup):
 %     instrument — consume the AFO_BUF push accumulator at the FULL push
-%       rate (~1 kHz; the browser decimates for drawing, the host CSV
-%       records everything). Signals the instrument cannot stream (not in
-%       the event map — e.g. fixed-point skips) are polled from the live
-%       SDI run on a slow stride so no channel ever goes stale. O(new
-%       samples) for pushed signals regardless of run length.
+%       rate (~1 kHz); non-streamable signals are polled every 5th drain.
+%       O(new samples) regardless of run length.
 %     run — incremental sg.Values polling of the live SDI run (fallback;
 %       cost grows with run length on trial-aligned runs).
 global AFO_MODE
@@ -44,7 +46,7 @@ end
 if ~isa(AFO_PUSHSEEN, 'containers.Map')
     AFO_PUSHSEEN = containers.Map('KeyType', 'char', 'ValueType', 'logical');
 end
-sigs = {};
+entries = {};
 if isa(AFO_BUF, 'containers.Map') && AFO_BUF.Count > 0
     ks = keys(AFO_BUF);
     for i = 1:numel(ks)
@@ -52,27 +54,32 @@ if isa(AFO_BUF, 'containers.Map') && AFO_BUF.Count > 0
         remove(AFO_BUF, ks{i});
         if isempty(v) || size(v, 2) < 2, continue; end
         AFO_PUSHSEEN(ks{i}) = true;
-        sigs{end+1} = pack_sig(ks{i}, v(:, 1), v(:, 2:end)); %#ok<AGROW>
+        entries{end+1} = struct('name', ks{i}, 't', v(:, 1), ...
+            'd', v(:, 2:end), 'slow', 0); %#ok<AGROW>
     end
 end
 % every 5th drain, poll signals push has never delivered (slow stride:
-% their Values cost grows with run length on trial-aligned runs)
+% their Values cost grows with run length on trial-aligned runs). They
+% are flagged slow so the server's watermark never waits on them.
 if isempty(AFO_MISSTICK), AFO_MISSTICK = 0; end
 AFO_MISSTICK = AFO_MISSTICK + 1;
-if ~isempty(sigs) && mod(AFO_MISSTICK, 5) == 0 && ~isempty(AFO_RUNID)
+if ~isempty(entries) && mod(AFO_MISSTICK, 5) == 0 && ~isempty(AFO_RUNID)
     try
         r = Simulink.sdi.getRun(AFO_RUNID);
         n = min(r.SignalCount, numel(AFO_KEYS));
         for i = 1:n
             key = AFO_KEYS{i};
             if isKey(AFO_PUSHSEEN, key), continue; end
-            s = pull_run_signal(r, i, key, 10);
-            if ~isempty(s), sigs{end+1} = s; end %#ok<AGROW>
+            e = pull_run_signal(r, i, key, 10);
+            if ~isempty(e)
+                e.slow = 1;
+                entries{end+1} = e; %#ok<AGROW>
+            end
         end
     catch
     end
 end
-if isempty(sigs)
+if isempty(entries)
     % nothing pushed this cycle - poll the live SDI run instead
     if isempty(AFO_EVTINFO)
         why = 'push idle (callback has not fired yet)';
@@ -80,8 +87,6 @@ if isempty(sigs)
         why = 'push idle (callback fired, nothing extracted)';
     end
     out = drain_run();
-    % annotate only empty results: re-encoding data-carrying JSON would
-    % turn 1-point arrays into scalars and break the server's parsing
     try
         o = jsondecode(out);
         if isfield(o, 'ok') && o.ok && (~isfield(o, 'nkeys') || o.nkeys == 0)
@@ -93,8 +98,7 @@ if isempty(sigs)
     end
     return
 end
-out = jsonencode(struct('ok', true, 'signals', {sigs}, ...
-    'nkeys', numel(sigs), 'diag', {{}}));
+out = emit(entries, {});
 end
 
 function out = drain_run()
@@ -124,28 +128,27 @@ if ids(end) ~= AFO_RUNID
 end
 r = Simulink.sdi.getRun(AFO_RUNID);
 n = min(r.SignalCount, numel(AFO_KEYS));
-sigs = {};
+entries = {};
 diag = {};
 take = min(SLICE, n);
 for k = 0:take-1
     i = mod(AFO_RR + k, n) + 1;
-    s = pull_run_signal(r, i, AFO_KEYS{i}, 10);
-    if ~isempty(s), sigs{end+1} = s; end %#ok<AGROW>
+    e = pull_run_signal(r, i, AFO_KEYS{i}, 10);
+    if ~isempty(e), entries{end+1} = e; end %#ok<AGROW>
 end
 AFO_RR = mod(AFO_RR + take, n);
-if isempty(sigs)
+if isempty(entries)
     diag{end+1} = 'no new samples in the live SDI run';
 end
-out = jsonencode(struct('ok', true, 'signals', {sigs}, ...
-    'nkeys', numel(sigs), 'diag', {diag}));
+out = emit(entries, diag);
 end
 
-function s = pull_run_signal(r, i, key, DEC)
+function e = pull_run_signal(r, i, key, DEC)
 %Extract new samples for run-signal index i (shared by both planes).
 %   Incremental past AFO_LASTT(key); 10 s time cap on fresh attach;
-%   decimation by DEC for the live view; newest sample always delivered.
+%   decimation by DEC for polled reads; newest sample always delivered.
 global AFO_LASTT
-s = [];
+e = [];
 try
     sg = r.getSignalByIndex(i);
     v = sg.Values;
@@ -180,18 +183,34 @@ try
     end
     t2 = t(idx);
     AFO_LASTT(key) = t2(end);
-    s = pack_sig(key, t2, double(d2));
+    e = struct('name', key, 't', t2(:), 'd', double(d2), 'slow', 0);
 catch
-    s = [];
+    e = [];
 end
 end
 
-function s = pack_sig(name, t, d)
-%Binary-packed signal: t as float64, values as float32 (row-major
-%[numel(t) x w] flattening), both base64 inside the JSON envelope —
-%roughly 3x smaller and an order of magnitude cheaper to parse than
-%JSON numeric arrays at the full 1 kHz rate.
-s = struct('name', name, 'w', size(d, 2), 'n', numel(t), ...
-    'tb', matlab.net.base64encode(typecast(double(t(:).'), 'uint8')), ...
-    'vb', matlab.net.base64encode(typecast(single(reshape(d.', 1, [])), 'uint8')));
+function out = emit(entries, diag)
+%Write all samples to one binary file; return the tiny JSON manifest.
+%   Per signal, in manifest order: [t float64 xN][v float32 xN*w]
+%   (row-major flattening of the [N x w] value matrix).
+manifest = {};
+binpath = '';
+if ~isempty(entries)
+    binpath = fullfile(tempdir, 'afo_stream_drain.bin');
+    fid = fopen(binpath, 'w');
+    if fid < 0
+        out = jsonencode(struct('ok', false, 'err', ['cannot write ' binpath]));
+        return
+    end
+    for i = 1:numel(entries)
+        e = entries{i};
+        fwrite(fid, e.t, 'double');
+        fwrite(fid, reshape(e.d.', 1, []), 'single');
+        manifest{end+1} = struct('name', e.name, 'w', size(e.d, 2), ...
+            'n', numel(e.t), 'slow', e.slow); %#ok<AGROW>
+    end
+    fclose(fid);
+end
+out = jsonencode(struct('ok', true, 'bin', strrep(binpath, '\', '/'), ...
+    'signals', {manifest}, 'nkeys', numel(manifest), 'diag', {diag}));
 end
