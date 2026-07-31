@@ -745,12 +745,12 @@ function frame(){
   /* STALL means a stream that existed went silent — never fires before the
      first data arrives (e.g., model running but instrument not attached yet) */
   const stalled=running && lastPktWall>0 && (now-lastPktWall>(S.stallMs||250));
-  if(stalled && !S.stalled){ S.stalled=true; log('error','no UDP packets for >250 ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
+  if(stalled && !S.stalled){ S.stalled=true; log('error','no live data for >'+(S.stallMs||250)+' ms · stream STALL','last_seq_age='+Math.round(now-lastPktWall)+' ms'); }
 
   const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
   set('mtime', running? simT.toFixed(3)+' s' : (S.loaded?'0.000 s':'—.——— s'));
   set('appfile', S.built? 'afo_ctrl.mldatx' : MDL+'.slx (source)');
-  set('linkrate', running? (stalled?'0 Hz · stalled':rate+' Hz · 31 ch × f32') : 'idle');
+  set('linkrate', running? (stalled?'0 Hz · stalled':rate+' Hz · '+channels.length+' ch') : 'idle');
   set('exectime', running? simT.toFixed(1)+' s / inf' : '—');
   if(S.diagOpen){
     set('pktage', running? Math.round(now-lastPktWall)+' ms' : '—');

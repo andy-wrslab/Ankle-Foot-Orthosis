@@ -24,6 +24,11 @@ function out = drain_inst()
 %Consume the push accumulator. Entries are removed as they are read;
 %the callback keeps appending concurrently (MATLAB event dispatch is
 %serialized with engine evals, so map access never races).
+%   HYBRID GUARANTEE: whenever the push buffer yields nothing this call,
+%   fall through to the run-polling extraction. A valid-but-silent
+%   instrument (callback firing yet extracting nothing — seen live
+%   2026-07-31 after hot-deploying v4) must never cost data the SDI run
+%   already has. Push simply wins whenever it actually delivers.
 global AFO_MODE AFO_INST AFO_BUF AFO_EVTINFO
 DECIM = 10;   % ~1 kHz push -> ~100 Hz live view, newest sample always kept
 if isempty(AFO_INST) || ~isvalid(AFO_INST)
@@ -34,7 +39,6 @@ if isempty(AFO_INST) || ~isvalid(AFO_INST)
     return
 end
 sigs = {};
-diag = {};
 if ~isempty(AFO_BUF)
     ks = keys(AFO_BUF);
     for i = 1:numel(ks)
@@ -52,14 +56,28 @@ if ~isempty(AFO_BUF)
     end
 end
 if isempty(sigs)
+    % nothing pushed this cycle - poll the live SDI run instead
     if isempty(AFO_EVTINFO)
-        diag{end+1} = 'instrument callback has not fired yet';
+        why = 'push idle (callback has not fired yet)';
     else
-        diag{end+1} = ['callback fired but nothing accumulated · evt ' AFO_EVTINFO];
+        why = 'push idle (callback fired, nothing extracted)';
     end
+    out = drain_run();
+    % annotate only empty results: re-encoding data-carrying JSON would
+    % turn 1-point arrays into scalars and break the server's parsing
+    try
+        o = jsondecode(out);
+        if isfield(o, 'ok') && o.ok && (~isfield(o, 'nkeys') || o.nkeys == 0)
+            o.signals = {};
+            o.diag = {[why ' - falling back to run polling']};
+            out = jsonencode(o);
+        end
+    catch
+    end
+    return
 end
 out = jsonencode(struct('ok', true, 'signals', {sigs}, ...
-    'nkeys', numel(sigs), 'diag', {diag}));
+    'nkeys', numel(sigs), 'diag', {{}}));
 end
 
 function out = drain_run()
