@@ -358,7 +358,7 @@ class MatlabRT:
             self.eng = None
             return {"ok": False, "err": str(e)}
 
-    def connect_target(self):
+    def connect_target(self, load_gp=True):
         # fast reachability probe first (ICMP ping — the QNX target answers no
         # fixed TCP port we can rely on): an off-network rig must fail in ~2 s,
         # not block the (single-threaded) engine — and every status poll behind
@@ -377,9 +377,10 @@ class MatlabRT:
         if not r.get("ok"):
             return r
         # the model requires the subject GP ensemble in the base workspace —
-        # load it before anything touches the target (or the model)
+        # load it before anything touches the target (or the model). Skipped
+        # on automatic wireless reconnects: the variables are already there.
         gp = {"ok": True, "skipped": True}
-        if ARGS.gp_mat:
+        if ARGS.gp_mat and load_gp:
             gp = self.call_json("afo_load_gp('%s')" % ARGS.gp_mat.replace("'", "''"))
         rr = self._eval("tg.connect;")
         chk = self._eval("jsonencode(logical(isConnected(tg)))", nargout=1)
@@ -425,10 +426,9 @@ class MatlabRT:
             return {"ok": False, "err": f"bad JSON from MATLAB: {e}"}
 
     def load(self):
-        if not ARGS.mldatx:
-            return {"ok": False, "err": "no --mldatx configured on the server"}
-        p = str(Path(ARGS.mldatx)).replace("'", "''")
-        return self._eval(f"tg.load('{p}');")
+        # loads the application already installed on the target — the rig
+        # carries exactly one (the startup app), so no local .mldatx needed
+        return self.call_json("afo_load()")
 
     def start(self):
         return self._eval("tg.start;")
@@ -497,6 +497,8 @@ class EngineStream:
         self.plane = "none"       # active data plane: instrument push / run polling
         self.setup_fail_wall = 0.0    # when setup started failing with the model running
         self.slow = set()         # polled stragglers: never gate the watermark
+        self.link_down_wall = 0.0     # when the target link dropped (wireless blip)
+        self.next_reconnect_wall = 0.0
 
     def reset(self):
         self.setup_ok = False
@@ -660,9 +662,27 @@ async def engine_loop():
         await asyncio.sleep(DRAIN_S + ES.extra_sleep)
         m = ML_STATUS_CACHE
         if not (ML.eng and m.get("connected") and m.get("target_conn")):
-            if ES.setup_ok:
-                ES.reset()
+            # wireless rig: a WiFi blip must not tear down stream state — the
+            # target keeps running through it, so incremental reads resume
+            # seamlessly once the link is back. Auto-reconnect while down.
+            if ML.eng and m.get("connected") and ES.setup_ok:
+                noww = time.monotonic()
+                if not ES.link_down_wall:
+                    ES.link_down_wall = noww
+                    ES.next_reconnect_wall = noww + 3.0
+                    note("warn", "target link lost — keeping stream state",
+                         "wireless blip? auto-reconnecting")
+                elif noww >= ES.next_reconnect_wall:
+                    ES.next_reconnect_wall = noww + 10.0
+                    rr = await asyncio.to_thread(ML.connect_target, False)
+                    if rr.get("ok"):
+                        ML_STATUS_CACHE = await asyncio.to_thread(ML.status)
+                        note("ok", "target link restored",
+                             f"down {int(noww - ES.link_down_wall)} s · stream resumes")
+                        ES.link_down_wall = 0.0
+                        ES.last_rows_wall = time.monotonic()   # watchdog grace
             continue
+        ES.link_down_wall = 0.0
         # target-side SDI/FileLog recording follows the model state — and must
         # run BEFORE stream setup, whose live SDI run only exists once
         # recording is active. afo_recording is tolerant: "already recording"
@@ -914,7 +934,8 @@ async def rt_disconnect():
 async def rt_load():
     r = await asyncio.to_thread(ML.load)
     note("ok" if r.get("ok") else "error",
-         "application load requested" if r.get("ok") else "load failed", r.get("err", ARGS.mldatx))
+         f"application loaded · {r.get('app', '?')}" if r.get("ok") else "load failed",
+         r.get("err", ""))
     return JSONResponse(r, status_code=200 if r.get("ok") else 503)
 
 

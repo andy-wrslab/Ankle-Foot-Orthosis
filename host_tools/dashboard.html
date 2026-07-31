@@ -761,7 +761,7 @@ function frame(){
 
   const set=(k,v)=>{ const el=root.querySelector('[data-live="'+k+'"]'); if(el&&el.textContent!==v) el.textContent=v; };
   set('mtime', running? simT.toFixed(3)+' s' : (S.loaded?'0.000 s':'—.——— s'));
-  set('appfile', S.built? 'afo_ctrl.mldatx' : MDL+'.slx (source)');
+  set('appfile', S.appName? S.appName+'.mldatx' : (S.built? MDL+'.mldatx' : MDL+'.slx (source)'));
   set('linkrate', running? (stalled?'0 Hz · stalled':rate+' Hz · '+channels.length+' ch') : 'idle');
   set('exectime', running? simT.toFixed(1)+' s / inf' : '—');
   if(S.diagOpen){
@@ -975,7 +975,7 @@ function renderRt(){
     {id:'build', label:'BUILD', icon:'⚙', dis:mk?(!S.link||S.exec):true,
      hint:mk?'build & download application (codegen)':'build from the Simulink desktop (Ctrl+B)',
      act:'rtBuild', primary:mk&&S.link&&!S.built},
-    {id:'load', label:'LOAD', icon:'↧', dis: mk?(!S.link||!S.built||S.exec):(!S.link||S.exec||!S.mldatxCfg),
+    {id:'load', label:'LOAD', icon:'↧', dis: mk?(!S.link||!S.built||S.exec):(!S.link||S.exec),
      hint: mk?'load application on target':(S.mldatxCfg?'load application on target':'placeholder — the app is preloaded as the Speedgoat startup application (start server with --mldatx to enable)'),
      act:'rtLoad', primary:S.link&&S.built&&!S.loaded&&mk},
     S.exec
@@ -1331,6 +1331,7 @@ function wsConnect(){
         S.link = !!(m.matlab && m.matlab.target_conn);   // link = the Speedgoat target, not the engine
         S.loaded = !!(m.matlab && m.matlab.loaded);
         S.mldatxCfg = !!(m.cfg && m.cfg.mldatx);
+        S.appName = (m.matlab && m.matlab.app) || null;
         S.recOn = !!(m.rec && m.rec.on);
         S.recFile = (m.rec && m.rec.file) || null;
         S.stallMs = (m.stream && m.stream.stall_ms) || 250;
