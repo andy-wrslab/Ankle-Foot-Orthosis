@@ -58,6 +58,9 @@ ap.add_argument("--logs-dir", default=str(HERE / "trial_logs"))
 ap.add_argument("--mldatx", default="", help="path of the built real-time application for LOAD")
 ap.add_argument("--target", default="TargetPC1", help="Speedgoat target name for slrealtime()")
 ap.add_argument("--target-ip", default="192.168.7.5", help="Speedgoat IP for the fast reachability probe (ping)")
+ap.add_argument("--gp-mat", default=r"C:\Users\Andy\Desktop\AFO\best_gp_Haoran_synced_.mat",
+                help="subject GP ensemble MAT-file the model requires; loaded into the base "
+                     "workspace on every CONNECT (empty string disables)")
 ap.add_argument("--no-matlab", action="store_true", help="disable the MATLAB engine entirely")
 ap.add_argument("--no-spawn", action="store_true", help="attach to a shared MATLAB session only; never start a headless one")
 ARGS = ap.parse_args()
@@ -367,6 +370,11 @@ class MatlabRT:
         r = self.ensure_engine(True)
         if not r.get("ok"):
             return r
+        # the model requires the subject GP ensemble in the base workspace —
+        # load it before anything touches the target (or the model)
+        gp = {"ok": True, "skipped": True}
+        if ARGS.gp_mat:
+            gp = self.call_json("afo_load_gp('%s')" % ARGS.gp_mat.replace("'", "''"))
         rr = self._eval("tg.connect;")
         chk = self._eval("jsonencode(logical(isConnected(tg)))", nargout=1)
         conn = False
@@ -374,8 +382,8 @@ class MatlabRT:
             with contextlib.suppress(Exception):
                 conn = bool(json.loads(chk["out"]))
         if conn:
-            return {"ok": True, "target": ARGS.target}
-        return {"ok": False, "err": rr.get("err") or f"{ARGS.target} not reachable"}
+            return {"ok": True, "target": ARGS.target, "gp": gp}
+        return {"ok": False, "err": rr.get("err") or f"{ARGS.target} not reachable", "gp": gp}
 
     def disconnect_target(self):
         if self.eng:
@@ -832,6 +840,12 @@ def debug_es():
 @app.post("/api/rt/connect")
 async def rt_connect():
     r = await asyncio.to_thread(ML.connect_target)
+    gp = r.get("gp") or {}
+    if gp.get("ok") and not gp.get("skipped"):
+        note("ok", "subject GP model loaded", Path(str(gp.get("file", ""))).name)
+    elif not gp.get("ok"):
+        note("error", "subject GP model load FAILED — model variables missing",
+             gp.get("err", ""))
     if r.get("ok"):
         note("ok", f"target connected · {ARGS.target}", f"{ARGS.target_ip} · signal discovery follows")
     else:
