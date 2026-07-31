@@ -30,7 +30,9 @@ Run:  python server.py        then open http://localhost:8321.
 """
 
 import argparse
+import array
 import asyncio
+import base64
 import contextlib
 import json
 import re
@@ -513,35 +515,46 @@ class EngineStream:
         self.setup_fail_wall = 0.0
 
     def ingest(self, signals):
-        """Returns (changed, rows). signals: [{name,w,t:[...],v:[flat]}].
-        Drains deliver round-robin slices, so discovery merges into a
-        persistent set — the channel manifest only changes when a genuinely
-        new signal appears, not per slice."""
+        """Returns (changed, rows). signals arrive either binary-packed
+        ({name,w,tb,vb}: base64 float64 times / float32 row-major values —
+        what the 1 kHz drain sends; ~3x smaller and far cheaper to parse
+        than JSON numbers) or as legacy JSON arrays ({name,w,t,v}).
+        Drains may deliver subsets, so discovery merges into a persistent
+        set — the channel manifest only changes when a genuinely new
+        signal appears."""
+        norm = []
+        for s in signals:
+            nm = s.get("name", "?")
+            w = int(s.get("w", 1) or 1)
+            if "tb" in s:
+                try:
+                    ts = array.array("d", base64.b64decode(s["tb"]))
+                    vs = array.array("f", base64.b64decode(s["vb"]))
+                except Exception:
+                    continue
+                if len(vs) != len(ts) * w:
+                    continue
+            else:
+                ts = s.get("t") or []
+                vs = s.get("v") or []
+                if isinstance(ts, (int, float)):
+                    ts = [ts]
+                if isinstance(vs, (int, float)):
+                    vs = [vs]
+            norm.append((nm, w, ts, vs))
         # model time jumped backward (target reboot or model restart): every
         # per-signal last-t and the watermark are ahead of the new epoch, so
         # nothing would ever count as advancing again — start over. Seen
         # live 2026-07-31 (second Speedgoat reboot of the day).
-        # NB: a 1-point drain JSON-encodes t as a scalar, not a list.
         newest = None
-        for s in signals:
-            tv = s.get("t")
-            if isinstance(tv, (list, tuple)):
-                if not tv:
-                    continue
-                tt = float(tv[-1])
-            elif isinstance(tv, (int, float)):
-                tt = float(tv)
-            else:
-                continue
-            if newest is None or tt > newest:
-                newest = tt
+        for nm, w, ts, vs in norm:
+            if len(ts) and (newest is None or float(ts[-1]) > newest):
+                newest = float(ts[-1])
         if newest is not None and self.grid_t is not None and newest < self.grid_t - 60.0:
             note("warn", "model time jumped backward — resetting stream state",
                  f"{self.grid_t:.1f} s -> {newest:.1f} s (target reboot / model restart)")
             self.reset()
-        for s in signals:
-            nm = s.get("name", "?")
-            w = int(s.get("w", 1) or 1)
+        for nm, w, ts, vs in norm:
             if self.known.get(nm) != w:
                 self.known[nm] = w
                 base = _san(nm)
@@ -550,18 +563,10 @@ class EngineStream:
         changed = CH.adopt_discovered(sig_list) if sig_list else False
         if changed:
             self.lastv = {}
-        # buffer fresh samples per signal — drains deliver round-robin slices,
-        # so different signals lag each other by up to one sweep
+        # buffer fresh samples per signal — different signals may lag each
+        # other by a drain or two; the watermark below keeps rows honest
         noww = time.monotonic()
-        for s in signals:
-            name = s.get("name", "?")
-            w = int(s.get("w", 1) or 1)
-            ts = s.get("t") or []
-            vs = s.get("v") or []
-            if isinstance(ts, (int, float)):
-                ts = [ts]
-            if isinstance(vs, (int, float)):
-                vs = [vs]
+        for name, w, ts, vs in norm:
             q = self.pend.setdefault(name, deque())
             newest = self.last_sig_t.get(name, -1.0)
             for i, t in enumerate(ts):
@@ -571,7 +576,7 @@ class EngineStream:
                 if len(row) != w:
                     continue
                 q.append((float(t), [float(x) for x in row]))
-            if ts and float(ts[-1]) > newest:
+            if len(ts) and float(ts[-1]) > newest:
                 self.last_sig_t[name] = float(ts[-1])
                 self.adv_wall[name] = noww
             while len(q) > 60000:

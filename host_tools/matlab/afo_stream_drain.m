@@ -52,10 +52,7 @@ if isa(AFO_BUF, 'containers.Map') && AFO_BUF.Count > 0
         remove(AFO_BUF, ks{i});
         if isempty(v) || size(v, 2) < 2, continue; end
         AFO_PUSHSEEN(ks{i}) = true;
-        t = v(:, 1);
-        d = v(:, 2:end);
-        sigs{end+1} = struct('name', ks{i}, 'w', size(d, 2), ...
-            't', t(:).', 'v', reshape(d.', 1, [])); %#ok<AGROW>
+        sigs{end+1} = pack_sig(ks{i}, v(:, 1), v(:, 2:end)); %#ok<AGROW>
     end
 end
 % every 5th drain, poll signals push has never delivered (slow stride:
@@ -183,9 +180,18 @@ try
     end
     t2 = t(idx);
     AFO_LASTT(key) = t2(end);
-    s = struct('name', key, 'w', size(d2, 2), ...
-        't', t2(:).', 'v', reshape(double(d2).', 1, []));
+    s = pack_sig(key, t2, double(d2));
 catch
     s = [];
 end
+end
+
+function s = pack_sig(name, t, d)
+%Binary-packed signal: t as float64, values as float32 (row-major
+%[numel(t) x w] flattening), both base64 inside the JSON envelope —
+%roughly 3x smaller and an order of magnitude cheaper to parse than
+%JSON numeric arrays at the full 1 kHz rate.
+s = struct('name', name, 'w', size(d, 2), 'n', numel(t), ...
+    'tb', matlab.net.base64encode(typecast(double(t(:).'), 'uint8')), ...
+    'vb', matlab.net.base64encode(typecast(single(reshape(d.', 1, [])), 'uint8')));
 end
