@@ -106,6 +106,25 @@ bool ecatWasOperational = false;                     // armed on reaching OP; a 
 unsigned long lastEcatLogMs = 0;
 const unsigned long ECAT_LOG_MIN_INTERVAL_MS = 500;  // a flapping status must not hammer the SD from the loop
 
+// LAN9252 self-healing: MainTask() returning an impossible ESM state (0x00 or
+// 0x0F -- SPI reading all-zeros / all-ones) means the shield itself reset,
+// lost power, or was not up yet at boot.  Once it has answered garbage for
+// ECAT_DEAD_MS the shield is declared dead: MainTask() is no longer called
+// (its busy-waits in EasyCAT.h are bounded by ECAT_WAIT_TOUT, but each dead
+// call still costs milliseconds) and the shield is probed instead -- Attach()
+// first (no reset: preserves the master-side config through a transient),
+// escalating to Init()'s full reset only if attach keeps failing.  Init()
+// blocks ~100 ms, acceptable only because data flow is already dead.
+bool ecatDead = false;                               // true = stop calling MainTask, probe instead
+uint8_t ecatEpisodeProbes = 0;                       // probes attempted in the current dead episode
+bool ecatLastReviveAttach = false;                   // how the last successful revival was achieved
+unsigned long ecatLastReviveMs = 0;
+uint8_t lastEcatStatusDbg = 0xEE;                    // debug: last MainTask status (0xEE = never ran)
+unsigned long ecatInvalidSinceMs = 0;                // 0 = last status read was a plausible ESM state
+unsigned long lastEcatReinitMs = 0;
+const unsigned long ECAT_DEAD_MS = 250;              // garbage this long -> the shield is really gone
+const unsigned long ECAT_REINIT_RETRY_MS = 2000;     // probe spacing while it stays gone
+
 #define PIN_INFRARED_LED 14
 
 
@@ -179,14 +198,74 @@ void  loop() {
 
   if (easycat_enabled && easycat_poll_due) {
     easycat_poll_due = false;
-    application();
-    uint8_t ecatStatus = EASYCAT.MainTask();   // low nibble = ESM state (0x08 = OP), bit7 = watchdog expired
-    if (ecatStatus == ESM_OP) {
-      ecatWasOperational = true;               // healthy; arm the failure detector
-    } else if (ecatWasOperational && millis() - lastEcatLogMs > ECAT_LOG_MIN_INTERVAL_MS) {
-      ecatWasOperational = false;              // one line per drop, re-armed on recovery
-      lastEcatLogMs = millis();
-      logEcatStatus(ecatStatus);
+
+    // Bench-debug heartbeat (1 Hz): ESM status + revival state over USB.
+    // Harmless in trials: with no USB host attached, writes are discarded.
+    static unsigned long lastEcatDbgMs = 0;
+    if (millis() - lastEcatDbgMs > 1000) {
+      lastEcatDbgMs = millis();
+      Serial.print("ECAT dbg: status=0x");
+      Serial.print(lastEcatStatusDbg, HEX);
+      Serial.print(" dead=");
+      Serial.println(ecatDead);
+    }
+
+    if (ecatDead) {
+      // Shield declared dead: probe with a full re-init until it answers.
+      // On success the slave reappears in INIT and the master can walk it
+      // back to OP.
+      if (millis() - lastEcatReinitMs > ECAT_REINIT_RETRY_MS) {
+        lastEcatReinitMs = millis();
+        // Per-episode escalation: the first probes attach without touching the
+        // chip (a transient Teensy-side glitch must never cost a configured,
+        // in-OP slave its master-side state); only if attach keeps failing does
+        // Init()'s full reset enter the rotation, for a chip whose core is
+        // wedged but whose SPI still answers.
+        bool useAttach = (ecatEpisodeProbes < 3) || ((ecatEpisodeProbes - 3) & 1);
+        ecatEpisodeProbes++;
+        bool revived = useAttach ? EASYCAT.Attach() : EASYCAT.Init();
+        if (revived) {
+          ecatDead = false;
+          ecatInvalidSinceMs = 0;
+          ecatLastReviveAttach = useAttach;
+          ecatLastReviveMs = millis();
+          logEcatReinit(useAttach);            // one SD line, only on a successful revival
+          Serial.println(useAttach ? "ECAT dbg: reinit OK (attach)"
+                                   : "ECAT dbg: reinit OK (init)");
+        } else {
+          Serial.println("ECAT dbg: reinit FAILED");
+        }
+      }
+    } else {
+      application();
+      uint8_t ecatStatus = EASYCAT.MainTask(); // low nibble = ESM state (0x08 = OP), bit7 = watchdog expired
+      lastEcatStatusDbg = ecatStatus;
+      if (ecatStatus == ESM_OP) {
+        ecatWasOperational = true;             // healthy; arm the failure detector
+      } else if (ecatWasOperational && millis() - lastEcatLogMs > ECAT_LOG_MIN_INTERVAL_MS) {
+        ecatWasOperational = false;            // one line per drop, re-armed on recovery
+        lastEcatLogMs = millis();
+        logEcatStatus(ecatStatus);
+      }
+
+      // Shield-death detection: an impossible ESM state means the LAN9252 is
+      // not answering SPI.  A valid state -- even INIT -- needs no help from
+      // us: a cleanly rebooted shield reloads its EEPROM by itself and just
+      // waits for the master.
+      uint8_t esm = ecatStatus & 0x0F;
+      if (esm == ESM_INIT || esm == ESM_PREOP || esm == ESM_BOOT ||
+          esm == ESM_SAFEOP || esm == ESM_OP) {
+        ecatInvalidSinceMs = 0;
+      } else if (ecatInvalidSinceMs == 0) {
+        ecatInvalidSinceMs = millis();         // first garbage read; safe as a sentinel, millis() is
+                                               // several seconds old by the time loop() first runs
+      } else if (millis() - ecatInvalidSinceMs > ECAT_DEAD_MS) {
+        ecatDead = true;                       // stop calling MainTask; probe instead
+        // If an Attach revival died right back, don't trust Attach again --
+        // re-enter the episode at the escalation stage.
+        ecatEpisodeProbes = (ecatLastReviveAttach &&
+                            millis() - ecatLastReviveMs < 10000) ? 3 : 0;
+      }
     }
 
     // // Debug: track EasyCAT execution interval aiming for 2kHz
@@ -242,7 +321,17 @@ void  setupLED() {
 
 void  setupEASYCAT() {
   Serial.println ("EasyCAT - Generic EtherCAT slave");
-  if (EASYCAT.Init() == true)
+  // Attach first, reset only as a fallback: if the Teensy rebooted while the
+  // shield kept power, the LAN9252 still holds its master-side config (station
+  // address, SM/FMMU, OP state) and the master has been reading frozen data
+  // the whole time -- Init()'s DIGITAL_RST would wipe that and drop the slave
+  // from the running master for good.  Attach verifies the chip and touches
+  // nothing, so data flow resumes as soon as loop() feeds MainTask again.
+  if (EASYCAT.Attach())
+  {
+    Serial.println ("attached (no reset)");
+  }
+  else if (EASYCAT.Init() == true)
   {
     Serial.print ("initialized");
   }                                                               //
@@ -261,12 +350,29 @@ void  setupSD() {
 
 // Append the boot marker once per reset (call from setup() only).  O_APPEND
 // cannot touch existing content, so the line count is the boot count; a new
-// line mid-collection means the Teensy went down.
+// line mid-collection means the Teensy went down.  The line also records WHY:
+// SRC_SRSR is the hardware reset-cause latch (power-up/brownout vs CPU lockup
+// vs watchdog), and CrashReport is the fault log the core saves to
+// reset-surviving RAM when a run dies from a code fault -- absent after a
+// power loss because RAM does not survive one.  Nothing here runs during a
+// trial: a healthy run never touches the SD.
 void  logBoot() {
   if (!sd_ok) return;
   FsFile f;
   if (f.open("boots.txt", O_WRITE | O_CREAT | O_APPEND)) {
-    f.println("BOOTED");
+    f.printf("BOOTED,srsr=0x%08lX\n", (unsigned long)SRC_SRSR);
+    SRC_SRSR = SRC_SRSR;            // sticky write-1-to-clear bits: clear only once logged,
+                                    // so the next line shows just the causes since this boot.
+                                    // Deliberately cleared BEFORE printing CrashReport: its
+                                    // printTo() re-reads the live SRSR for its "caused by" text
+                                    // (lost here -- decode our raw hex instead) and on the
+                                    // temperature-panic bit would power the board OFF mid-log.
+    if (CrashReport) {              // valid fault report survived in RAM -> previous run died in code
+      f.print(CrashReport);         // fault type, faulting PC, CFSR, temperature
+      CrashReport.clear();          // never re-attribute an old report to a later reboot
+    } else {
+      f.println("no-crash-report"); // power loss (RAM lost) or hard lockup (handler never ran)
+    }
     f.sync();
     f.close();
   }
@@ -281,6 +387,22 @@ void  logEcatStatus(uint8_t status) {
   FsFile f;
   if (f.open("boots.txt", O_WRITE | O_CREAT | O_APPEND)) {
     f.printf("ecat,%lu,0x%02X\n", millis(), status);
+    f.sync();
+    f.close();
+  }
+}
+
+// Called only after a successful LAN9252 revival -- i.e. while the bus is
+// already down, never during healthy data flow.  Pairs with the "ecat," drop
+// line above: drop line + this line = the shield died and was revived; a drop
+// line alone = it never came back (or the Teensy itself went down first).
+// The mode records HOW: "attach" = chip found alive and left untouched
+// (master-side config preserved); "init" = full reset was needed.
+void  logEcatReinit(bool attach) {
+  if (!sd_ok) return;
+  FsFile f;
+  if (f.open("boots.txt", O_WRITE | O_CREAT | O_APPEND)) {
+    f.printf("ecat-reinit,%lu,%s\n", millis(), attach ? "attach" : "init");
     f.sync();
     f.close();
   }

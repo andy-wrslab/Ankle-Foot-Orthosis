@@ -258,6 +258,7 @@
 #define AL_EVENT_MASK           0x0204      // AL event interrupt mask
 
 #define WDOG_STATUS             0x0440      // watch dog status
+#define ESC_DL_STATUS           0x0110      // ESC DL status: bit0 = EEPROM loaded, PDI operational
 
 #define SM0_BASE                0x0800      // SM0 base address (output)
 #define SM1_BASE                0x0808      // SM1 base address (input) 
@@ -276,6 +277,10 @@
 //---- LAN9252 flags ------------------------------------------------------------------------------
 
 #define ECAT_CSR_BUSY     0x80
+
+#define ECAT_WAIT_TOUT    1000      // bound for the SPI busy-wait loops (a few ms each): a LAN9252
+                                    // that lost power reads stuck-at 0x00 or 0xFF and would
+                                    // otherwise hang these waits -- and loop() -- forever
 #define PRAM_ABORT        0x40000000
 #define PRAM_BUSY         0x80
 #define PRAM_AVAIL        0x01
@@ -378,7 +383,8 @@ class EasyCAT
     unsigned char MainTask();               // EtherCAT main task
                                             // must be called cyclically by the application 
     
-    bool Init();                            // EasyCAT board initialization 
+    bool Init();                            // EasyCAT board initialization
+    bool Attach();                          // attach to an already running LAN9252, no reset
     
     PROCBUFFER_OUT BufferOut;               // output process data buffer 
     PROCBUFFER_IN BufferIn;                 // input process data buffer    
@@ -760,6 +766,99 @@ bool EasyCAT::Init()
 }  
 
 
+//---- attach to an already running LAN9252, without resetting it ---------------------------------
+
+bool EasyCAT::Attach()                // Used instead of Init() when the LAN9252 may already be
+                                      // configured and exchanging data with the master (e.g. the
+                                      // microcontroller rebooted while the shield kept power).
+                                      // Init()'s DIGITAL_RST would wipe the station address and
+                                      // SM/FMMU setup and permanently drop the slave from the
+                                      // running master, which only configures slaves at network
+                                      // init.  So: bring up SPI, verify the chip answers
+                                      // coherently, and touch nothing else.
+{
+  ULONG TempLong;
+  unsigned short i;
+
+  SPI.begin();
+
+  #if defined(ARDUINO_ARCH_SAMD)                          // calculate the microcontroller port and
+    Bit_SCS = g_APinDescription[SCS].ulPin;               // pin for fast SPI chip select management
+    Port_SCS = g_APinDescription[SCS].ulPort;             //
+  #endif                                                  //
+                                                          //
+  #if defined(ARDUINO_ARCH_SAM)                           //
+    Bit_SCS = g_APinDescription[SCS].ulPin;               //
+    pPort_SCS = g_APinDescription[SCS].pPort;             //
+  #endif                                                  //
+                                                          //
+  #if defined(ARDUINO_ARCH_AVR)                           //
+    Mask_SCS = (digitalPinToBitMask(SCS));                //
+    Port_SCS = digitalPinToPort(SCS);                     //
+    pPort_SCS = portOutputRegister(Port_SCS);             //
+  #endif                                                  //
+
+  digitalWrite(SCS, HIGH);
+  pinMode(SCS, OUTPUT);
+
+  SPI.beginTransaction(SPISettings(20000000, MSBFIRST, SPI_MODE0));
+
+  i = 0;                                                  // no reset and no settling delay: the
+  do                                                      // chip is expected to be up already --
+  {                                                       // check the Byte Order Test Register
+    i++;                                                  //
+    TempLong.Long = SPIReadRegisterDirect (BYTE_TEST, 4); //
+  }while ((TempLong.Long != 0x87654321) && (i != Tout));  //
+                                                          //
+  if (i == Tout)                                          // chip not answering: caller should
+  {                                                       // fall back to a full Init()
+    SPI.endTransaction();                                 //
+    SPI.end();                                            //
+    return false;                                         //
+  }
+
+  i = 0;                                                  //
+  do                                                      // check the Ready flag
+  {                                                       //
+    i++;                                                  //
+    TempLong.Long = SPIReadRegisterDirect (HW_CFG, 4);    //
+  }while (((TempLong.Byte[3] & READY) == 0) && (i != Tout));
+                                                          //
+  if (i == Tout)                                          //
+  {                                                       //
+    SPI.endTransaction();                                 //
+    SPI.end();                                            //
+    return false;                                         //
+  }
+
+  // BYTE_TEST and READY only prove the SPI/system block is alive; the dead-
+  // detector fired on the INDIRECT (CSR) path that process data depends on,
+  // so verify that path too before calling this chip attached: the ESC must
+  // report its EEPROM loaded / PDI operational, and AL_STATUS must hold a
+  // plausible EtherCAT state.  A chip that fails here needs Init()'s reset.
+  TempLong.Long = SPIReadRegisterIndirect (ESC_DL_STATUS, 2);
+  if ((TempLong.Byte[0] & 0x01) == 0)                     // EEPROM not loaded -> ESC core not usable
+  {
+    SPI.endTransaction();
+    SPI.end();
+    return false;
+  }
+
+  TempLong.Long = SPIReadRegisterIndirect (AL_STATUS, 1);
+  unsigned char esm = TempLong.Byte[0] & 0x0F;
+  if (esm != ESM_INIT && esm != ESM_PREOP && esm != ESM_BOOT &&
+      esm != ESM_SAFEOP && esm != ESM_OP)
+  {
+    SPI.endTransaction();
+    SPI.end();
+    return false;
+  }
+
+  SPI.endTransaction();
+  return true;                                            // attached, chip state untouched
+}
+
+
 //---- EtherCAT task ------------------------------------------------------------------------------
 static const SPISettings kCatSPI(20000000, MSBFIRST, SPI_MODE0);
 unsigned char EasyCAT::MainTask()                    // must be called cyclically by the application
@@ -904,11 +1003,12 @@ unsigned long EasyCAT::SPIReadRegisterIndirect (unsigned short Address, unsigned
 
   SPIWriteRegisterDirect (ECAT_CSR_CMD, TempLong.Long);     // write the command
 
-  do
+  unsigned short wdt = 0;                                   // bounded: stuck-at-0xFF SPI would
+  do                                                        // never clear the busy flag
   {                                                         // wait for command execution
     TempLong.Long = SPIReadRegisterDirect(ECAT_CSR_CMD,4);  //
   }                                                         //
-  while(TempLong.Byte[3] & ECAT_CSR_BUSY);                  //
+  while((TempLong.Byte[3] & ECAT_CSR_BUSY) && ++wdt < ECAT_WAIT_TOUT);
                                                              
                                                               
   TempLong.Long = SPIReadRegisterDirect(ECAT_CSR_DATA,Len); // read the requested register
@@ -939,11 +1039,12 @@ void  EasyCAT::SPIWriteRegisterIndirect (unsigned long DataOut, unsigned short A
 
   SPIWriteRegisterDirect (ECAT_CSR_CMD, TempLong.Long);       // write the command
 
+  unsigned short wdt = 0;                                     // bounded: stuck-at-0xFF SPI would
   do                                                          // wait for command execution
   {                                                           //
-    TempLong.Long = SPIReadRegisterDirect (ECAT_CSR_CMD, 4);  //  
-  }                                                           //  
-  while (TempLong.Byte[3] & ECAT_CSR_BUSY);                   //
+    TempLong.Long = SPIReadRegisterDirect (ECAT_CSR_CMD, 4);  //
+  }                                                           //
+  while ((TempLong.Byte[3] & ECAT_CSR_BUSY) && ++wdt < ECAT_WAIT_TOUT);
 }
 
 
@@ -975,11 +1076,12 @@ void EasyCAT::SPIReadProcRamFifo()    // read data from the output process ram, 
                                                 //------- one round is enough if we have ----
                                                 //------- to transfer up to 64 bytes --------
    
-    do                                                            // wait for the data to be       
-    {                                                             // transferred from the output  
-      TempLong.Long = SPIReadRegisterDirect (ECAT_PRAM_RD_CMD,2); // process ram to the read fifo       
-    }                                                             //    
-    while (TempLong.Byte[1] != (FST_BYTE_NUM_ROUND_OUT/4));       // *CCC* 
+    unsigned short wdt = 0;                                       // bounded: a dead shield never
+    do                                                            // wait for the data to be
+    {                                                             // transferred from the output
+      TempLong.Long = SPIReadRegisterDirect (ECAT_PRAM_RD_CMD,2); // process ram to the read fifo
+    }                                                             //
+    while (TempLong.Byte[1] != (FST_BYTE_NUM_ROUND_OUT/4) && ++wdt < ECAT_WAIT_TOUT); // *CCC*
   
     SCS_Low_macro                                                 // enable SPI chip select 
   
@@ -1001,11 +1103,12 @@ void EasyCAT::SPIReadProcRamFifo()    // read data from the output process ram, 
                                               //-- to transfer the remainig bytes -------------
 
 
-    do                                                          // wait for the data to be       
-    {                                                           // transferred from the output  
-      TempLong.Long = SPIReadRegisterDirect(ECAT_PRAM_RD_CMD,2);// process ram to the read fifo 
-    }                                                           //    
-    while (TempLong.Byte[1] != SEC_BYTE_NUM_ROUND_OUT/4);       // *CCC*  
+    unsigned short wdt2 = 0;                                    // bounded, as above
+    do                                                          // wait for the data to be
+    {                                                           // transferred from the output
+      TempLong.Long = SPIReadRegisterDirect(ECAT_PRAM_RD_CMD,2);// process ram to the read fifo
+    }                                                           //
+    while (TempLong.Byte[1] != SEC_BYTE_NUM_ROUND_OUT/4 && ++wdt2 < ECAT_WAIT_TOUT); // *CCC*
 
     SCS_Low_macro                                               // enable SPI chip select   
     
@@ -1051,11 +1154,12 @@ void EasyCAT::SPIWriteProcRamFifo()    // write data to the input process ram, t
                                                 //------- one round is enough if we have ----
                                                 //------- to transfer up to 64 bytes --------
     
-    do                                                            // check that the fifo has      
-    {                                                             // enough free space 
-      TempLong.Long = SPIReadRegisterDirect (ECAT_PRAM_WR_CMD,2); //  
-    }                                                             //  
-    while (TempLong.Byte[1] <   (FST_BYTE_NUM_ROUND_IN/4));       //    *CCC*
+    unsigned short wdt = 0;                                       // bounded: stuck-at-0x00 SPI
+    do                                                            // check that the fifo has
+    {                                                             // enough free space
+      TempLong.Long = SPIReadRegisterDirect (ECAT_PRAM_WR_CMD,2); //
+    }                                                             //
+    while (TempLong.Byte[1] <   (FST_BYTE_NUM_ROUND_IN/4) && ++wdt < ECAT_WAIT_TOUT); //    *CCC*
   
     SCS_Low_macro                                                 // enable SPI chip select
   
@@ -1078,11 +1182,12 @@ void EasyCAT::SPIWriteProcRamFifo()    // write data to the input process ram, t
                                               //-- we must do another round -------------------
                                               //-- to transfer the remainig bytes -------------
 
-    do                                                          // check that the fifo has     
-    {                                                           // enough free space       
-      TempLong.Long = SPIReadRegisterDirect(ECAT_PRAM_WR_CMD,2);// 
-    }                                                           //  
-    while (TempLong.Byte[1] < (SEC_BYTE_NUM_ROUND_IN/4));       //   *CCC*
+    unsigned short wdt2 = 0;                                    // bounded, as above
+    do                                                          // check that the fifo has
+    {                                                           // enough free space
+      TempLong.Long = SPIReadRegisterDirect(ECAT_PRAM_WR_CMD,2);//
+    }                                                           //
+    while (TempLong.Byte[1] < (SEC_BYTE_NUM_ROUND_IN/4) && ++wdt2 < ECAT_WAIT_TOUT); //   *CCC*
                              
     SCS_Low_macro                                               // enable SPI chip select
     
