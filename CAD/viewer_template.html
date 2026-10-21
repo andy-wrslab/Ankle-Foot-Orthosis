@@ -1,0 +1,373 @@
+<title>Backpack Bottom-Box Cap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #E9ECEF;
+    --surface: #F7F8F9;
+    --ink: #1A1E24;
+    --ink-2: #5C6672;
+    --line: #CFD5DB;
+    --accent: #E1741C;
+    --accent-ink: #8A4208;
+    --accent-soft: #FBE7D3;
+    --canvas: #D9DEE3;
+    --edge: #22262B;
+    --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121518; --surface: #1B1F24; --ink: #E6E9ED; --ink-2: #97A1AC; --line: #2C333B;
+      --accent: #F08A2E; --accent-ink: #FFC48A; --accent-soft: #3A2612; --canvas: #21262C; --edge: #0B0D10;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121518; --surface: #1B1F24; --ink: #E6E9ED; --ink-2: #97A1AC; --line: #2C333B;
+    --accent: #F08A2E; --accent-ink: #FFC48A; --accent-soft: #3A2612; --canvas: #21262C; --edge: #0B0D10;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--sans); }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 330px; height: 100dvh; }
+  .stage { position: relative; background: var(--canvas); min-height: 320px; }
+  canvas { display: block; width: 100%; height: 100%; outline: none; touch-action: none; }
+  canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+
+  .views { position: absolute; top: 14px; left: 14px; display: flex; gap: 6px; }
+  .views button, .rail button {
+    font: 500 12.5px/1 var(--sans); letter-spacing: 0.01em; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+    padding: 7px 11px; cursor: pointer;
+  }
+  .views button:hover, .rail button:hover { border-color: var(--ink-2); }
+  .views button:focus-visible, .rail button:focus-visible,
+  input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { position: absolute; left: 14px; bottom: 12px; font: 12px/1.3 var(--mono); color: var(--ink-2); }
+  .hint span { margin-right: 14px; }
+
+  .rail { background: var(--surface); border-left: 1px solid var(--line); overflow-y: auto; padding: 22px 22px 28px; display: flex; flex-direction: column; gap: 22px; }
+  .eyebrow { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink); }
+  h1 { font: 600 21px/1.2 var(--sans); margin: 6px 0 8px; text-wrap: balance; letter-spacing: -0.01em; }
+  .lede { margin: 0; color: var(--ink-2); max-width: 34ch; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  section { display: flex; flex-direction: column; gap: 10px; }
+  h2 { font: 500 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+
+  .explode { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+  .explode input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
+  .explode output { font: 500 13px/1 var(--mono); font-variant-numeric: tabular-nums; min-width: 5ch; text-align: right; }
+
+  .parts { display: flex; flex-direction: column; gap: 4px; }
+  .parts label { display: grid; grid-template-columns: 16px 12px 1fr; align-items: center; gap: 9px; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+  .parts label:hover { background: var(--bg); }
+  .parts input { margin: 0; accent-color: var(--accent); }
+  .swatch { width: 12px; height: 12px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.18); }
+  .parts .group { margin-top: 6px; font: 500 11px/1 var(--mono); color: var(--ink-2); letter-spacing: 0.06em; text-transform: uppercase; }
+  .parts .group:first-child { margin-top: 0; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 5px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: baseline; }
+  td.v { font: 500 13px/1.4 var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  td.u { color: var(--ink-2); font: 12px/1.4 var(--mono); padding-left: 6px; width: 3ch; }
+  tr.est td:first-child::after { content: " ~"; color: var(--accent-ink); }
+  caption { caption-side: bottom; text-align: left; color: var(--ink-2); font-size: 12px; padding-top: 8px; }
+
+  ol { margin: 0; padding-left: 18px; color: var(--ink); }
+  ol li { margin-bottom: 6px; }
+  ol li::marker { color: var(--ink-2); font: 500 12px var(--mono); }
+  .files { font: 12px/1.6 var(--mono); color: var(--ink-2); }
+  .files b { color: var(--ink); font-weight: 500; }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 62vh auto; height: auto; }
+    .rail { border-left: 0; border-top: 1px solid var(--line); }
+  }
+  @media (prefers-reduced-motion: no-preference) { .views button, .rail button { transition: border-color 120ms; } }
+</style>
+
+<div class="app">
+  <div class="stage" id="stage">
+    <canvas id="c" tabindex="0" aria-label="3D view of the cap on the bottom box"></canvas>
+    <div class="views" role="group" aria-label="View presets">
+      <button data-view="iso">Iso</button>
+      <button data-view="front">Front</button>
+      <button data-view="side">Side</button>
+      <button data-view="under">Underside</button>
+      <button data-view="cables">Cables</button>
+      <button data-view="back">Cap inside</button>
+    </div>
+    <div class="hint"><span>drag orbit</span><span>wheel zoom</span><span>shift-drag pan</span><span>Z up · mm</span></div>
+  </div>
+
+  <aside class="rail">
+    <div>
+      <div class="eyebrow">AFO backpack · concept A</div>
+      <h1>Bottom-box cap</h1>
+      <p class="lede">A shroud that slides straight back over the box. A flange rides over the heatsink shelf and hooks the two vertical screws; the cables leave through three notches that a clamp bar closes into holes. <strong>Every dimension is estimated from the photo</strong>, including the mock of the box it sits on.</p>
+    </div>
+
+    <section>
+      <h2>Explode</h2>
+      <div class="explode">
+        <input type="range" id="explode" min="0" max="70" value="0" step="1" aria-label="Pull the cap away from the box">
+        <output for="explode" id="explodeOut">0 mm</output>
+      </div>
+    </section>
+
+    <section>
+      <h2>Show</h2>
+      <div class="parts" id="parts"></div>
+    </section>
+
+    <section>
+      <h2>Dimensions</h2>
+      <table id="dims">
+        <caption>~ marks a value eyeballed from the photo. Edit the PARAMS block in backpack_bottom_cap.py and re-run.</caption>
+      </table>
+    </section>
+
+    <section>
+      <h2>How it goes on</h2>
+      <ol>
+        <li>Back the two nuts off the vertical screws a few turns.</li>
+        <li>Slide the cap straight back over the box. The flange runs over the shelf and the screws enter its rear-open slots; the cheeks keep it square.</li>
+        <li>Tighten the nuts from above.</li>
+        <li>Lay the cables into the three notches, then fit the clamp bar with its two M3 screws. Each notch becomes a closed hole that pinches the bundle.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Files</h2>
+      <div class="files"><b>CAD/out/bottom_cap.step</b> · <b>clamp_bar.step</b> (+ .stl) for printing<br><b>CAD/backpack_bottom_cap.py</b> regenerates everything</div>
+    </section>
+  </aside>
+</div>
+
+<script type="application/json" id="data">__DATA__</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  const data = JSON.parse(document.getElementById('data').textContent);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  THREE.Object3D.DefaultUp.set(0, 0, 1);
+  const canvas = document.getElementById('c');
+  const stage = document.getElementById('stage');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 1, 6000);
+  camera.up.set(0, 0, 1);
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x666a70, 0.55));
+  const key = new THREE.DirectionalLight(0xffffff, 0.55); key.position.set(-250, -350, 420); scene.add(key);
+  const fill = new THREE.DirectionalLight(0xffffff, 0.22); fill.position.set(350, 150, 200); scene.add(fill);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.12); rim.position.set(0, 300, -100); scene.add(rim);
+
+  // ---- geometry -----------------------------------------------------------
+  const CAP_PARTS = new Set(['cap', 'nuts', 'clamp_bar', 'bar_screws']);
+  const BAR_PARTS = new Set(['clamp_bar', 'bar_screws']);
+  const METAL = new Set(['top_plate', 'studs', 'nuts', 'heatsink', 'bar_screws']);
+  const capGroup = new THREE.Group();
+  const barGroup = new THREE.Group();
+  const ctxGroup = new THREE.Group();
+  scene.add(capGroup, barGroup, ctxGroup);
+  const objects = {};            // name -> {mesh, edges, color}
+  const edgeMat = new THREE.LineBasicMaterial({ color: new THREE.Color(css('--edge')) });
+
+  for (const p of data.parts) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p.v, 3));
+    g.setIndex(p.i);
+    g.computeVertexNormals();
+    const color = new THREE.Color(p.color[0], p.color[1], p.color[2]);
+    const mat = new THREE.MeshStandardMaterial({
+      color, roughness: METAL.has(p.name) ? 0.45 : 0.7, metalness: METAL.has(p.name) ? 0.55 : 0.02,
+    });
+    const mesh = new THREE.Mesh(g, mat);
+    const parent = BAR_PARTS.has(p.name) ? barGroup : CAP_PARTS.has(p.name) ? capGroup : ctxGroup;
+    parent.add(mesh);
+    let edges = null;
+    if (['cap', 'clamp_bar', 'bottom_box', 'top_plate', 'base_plate'].includes(p.name)) {
+      edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 28), edgeMat);
+      parent.add(edges);
+    }
+    objects[p.name] = { mesh, edges, color: '#' + color.getHexString() };
+  }
+  for (const c of data.cables) {
+    const pts = c.path.map(([y, z]) => new THREE.Vector3(c.x, y, z));
+    const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
+    const g = new THREE.TubeGeometry(curve, 80, c.r, 14, false);
+    const color = new THREE.Color(c.color[0], c.color[1], c.color[2]);
+    const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: 0 }));
+    ctxGroup.add(mesh);
+    objects[c.name] = { mesh, edges: null, color: '#' + color.getHexString() };
+  }
+
+  // ---- camera / orbit -----------------------------------------------------
+  const target = new THREE.Vector3(0, 12, 52);
+  const orbit = { r: 560, theta: -2.15, phi: 1.05 };   // theta: azimuth about Z (rad), phi: from +Z
+  const HOME = [0, 12, 52];
+  const VIEWS = {
+    iso:    { theta: -2.15, phi: 1.05, r: 560, t: HOME },
+    front:  { theta: -Math.PI / 2, phi: 1.50, r: 560, t: HOME },
+    side:   { theta: 0.0, phi: 1.35, r: 560, t: HOME },
+    under:  { theta: -1.9, phi: 2.05, r: 520, t: HOME },
+    cables: { theta: -1.85, phi: 1.20, r: 300, t: [-5, 0, 22] },
+    back:   { theta: 1.0, phi: 1.05, r: 480, t: HOME },
+  };
+  let needsRender = true;
+  function applyCamera() {
+    const s = Math.sin(orbit.phi);
+    camera.position.set(
+      target.x + orbit.r * s * Math.cos(orbit.theta),
+      target.y + orbit.r * s * Math.sin(orbit.theta),
+      target.z + orbit.r * Math.cos(orbit.phi));
+    camera.lookAt(target);
+    needsRender = true;
+  }
+  function setView(name) {
+    const v = VIEWS[name];
+    orbit.theta = v.theta; orbit.phi = v.phi; orbit.r = v.r;
+    target.set(v.t[0], v.t[1], v.t[2]);
+    if (name === 'back') { showOnly(CAP_PARTS); }
+    applyCamera();
+  }
+  document.querySelectorAll('.views button').forEach(b => b.addEventListener('click', () => setView(b.dataset.view)));
+
+  let drag = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, pan: e.shiftKey || e.button === 2 || e.button === 1 };
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    if (drag.pan) {
+      const right = new THREE.Vector3(), up = new THREE.Vector3();
+      camera.matrix.extractBasis(right, up, new THREE.Vector3());
+      const k = orbit.r * 0.0016;
+      target.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+    } else {
+      orbit.theta -= dx * 0.006;
+      orbit.phi = Math.min(Math.PI - 0.05, Math.max(0.05, orbit.phi - dy * 0.006));
+    }
+    applyCamera();
+  });
+  const endDrag = () => { drag = null; };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    orbit.r = Math.min(3000, Math.max(150, orbit.r * Math.exp(e.deltaY * 0.0012)));
+    applyCamera();
+  }, { passive: false });
+  canvas.addEventListener('keydown', (e) => {
+    const step = 0.08;
+    if (e.key === 'ArrowLeft') orbit.theta += step;
+    else if (e.key === 'ArrowRight') orbit.theta -= step;
+    else if (e.key === 'ArrowUp') orbit.phi = Math.max(0.05, orbit.phi - step);
+    else if (e.key === 'ArrowDown') orbit.phi = Math.min(Math.PI - 0.05, orbit.phi + step);
+    else if (e.key === '+' || e.key === '=') orbit.r *= 0.9;
+    else if (e.key === '-') orbit.r *= 1.1;
+    else return;
+    e.preventDefault();
+    applyCamera();
+  });
+
+  // ---- controls -----------------------------------------------------------
+  const explode = document.getElementById('explode');
+  const explodeOut = document.getElementById('explodeOut');
+  explode.addEventListener('input', () => {
+    capGroup.position.y = -Number(explode.value);
+    barGroup.position.y = -1.6 * Number(explode.value);
+    explodeOut.textContent = explode.value + ' mm';
+    needsRender = true;
+  });
+
+  const LABELS = {
+    cap: 'Cap', nuts: 'M3 nuts on the screws', clamp_bar: 'Clamp bar', bar_screws: 'Bar screws',
+    bottom_box: 'Bottom box + shelf', top_plate: 'Top plate', heatsink: 'Heatsink',
+    carrier_pcb: 'Carrier PCB', easycat: 'EasyCAT PRO', teensy: 'Teensy', studs: 'Existing screws',
+    base_plate: 'Base plate', cable_power_red: 'Power +', cable_power_blk: 'Power −', cable_loom: 'Signal loom',
+    cable_sensor_1: 'Sensor cable 1', cable_sensor_2: 'Sensor cable 2', cable_sensor_3: 'Sensor cable 3',
+  };
+  const partsEl = document.getElementById('parts');
+  const checks = {};
+  function addGroup(title, names) {
+    const h = document.createElement('div'); h.className = 'group'; h.textContent = title; partsEl.appendChild(h);
+    for (const n of names) {
+      if (!objects[n]) continue;
+      const lab = document.createElement('label');
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = true;
+      const sw = document.createElement('span'); sw.className = 'swatch'; sw.style.background = objects[n].color;
+      const tx = document.createElement('span'); tx.textContent = LABELS[n] || n;
+      lab.append(cb, sw, tx); partsEl.appendChild(lab);
+      checks[n] = cb;
+      cb.addEventListener('change', () => setVisible(n, cb.checked));
+    }
+  }
+  function setVisible(n, on) {
+    objects[n].mesh.visible = on;
+    if (objects[n].edges) objects[n].edges.visible = on;
+    checks[n].checked = on;
+    needsRender = true;
+  }
+  function showOnly(set) { for (const n in objects) setVisible(n, set.has(n)); }
+  addGroup('New parts', ['cap', 'nuts', 'clamp_bar', 'bar_screws']);
+  addGroup('Existing (mock)', ['bottom_box', 'top_plate', 'heatsink', 'carrier_pcb', 'easycat', 'teensy', 'studs', 'base_plate']);
+  addGroup('Cables (mock)', ['cable_power_red', 'cable_power_blk', 'cable_loom', 'cable_sensor_1', 'cable_sensor_2', 'cable_sensor_3']);
+
+  const P = data.params;
+  const rows = [
+    ['Cap width', P.cap_w, 'mm', false], ['Cap height', P.cap_h, 'mm', false], ['Cap depth incl. cheeks', P.cap_depth, 'mm', false],
+    ['Wall', P.wall, 'mm', false], ['Gap to box', P.clearance, 'mm', false],
+    ['Flange reach over shelf', P.rib_d, 'mm', false], ['Screw slot width', P.slot_w, 'mm', false],
+    ...P.openings.map(o => [`Hole · ${o.name}`, `${o.w} × ${o.top - o.bottom}`, 'mm', false]),
+    ['Clamp bar height', P.bar_h, 'mm', false], ['Vents', P.vents, 'mm', false], ['Corner radius', P.corner_r, 'mm', false],
+    ['Box W × D × H', `${P.box_w} × ${P.box_d} × ${P.box_h}`, 'mm', true],
+    ['Shelf height', P.shelf_z, 'mm', true], ['Screw pitch', P.stud_pitch, 'mm', true],
+    ['Screws behind face', P.stud_y, 'mm', true], ['Thread showing', P.stud_h, 'mm', true],
+  ];
+  const dims = document.getElementById('dims');
+  for (const [k, v, u, est] of rows) {
+    const tr = document.createElement('tr'); if (est) tr.className = 'est';
+    const td1 = document.createElement('td'); td1.textContent = k;
+    const td2 = document.createElement('td'); td2.className = 'v'; td2.textContent = v;
+    const td3 = document.createElement('td'); td3.className = 'u'; td3.textContent = u;
+    tr.append(td1, td2, td3); dims.appendChild(tr);
+  }
+
+  // ---- theme, resize, loop ------------------------------------------------
+  function applyTheme() {
+    scene.background = new THREE.Color(css('--canvas'));
+    edgeMat.color.set(css('--edge'));
+    needsRender = true;
+  }
+  applyTheme();
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  (mq.addEventListener ? mq.addEventListener('change', applyTheme) : mq.addListener(applyTheme));
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+  function resize() {
+    const w = stage.clientWidth, h = stage.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    needsRender = true;
+  }
+  new ResizeObserver(resize).observe(stage);
+  resize();
+  applyCamera();
+  (function loop() {
+    if (needsRender) { needsRender = false; renderer.render(scene, camera); }
+    requestAnimationFrame(loop);
+  })();
+})();
+</script>
