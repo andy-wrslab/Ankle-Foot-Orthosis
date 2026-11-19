@@ -45,6 +45,8 @@ class CommandState:
                  send_control: Callable[..., None], send_params: Callable[..., None],
                  readback: Callable[[], Dict[str, Any]]) -> None:
         self.cfg = cfg
+        # view-only console (config console.view_only): nothing is ever sent to the target
+        self.view_only = bool((cfg.get("console") or {}).get("view_only", False))
         self.path = state_path
         self.send_control = send_control
         self.send_params = send_params
@@ -61,9 +63,9 @@ class CommandState:
         # receiver expects 6 singles while the console sends '<5f'), so the UI can
         # grey them out. Packet format unchanged until decided in the Simulink thread.
         self.params_used_by_model = bool(ccfg.get("params_used_by_model", False))
-        # which training-stream columns echo which parameter (configurable)
-        self.param_echo = dict(MODEL_PARAM_KEYS)
-        self.param_echo.update(ccfg.get("param_echo_columns") or {})
+        # console-packet column that echoes each parameter (none in the '<12f' console
+        # packet: parameters are confirmed by getparam). Configurable.
+        self.param_echo = dict(ccfg.get("param_echo_columns") or {})
         self._mismatch_since: Dict[str, float] = {}
         self.calibrate_busy_until = 0.0
         self.last_pulse: Dict[str, Dict[str, Any]] = {}
@@ -168,7 +170,11 @@ class CommandState:
                     "not used by the current model (no block reads these parameters)",
                     "last_sent_at": self.last_sent_at, "loaded_from_disk": self.loaded_from_disk}
 
+    VIEW_ONLY_MSG = "View-only console: commands are not sent from this app."
+
     def _packet(self, toggles: Dict[str, Optional[int]]) -> Optional[str]:
+        if self.view_only:
+            return self.VIEW_ONLY_MSG
         missing = [t for t in TOGGLES if toggles[t] is None]
         if missing:
             return ("Not sent: the current state of " + ", ".join(m.upper() if m == "k" else m.capitalize()
@@ -182,13 +188,17 @@ class CommandState:
 
     # ---------------------------------------------------------- user actions
     def press_toggle(self, name: str) -> Dict[str, Any]:
-        if self.guard is not None and name in ("motor", "assist"):
+        with self.lock:
+            cur = {t: r["value"] for t, r in self.resolved().items()}
+        new = 0 if cur[name] == 1 else 1            # unknown -> ON (the operator pressed it)
+        # the side guard blocks switching Motor/Assist ON; switching OFF always works
+        if self.guard is not None and name in ("motor", "assist") and new == 1:
             block = self.guard(name)
             if block:
                 return {"ok": False, "msg": block}
         with self.lock:
             cur = {t: r["value"] for t, r in self.resolved().items()}
-            new = 0 if cur[name] == 1 else 1        # unknown -> ON (the operator pressed it)
+            new = 0 if cur[name] == 1 else 1
             nxt = dict(cur)
             nxt[name] = new
             err = self._packet(nxt)
@@ -291,6 +301,8 @@ class CommandState:
             return {"ok": False, "msg": f"{field}: not a number, not sent"}
         if not math.isfinite(v):
             return {"ok": False, "msg": f"{field}: not a number, not sent"}
+        if self.view_only:
+            return {"ok": False, "msg": self.VIEW_ONLY_MSG}
         with self.lock:
             nxt = {}
             model = self.model_params()

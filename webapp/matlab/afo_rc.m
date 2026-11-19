@@ -4,7 +4,12 @@ function out = afo_rc(action, varargin)
 %   afo_rc('connect') / ('disconnect')
 %   afo_rc('start') / ('stop')       stop/start verify the new state by polling
 %   afo_rc('load', appNameOrMldatx)  only when the app is stopped
-%   afo_rc('save', outFile)          import the target file log, export newest run to outFile
+%   afo_rc('list')                   every run in the target file log (all columns as text/numbers)
+%   afo_rc('save', outFile [, app, keyCol, keyVal, join])
+%                                    import ONE file-log run (the newest, or the row whose keyCol
+%                                    reads keyVal as listed by 'list'; keyCol '#row' = row number)
+%                                    and export it to outFile; with join (default true) earlier runs
+%                                    of the same app session (model time continues) are joined
 %   No torque/assist/motor control lives here.
 try
     tg = slrealtime();
@@ -58,6 +63,22 @@ try
             load(tg, app);
             s = rc_status(tg); s.ok = logical(isLoaded(tg));
             out = jsonencode(s);
+        case 'list'
+            need_connected(tg);
+            L = list(tg.FileLog);
+            rows = {};
+            cols = {};
+            if istable(L)
+                cols = L.Properties.VariableNames;
+                for i = 1:height(L)
+                    r = struct('row', i);
+                    for c = 1:numel(cols)
+                        r.(matlab.lang.makeValidName(cols{c})) = cellval(L.(cols{c})(i));
+                    end
+                    rows{end+1} = r; %#ok<AGROW>
+                end
+            end
+            out = jsonencode(struct('ok', true, 'columns', {cols}, 'rows', {rows}, 'n', numel(rows)));
         case 'save'
             outFile = varargin{1};
             if exist(outFile, 'file'), error('refusing to overwrite %s', outFile); end
@@ -73,26 +94,80 @@ try
             end
             if isempty(appName), error('cannot tell which application''s file log to import'); end
             % import only the newest run (a trial), not every log on the target;
-            % fall back to all runs of the app if this release has no list API
+            % fall back to all runs of the app if this release has no list API.
+            % If a recording restart split this app session into several
+            % file-log runs, the earlier runs of the SAME session are joined:
+            % a run belongs to the session when model time continues (it
+            % ends before the next run starts, within 60 s, and the next run
+            % does not start at t = 0, which a new Start would).
             scope = 'newest';
+            L = [];
             try
                 L = list(tg.FileLog);
-                if istable(L) && height(L) > 0
-                    import(tg.FileLog, L(end, :));
-                else
-                    error('empty list');
-                end
+                if ~istable(L) || height(L) == 0, error('empty list'); end
             catch
+                L = [];
+            end
+            splits = struct('t_model', {}, 'run_row', {});
+            if isempty(L)
                 scope = 'all runs (list API unavailable)';
                 tg.FileLog.import(appName);
+                after = Simulink.sdi.getAllRunIDs();
+                new = setdiff(after, before);
+                if isempty(new), error('file log import produced no new SDI run'); end
+                runIDs = new(end);
+                Simulink.sdi.exportRun(runIDs, 'to', 'file', 'filename', outFile);
+            else
+                appcol = '';
+                for c = {'Application', 'ApplicationName', 'App'}
+                    if any(strcmp(L.Properties.VariableNames, c{1})), appcol = c{1}; break; end
+                end
+                sel = height(L);
+                if numel(varargin) >= 4 && ~isempty(varargin{3})
+                    keyCol = varargin{3}; keyVal = varargin{4};
+                    if strcmp(keyCol, '#row')
+                        sel = double(keyVal);
+                    else
+                        sel = [];
+                        for i = 1:height(L)
+                            if strcmp(string(cellval(L.(keyCol)(i))), string(keyVal)), sel = i; break; end
+                        end
+                    end
+                    if isempty(sel) || sel < 1 || sel > height(L)
+                        error('run %s = %s not found in the file log', keyCol, string(keyVal));
+                    end
+                end
+                doJoin = true;
+                if numel(varargin) >= 5, doJoin = logical(varargin{5}); end
+                [runIDs, parts, rows] = import_rows(tg, L, sel);
+                k = sel - 1;
+                if ~doJoin, k = 0; end
+                while k >= 1 && numel(parts) < 20
+                    if ~isempty(appcol) && ~strcmp(string(L.(appcol)(k)), string(L.(appcol)(sel))), break; end
+                    [rid, p] = import_rows(tg, L, k);
+                    [t0new, ~, ~] = afo_join_trange(parts{1});
+                    [~, ~, t1old] = afo_join_trange(p{1});
+                    if t0new > 1 && t1old <= t0new && (t0new - t1old) < 60
+                        runIDs = [rid, runIDs]; parts = [p, parts]; rows = [k, rows]; %#ok<AGROW>
+                        splits(end+1) = struct('t_model', t0new, 'run_row', rows(2)); %#ok<AGROW>
+                        k = k - 1;
+                    else
+                        try, Simulink.sdi.deleteRun(rid); catch, end
+                        break
+                    end
+                end
+                if numel(parts) == 1
+                    Simulink.sdi.exportRun(runIDs, 'to', 'file', 'filename', outFile);
+                else
+                    scope = sprintf('newest app session: %d file-log runs joined', numel(parts));
+                    [joined, ~] = afo_join_runs(parts);
+                    save(outFile, '-struct', 'joined', '-v7.3');
+                    splits = fliplr(splits);   % oldest split first
+                end
             end
-            after = Simulink.sdi.getAllRunIDs();
-            new = setdiff(after, before);
-            if isempty(new), error('file log import produced no new SDI run'); end
-            runID = new(end);
-            Simulink.sdi.exportRun(runID, 'to', 'file', 'filename', outFile);
             d = dir(outFile);
-            out = jsonencode(struct('ok', true, 'file', outFile, 'bytes', d.bytes, 'runID', runID, 'scope', scope));
+            out = jsonencode(struct('ok', true, 'file', outFile, 'bytes', d.bytes, 'runID', runIDs(end), ...
+                'runIDs', runIDs, 'n_runs', numel(runIDs), 'splits', splits, 'scope', scope));
         otherwise
             error('unknown action %s', action);
     end
@@ -100,6 +175,37 @@ catch e
     loc = '';
     if ~isempty(e.stack), loc = sprintf(' @ %s:%d', e.stack(1).name, e.stack(1).line); end
     out = jsonencode(struct('ok', false, 'err', [e.message loc]));
+end
+end
+
+function [runIDs, parts, rows] = import_rows(tg, L, k)
+% import file-log row k into SDI, export it to a temp file and load it back
+before = Simulink.sdi.getAllRunIDs();
+import(tg.FileLog, L(k, :));
+new = setdiff(Simulink.sdi.getAllRunIDs(), before);
+if isempty(new), error('file log import of row %d produced no new SDI run', k); end
+runIDs = new(end);
+tmp = [tempname '.mat'];
+Simulink.sdi.exportRun(runIDs, 'to', 'file', 'filename', tmp);
+parts = {load(tmp)};
+rows = k;
+delete(tmp);
+end
+
+function v = cellval(x)
+% one table cell as JSON-friendly text/number (same text in 'list' and 'save')
+if iscell(x), x = x{1}; end
+if isdatetime(x)
+    x.Format = 'yyyy-MM-dd HH:mm:ss';
+    v = char(x);
+elseif isduration(x)
+    v = seconds(x);
+elseif isnumeric(x) || islogical(x)
+    v = double(x);
+elseif isstring(x) || ischar(x) || iscategorical(x)
+    v = char(string(x));
+else
+    try, v = char(string(x)); catch, v = class(x); end
 end
 end
 

@@ -22,7 +22,7 @@ def _put(q, item) -> None:
         pass  # the main process is behind: drop this frame, the next one is newer
 
 
-def worker_main(cfg, out_q, stop_evt, log_dir) -> None:
+def worker_main(cfg, out_q, stop_evt, log_dir, req_q=None, resp_q=None) -> None:
     os.makedirs(log_dir, exist_ok=True)
     logging.basicConfig(
         level=logging.INFO,
@@ -60,6 +60,29 @@ def worker_main(cfg, out_q, stop_evt, log_dir) -> None:
         log.warning("target unreachable; fake data until it sends")
         threading.Thread(target=supervised, args=("fake-data", network.start_fake_data),
                          name="fake-data", daemon=True).start()
+
+    def req_loop():
+        # Live > Training data (5431 at ~100 Hz, up to 330 s), on its own queue
+        import json
+        from queue import Empty
+        while not stop.is_set():
+            try:
+                rid, kind, args = req_q.get(timeout=0.5)
+            except Empty:
+                continue
+            except (EOFError, OSError):
+                return
+            try:
+                out = network.slow_data(args[0], float(args[1]), int(args[2]))
+            except Exception as exc:
+                out = {"err": repr(exc)}
+            try:
+                resp_q.put((rid, json.dumps(out)))
+            except Exception:
+                pass
+
+    if req_q is not None:
+        threading.Thread(target=req_loop, name="slow-req", daemon=True).start()
 
     last_ok = 0
     last_t = time.monotonic()

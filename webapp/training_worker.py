@@ -1,13 +1,23 @@
-"""Training-data UDP receiver (own process, supervised by workers.TrainingSupervisor).
+"""Console UDP receiver (own process, supervised by workers.TrainingSupervisor).
 
-Layout from config/training_udp_layout.json (v1: 46 x float32, 184 bytes,
-~100 Hz to OMEN :5433). Every packet is checked: exact length, column 1 ==
-layout_version, packet_counter continuity (24-bit wrap), every value finite.
+Layout from config/console_udp_layout.json (written by the Simulink thread's
+make_afo_r1): '<12f' = 48 bytes every 10 ms to OMEN :5433. Col 0 t_model (same
+clock as main bus 5431 col 0), 1 side (-1 unset / 0 L / 1 R), 2 weight_kg,
+3 assist_mode (1 RL, 2 ILC, 3 fixed K), 4 fixed_k_pct, 5-9 cmd_motor,
+cmd_assist, cmd_k, cmd_calibrate_pressure, cmd_reset_sv, 10 imu_ok,
+11 imu_bad_count.
+
+The packet has no version or counter column, so every packet is checked by:
+exact length; every value finite; side in {-1, 0, 1}; assist_mode in {1, 2, 3};
+model time increasing (a repeat/older time is dropped; a jump back of more than
+5 s is a model restart and starts over). Gaps are counted from model time.
 Rejected packets are counted (and logged rate-limited), never used.
+An older layout with layout_version / packet_counter columns is still checked
+the old way.
 
 Sends ("hb", status) twice a second: rates, counters, the latest valid row as
 {name: value} and its age. Answers ("data", names, window_s) requests with the
-last 120 s of the named columns (min/max decimated) on a separate queue.
+recent history of the named columns (min/max binned) on a separate queue.
 """
 from __future__ import annotations
 
@@ -24,8 +34,18 @@ from queue import Empty, Full
 
 import numpy as np
 
-KEEP_S = 330.0          # >= 5 min for the Training tab (30 s / 2 min / 5 min windows)
+KEEP_S = 330.0
 WRAP = 1 << 24
+ALLOWED = {"side": (-1.0, 0.0, 1.0), "assist_mode": (1.0, 2.0, 3.0)}
+RESTART_JUMP_S = 5.0
+RESTART_RUN = 20          # or 20 packets in a row (0.2 s) older than the last time: a new timeline
+
+
+def load_layout(path):
+    lay = json.load(open(path, encoding="utf-8"))
+    cols = sorted(lay["columns"], key=lambda c: c.get("i", c.get("column")))
+    names = [c.get("n", c.get("name")) for c in cols]
+    return lay, names
 
 
 def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> None:
@@ -33,20 +53,24 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=[logging.FileHandler(os.path.join(log_dir, time.strftime("training_worker_%Y%m%d_%H%M%S.log")),
+        handlers=[logging.FileHandler(os.path.join(log_dir, time.strftime("console_worker_%Y%m%d_%H%M%S.log")),
                                       encoding="utf-8")])
-    log = logging.getLogger("afo.training")
-    lay = json.load(open(layout_path, encoding="utf-8"))
+    log = logging.getLogger("afo.console")
+    lay, names = load_layout(layout_path)
     fmt = struct.Struct(lay["format"])
-    names = [c["n"] for c in sorted(lay["columns"], key=lambda c: c["i"])]
-    version = float(lay["layout_version"])
     port = int(lay["port"])
+    period = float(lay.get("period_ms", 10)) / 1000.0
     n = len(names)
     assert fmt.size == 4 * n, "layout format and columns disagree"
+    idx = {nm: i for i, nm in enumerate(names)}
+    i_time = idx.get("t_model", 0)
+    versioned = "layout_version" in idx and "packet_counter" in idx
+    version = float(lay.get("layout_version", 0))
+    allowed = [(idx[k], v, k) for k, v in ALLOWED.items() if k in idx]
 
-    st = {"packets_ok": 0, "bad_length": 0, "bad_version": 0, "non_finite_packets": 0, "counter_gaps": 0,
-          "lost_packets": 0, "dup_or_reordered": 0, "last_counter": None, "last_rx": 0.0, "bind_error": None,
-          "non_finite_by_col": {}}
+    st = {"packets_ok": 0, "bad_length": 0, "bad_version": 0, "non_finite_packets": 0, "bad_value": 0,
+          "counter_gaps": 0, "lost_packets": 0, "dup_or_reordered": 0, "model_restarts": 0, "last_counter": None,
+          "last_t_model": None, "back_run": 0, "last_rx": 0.0, "bind_error": None, "non_finite_by_col": {}, "bad_value_by_col": {}}
     latest = {}
     hist_t = deque()
     hist = deque()
@@ -58,6 +82,61 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
         if now - last_log.get(key, 0) > 2.0:
             last_log[key] = now
             log.warning(msg)
+
+    def accept(row) -> bool:
+        if versioned:
+            if row[idx["layout_version"]] != version:
+                st["bad_version"] += 1
+                rl("ver", f"packet with layout_version {row[idx['layout_version']]} dropped")
+                return False
+        bad = [i for i, v in enumerate(row) if not math.isfinite(v)]
+        if bad:
+            st["non_finite_packets"] += 1
+            for i in bad:
+                st["non_finite_by_col"][names[i]] = st["non_finite_by_col"].get(names[i], 0) + 1
+            rl("nf", f"packet with non-finite {', '.join(names[i] for i in bad)} dropped")
+            return False
+        for i, ok_vals, k in allowed:
+            if row[i] not in ok_vals:
+                st["bad_value"] += 1
+                st["bad_value_by_col"][k] = st["bad_value_by_col"].get(k, 0) + 1
+                rl("val", f"packet with {k} = {row[i]:g} dropped (allowed {ok_vals})")
+                return False
+        if versioned:
+            c = int(row[idx["packet_counter"]]) % WRAP
+            lc = st["last_counter"]
+            if lc is not None:
+                step = (c - lc) % WRAP
+                if step == 0 or step > WRAP // 2:
+                    st["dup_or_reordered"] += 1
+                    return False
+                if step > 1:
+                    st["counter_gaps"] += 1
+                    st["lost_packets"] += step - 1
+            st["last_counter"] = c
+        t = row[i_time]
+        lt = st["last_t_model"]
+        if lt is not None:
+            if t <= lt:
+                st["back_run"] += 1
+                if lt - t > RESTART_JUMP_S or st["back_run"] >= RESTART_RUN:
+                    st["back_run"] = 0
+                    st["model_restarts"] += 1
+                    log.info("console model time went back %.1f s -> %.1f s: model restarted", lt, t)
+                    with lock:
+                        hist_t.clear()
+                        hist.clear()
+                else:
+                    st["dup_or_reordered"] += 1
+                    return False
+            elif not versioned and t - lt > 2.5 * period:
+                st["back_run"] = 0
+                st["counter_gaps"] += 1
+                st["lost_packets"] += max(0, int(round((t - lt) / period)) - 1)
+        if lt is None or t > lt:
+            st["back_run"] = 0
+        st["last_t_model"] = t
+        return True
 
     def rx_loop():
         while not stop_evt.is_set():
@@ -73,7 +152,7 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             st["bind_error"] = None
             sock.settimeout(0.5)
             buf = bytearray(65536)
-            log.info("listening for training data on %s:%d (layout v%d, %d columns)", host, port, int(version), n)
+            log.info("listening for console packets on %s:%d (%s, %d columns)", host, port, lay["format"], n)
             try:
                 while not stop_evt.is_set():
                     try:
@@ -84,48 +163,24 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
                         continue
                     if nbytes != fmt.size:
                         st["bad_length"] += 1
-                        rl("len", f"training packet of {nbytes} bytes dropped (expected {fmt.size})")
+                        rl("len", f"console packet of {nbytes} bytes dropped (expected {fmt.size})")
                         continue
                     row = fmt.unpack_from(buf)
-                    if row[1] != version:
-                        st["bad_version"] += 1
-                        rl("ver", f"training packet with layout_version {row[1]} dropped (expected {version:g})")
+                    if not accept(row):
                         continue
-                    bad = [i for i, v in enumerate(row) if not math.isfinite(v)]
-                    if bad:
-                        st["non_finite_packets"] += 1
-                        for i in bad:
-                            st["non_finite_by_col"][names[i]] = st["non_finite_by_col"].get(names[i], 0) + 1
-                        if 0 in bad or 2 in bad:
-                            rl("nf", "training packet with non-finite time/counter dropped")
-                            continue
-                    c = int(row[2]) % WRAP
-                    lc = st["last_counter"]
-                    if lc is not None:
-                        step = (c - lc) % WRAP
-                        if step == 0 or step > WRAP // 2:
-                            st["dup_or_reordered"] += 1
-                            continue
-                        if step > 1:
-                            st["counter_gaps"] += 1
-                            st["lost_packets"] += step - 1
-                    st["last_counter"] = c
                     st["packets_ok"] += 1
                     st["last_rx"] = time.time()
-                    vals = {names[i]: (row[i] if math.isfinite(row[i]) else None) for i in range(n)}
+                    vals = {names[i]: row[i] for i in range(n)}
                     with lock:
                         latest.clear()
                         latest.update(vals)
-                        hist_t.append(row[0])
+                        hist_t.append(row[i_time])
                         hist.append(np.array(row, dtype=np.float64))
                         while hist_t and hist_t[-1] - hist_t[0] > KEEP_S:
                             hist_t.popleft()
                             hist.popleft()
-                        if hist_t and hist_t[-1] < hist_t[0]:   # model restarted: start over
-                            hist_t.clear()
-                            hist.clear()
             except Exception:
-                log.exception("training receiver error; rebuilding socket")
+                log.exception("console receiver error; rebuilding socket")
                 time.sleep(1)
             finally:
                 sock.close()
@@ -142,24 +197,21 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
                         out = {"t_latest": None, "series": {}}
                     else:
                         arr = np.vstack(hist)
-                        t = arr[:, 0]
+                        t = arr[:, i_time]
                         newest = t[-1]
-                        m = t >= newest - float(args[1])
                         window = float(args[1])
+                        m = t >= newest - window
                         max_points = int(args[2]) if len(args) > 2 else 1500
-                        # min/max bins anchored to absolute model time (like the Live page):
-                        # completed bins are identical between requests, peaks never vanish
                         bw = max(window / (max_points / 2.0), 0.01)
-                        tt_all = t[m]
-                        bins = np.floor(tt_all / bw).astype(np.int64)
-                        starts = np.flatnonzero(np.concatenate(([True], bins[1:] != bins[:-1]))) if len(bins) else np.array([], dtype=np.int64)
+                        tt = t[m]
+                        bins = np.floor(tt / bw).astype(np.int64)
+                        starts = (np.flatnonzero(np.concatenate(([True], bins[1:] != bins[:-1])))
+                                  if len(bins) else np.array([], dtype=np.int64))
                         out = {"t_latest": float(newest), "bin_width": bw, "series": {}}
                         for nm in args[0]:
-                            if nm not in names:
+                            if nm not in idx or len(starts) == 0:
                                 continue
-                            y = arr[m, names.index(nm)]
-                            if len(starts) == 0:
-                                continue
+                            y = arr[m, idx[nm]]
                             with np.errstate(all="ignore"):
                                 lo = np.fmin.reduceat(y, starts)
                                 hi = np.fmax.reduceat(y, starts)
@@ -190,9 +242,9 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             snap = dict(latest)
         status = {k: v for k, v in st.items()}
         status.update(rate_hz=round(rate, 1), age_s=round(time.time() - st["last_rx"], 2) if st["last_rx"] else None,
-                      latest=snap, port=port, layout_version=int(version), pid=os.getpid())
+                      latest=snap, port=port, format=lay["format"], pid=os.getpid())
         try:
             out_q.put_nowait(("hb", status))
         except Full:
             pass
-    log.info("training worker stopping")
+    log.info("console worker stopping")

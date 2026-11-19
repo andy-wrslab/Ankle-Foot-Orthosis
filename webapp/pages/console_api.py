@@ -1,0 +1,239 @@
+"""JSON API for the console UI (design v18): one state endpoint polled twice a
+second, plus the operator actions. The page script (assets/afo_console.js)
+renders everything from /api/console/state; nothing here sends a command or a
+setting unless an action endpoint is called by an operator click.
+
+Run control (Connect / Start / Stop) stays on /api/run/<action> (OMEN only).
+Motor / Assist / K / Calibrate / Reset SV / session values work from the
+tablet too (it is the treadmill console).
+"""
+from __future__ import annotations
+
+import time
+from typing import Any, Dict, List
+
+from flask import jsonify, request
+
+from pages.common import is_local
+from session import MODES, SIDE_NAMES, SPECS, values_match
+from status import top_status
+
+BUSY_TEXT = {"connect": ("Connecting…", "Connecting… attaching MATLAB"),
+             "disconnect": ("Disconnecting…", "Disconnecting…"),
+             "start": ("Starting…", "Starting… loading AFO"),
+             "stop": ("Stopping…", "Stopping… importing log"),
+             "save": ("Exporting…", "Exporting…"), "list file log": ("Reading log…", "Reading the file log…")}
+PENDING_S = 1.0
+
+
+def _fmt(key: str, v) -> str:
+    if v is None:
+        return "–"
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    if f != f:
+        return "---"
+    if key == "side":
+        return {0: "Left", 1: "Right", -1: "Unset"}.get(int(round(f)), f"{f:g}")
+    if key == "mode":
+        return {1: "RL", 2: "ILC", 3: "Fixed K"}.get(int(round(f)), f"{f:g}")
+    if key == "weight":
+        return f"{f:g} kg"
+    if key == "k_percent":
+        return f"{f:.1f} %"
+    return f"{f:g}"
+
+
+def settings_rows(ctx) -> Dict[str, Any]:
+    """Popover table: Foot side, Body mass, Assistance mode, K, Advanced (n of n)."""
+    sess = ctx.session
+    table = {r["name"]: r for r in sess.target_table()}
+    console_live = bool(sess.echo())
+    rows = []
+    for key, label in (("side", "Foot side"), ("weight", "Body mass"), ("mode", "Assistance mode"), ("k_percent", "K")):
+        r = table.get(key, {})
+        st = (sess.status.get(key) or {}).get("state")
+        if r.get("match") is True:
+            state = "ok"
+        elif st == "sending" or (r.get("entered") is not None and r.get("target") is None):
+            state = "sending"
+        elif r.get("match") is False:
+            state = "differs"
+        else:
+            state = "none"
+        if r.get("source") == "echo" and not console_live:
+            state = "sending"
+        rows.append({"key": key, "label": label, "entered": _fmt(key, r.get("entered")),
+                     "target": _fmt(key, r.get("target")) if r.get("target") is not None else "…",
+                     "state": state, "source": r.get("source")})
+    adv = [sp["key"] for sp in SPECS if sp.get("adv")]
+    known = [table[k] for k in adv if k in table and table[k].get("target") is not None]
+    n_match = sum(1 for r in known if r.get("match") is True or (r.get("entered") is None))
+    differs = [r for r in known if r.get("match") is False]
+    rows.append({"key": "adv", "label": f"Advanced ({len(adv)})", "entered": str(len(adv)),
+                 "target": f"{n_match} match" if known else "…",
+                 "state": "differs" if differs else ("ok" if len(known) == len(adv) else "sending" if known else "none"),
+                 "differs": [d["label"] for d in differs]})
+    ages = [r.get("age_s") for r in table.values() if r.get("age_s") is not None]
+    read_at = time.strftime("%H:%M:%S", time.localtime(sess.readback_at)) if sess.readback_at else None
+    return {"rows": rows, "read_back_at": read_at, "console_live": console_live,
+            "oldest_age_s": max(ages) if ages else None}
+
+
+def side_view(ctx) -> Dict[str, Any]:
+    sess = ctx.session
+    chip = sess.side_chip()
+    want = sess.values.get("side")
+    rb = sess.readback.get("side")
+    try:
+        rbi = None if rb is None else int(round(float(rb)))
+    except (TypeError, ValueError):
+        rbi = None
+    if chip["state"] == "bad":
+        state = "mismatch"
+    elif chip["state"] == "ok":
+        state = "ok"
+    else:
+        state = "confirm"
+    shown = SIDE_NAMES.get(rbi) if rbi in (0, 1) else (SIDE_NAMES.get(int(want)) if want is not None else None)
+    return {"state": state, "app": SIDE_NAMES.get(int(want)) if want is not None else None,
+            "target": SIDE_NAMES.get(rbi) if rbi in (0, 1) else ("UNSET" if rbi == -1 else None),
+            "chip": (f"{shown.capitalize()} foot" if state == "ok" and shown else
+                     "! FOOT MISMATCH" if state == "mismatch" else "? CONFIRM FOOT"),
+            "after_start": bool(getattr(sess, "after_start", False)), "problem": sess.side_problem()}
+
+
+def commands_view(ctx) -> Dict[str, Any]:
+    v = ctx.commands.view()
+    sent = dict(getattr(ctx.commands, "toggles", {}) or {})
+    mism = {m["name"] for m in v["mismatch"]}
+    recent = v.get("last_sent_at") and time.time() - v["last_sent_at"] < PENDING_S
+    out = {}
+    for t, r in v["toggles"].items():
+        pending = bool(recent and r.get("source") == "model" and sent.get(t) is not None and sent.get(t) != r.get("value"))
+        out[t] = {"value": r.get("value"), "source": r.get("source"), "pending": pending, "mismatch": t in mism}
+    return {"toggles": out, "calibrate_busy_s": v["calibrate_busy_s"], "last_pulse": v["last_pulse"],
+            "params_used_by_model": v["params_used_by_model"]}
+
+
+def rig_view(ctx) -> Dict[str, Any]:
+    rc = ctx.runctl.status or {}
+    live = ctx.live.get_status()
+    tr = ctx.training.get_status()
+    lh = (live.get("health") or {}).get("packets") or {}
+    rb = ctx.live.readback()
+    latest = ctx.training.latest(max_age_s=0.5)
+    sw = rb.get("statusword")
+    tet = None
+    if rc.get("tet_avg_us") not in (None, []):
+        tet = f"{rc['tet_avg_us']:.0f} / {rc['tet_max_us']:.0f} µs"
+    ecat = rc.get("ethercat_state")
+    return {
+        "target": f"{rc.get('target') or ctx.poller.get().get('target_host', '192.168.7.5')} · "
+                  + ("connected" if rc.get("connected") else "not connected"),
+        "application": (f"{rc.get('app')} · " + ("running" if rc.get("running") else "stopped")) if rc.get("app") else "–",
+        "tet": tet or "–",
+        "ethercat": "–" if ecat in (None, []) else ("OP" if ecat == 8 else f"state {ecat}"),
+        "file_log": rc.get("filelog") or "–",
+        "main_udp": {"rate": round(live.get("rate_hz") or 0), "bad": int(lh.get("bad_length", 0) or 0) +
+                     int(lh.get("bad_time", 0) or 0) + int(lh.get("errors", 0) or 0)},
+        "console_udp": {"enabled": bool(getattr(ctx.training, "enabled", False)), "rate": round(tr.get("rate_hz") or 0),
+                        "lost": int(tr.get("lost_packets") or 0),
+                        "rejected": int(tr.get("bad_length") or 0) + int(tr.get("non_finite_packets") or 0)
+                        + int(tr.get("bad_value") or 0)},
+        "statusword": f"0x{int(sw):04X}" if isinstance(sw, (int, float)) and sw == sw else "–",
+        "imu": ("–" if not latest else ("Valid" if latest.get("imu_ok", 0) >= 0.5 else "INVALID")
+                + f" · {int(latest.get('imu_bad_count') or 0)} bad packets"),
+        "updated": time.strftime("%H:%M:%S"),
+    }
+
+
+def console_state(ctx) -> Dict[str, Any]:
+    st = top_status(ctx)
+    job = ctx.jobs.running("rc")
+    busy = None
+    if job is not None:
+        action = job.title.split(":")[-1].strip()
+        if action in BUSY_TEXT:
+            busy = {"action": action, "verb": BUSY_TEXT[action][0], "msg": BUSY_TEXT[action][1]}
+    sess = ctx.session
+    sent_recent = any((v or {}).get("state") == "sending" for v in sess.status.values())
+    if not busy and sent_recent and st["level"] not in ("red",):
+        st = dict(st, state="busy", text="Sending…", level="busy")
+    rc = ctx.runctl.status or {}
+    values = {sp["key"]: sess.values.get(sp["key"]) for sp in SPECS}
+    return {
+        "at": time.time(), "local": is_local(), "status": st, "busy": busy,
+        "view_only": bool((ctx.cfg.get("console") or {}).get("view_only", False)),
+        "target": {"connected": bool(rc.get("connected")), "running": bool(st.get("running")),
+                   "address": rc.get("target") or "192.168.7.5", "app": rc.get("app")},
+        "session": {"sid": sess.sid, "values": values, "modes": {str(k): v for k, v in MODES.items()},
+                    "readback": dict(sess.readback), "readback_source": dict(sess.readback_src),
+                    "status": {k: (v or {}).get("state") for k, v in sess.status.items()},
+                    "status_msg": {k: (v or {}).get("msg") for k, v in sess.status.items()},
+                    "writes_enabled": sess.writes_enabled},
+        "side": side_view(ctx), "settings": settings_rows(ctx), "commands": commands_view(ctx),
+        "rig": rig_view(ctx),
+    }
+
+
+def register(server, ctx) -> None:
+    def body():
+        return request.get_json(silent=True) or {}
+
+    @server.route("/api/console/state")
+    def api_console_state():  # type: ignore
+        return jsonify(console_state(ctx))
+
+    @server.route("/api/console/sid", methods=["POST"])
+    def api_console_sid():  # type: ignore
+        msg = ctx.session.set_sid(str(body().get("sid", "")))
+        ok = ctx.session.sid == str(body().get("sid", "")).strip().upper()
+        return jsonify({"ok": ok, "msg": msg}), (200 if ok else 400)
+
+    @server.route("/api/console/value", methods=["POST"])
+    def api_console_value():  # type: ignore
+        b = body()
+        key, value = str(b.get("key", "")), b.get("value")
+        if key not in {sp["key"] for sp in SPECS} or key == "side":
+            return jsonify({"ok": False, "msg": "unknown setting"}), 400
+        if any(sp["key"] == key and sp.get("readonly") for sp in SPECS):
+            return jsonify({"ok": False, "msg": "read-only"}), 403
+        if not b.get("confirmed"):
+            need = ctx.session.check_change(key, value)
+            if need:
+                return jsonify({"ok": False, "needs_confirm": need}), 409
+        msg = ctx.session.enter_value(key, value)
+        st = (ctx.session.status.get(key) or {}).get("state")
+        ok = st in ("sending", "pending", "confirmed")
+        return jsonify({"ok": ok, "msg": msg, "state": st}), (200 if ok else 400)
+
+    @server.route("/api/console/side", methods=["POST"])
+    def api_console_side():  # type: ignore
+        side = str(body().get("side", "")).upper()
+        if ctx.commands.view()["toggles"]["motor"]["value"] == 1:
+            return jsonify({"ok": False, "msg": "Motor is on: switch it off before changing the foot side."}), 409
+        msg = ctx.session.confirm_side(side, ctx.session.sid or "")
+        st = (ctx.session.status.get("side") or {}).get("state")
+        ok = st in ("sending", "pending", "confirmed")
+        return jsonify({"ok": ok, "msg": msg, "state": st}), (200 if ok else 400)
+
+    @server.route("/api/console/toggle", methods=["POST"])
+    def api_console_toggle():  # type: ignore
+        name = str(body().get("name", ""))
+        if name not in ("motor", "assist", "k"):
+            return jsonify({"ok": False, "msg": "unknown toggle"}), 400
+        r = ctx.commands.press_toggle(name)
+        return jsonify(r), (200 if r.get("ok") else 409)
+
+    @server.route("/api/console/pulse", methods=["POST"])
+    def api_console_pulse():  # type: ignore
+        r = ctx.commands.pulse(str(body().get("name", "")))
+        return jsonify(r), (200 if r.get("ok") else 409)
+
+    @server.route("/api/console/unknown-off", methods=["POST"])
+    def api_console_unknown_off():  # type: ignore
+        r = ctx.commands.set_unknown_off()
+        return jsonify(r), (200 if r.get("ok") else 409)

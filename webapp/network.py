@@ -69,13 +69,13 @@ _link_up = False
 _GROUP_OF = {
     "time": "sync",
     "sync": "sync",
-    "treadmill_velocity": "drive",
+    "sv": "drive",
     "ankle_angle": "drive",
     "actual_torque": "drive",
     "demand_torque": "drive",
     "statusword": "drive",
-    "gait_percentage": "drive",
-    "shifted_angle_moment": "drive",
+    "sv_target": "drive",
+    "uc": "drive",
     "heel_strike": "drive",
     "assistance_level": "drive",
 }
@@ -83,7 +83,7 @@ _GROUP_OF = {
 # used when config.yaml has no validation section; values outside are rejected
 _DEFAULT_RANGES = {
     "time": [0.0, 1.0e7],
-    "treadmill_velocity": [-1.0, 5.0],
+    "sv": [-1.0, 5.0],
     "ankle_angle": [-180.0, 180.0],
     "pressure_*": [-50.0, 5000.0],
     "imu_1": [-16.0, 16.0],
@@ -139,6 +139,14 @@ _last_states: Dict[str, str] = {}
 
 _publish_hook = snapshots.publish
 _readback_lock = threading.Lock()
+from history import SlowBuffer  # noqa: E402
+_slow = SlowBuffer()
+
+
+def slow_data(names, window_s: float, max_points: int = 1500) -> Dict[str, Any]:
+    """Training sub-page data (5431 at ~100 Hz, up to 330 s), min/max binned."""
+    with _history_lock:
+        return _slow.data(names, window_s, max_points)
 _readback: Dict[str, Any] = {}
 
 
@@ -279,6 +287,7 @@ def _zero_controls(cfg: Dict[str, Any]) -> None:
 def _begin_session(cfg: Dict[str, Any], session: int, reason: str) -> None:
     """Start from a clean slate after the target (re)started."""
     _history.reset()
+    _slow.reset()
     snapshots.clear()
     # No control packet here: the model holds the last command it received, and
     # the console must never change a command by itself (see commands.py).
@@ -394,7 +403,7 @@ def _build_decoder(cfg: Dict[str, Any]):
     idx_ankle = name_to_idx.get("ankle_angle")
     idx_torque = name_to_idx.get("actual_torque")
     idx_demand = name_to_idx.get("demand_torque")
-    idx_gait = name_to_idx.get("treadmill_velocity")
+    idx_gait = name_to_idx.get("sv", name_to_idx.get("treadmill_velocity"))   # col 1 = SV
     idx_status = name_to_idx.get("statusword")
     press_indices: List[int | None] = [name_to_idx.get(f"pressure_{i}") for i in range(1, 9)]
     imu_indices: List[int | None] = [name_to_idx.get(f"imu_{i}") for i in range(1, 13)]
@@ -443,6 +452,8 @@ def _build_decoder(cfg: Dict[str, Any]):
             "imu": [_v(idx) for idx in imu_indices],
             "statusword": _v(idx_status),
             "assistance_level": _v(name_to_idx.get("assistance_level")),
+            "sv_target": _v(name_to_idx.get("sv_target")),
+            "uc": _v(name_to_idx.get("uc")),
         }
         return sample, {g: (c[0], c[1]) for g, c in counts.items()}
 
@@ -600,7 +611,7 @@ def start_fake_data(cfg: Dict[str, Any], stop_event: threading.Event | None = No
         demand = 4.0 * math.sin(t / 2.0 + 0.5)
         pressures = [500.0 + 100.0 * math.sin(t + i) for i in range(8)]
         imus = [math.sin(t + i * 0.1) for i in range(12)]
-        gait = 1.0 + 0.8 * math.sin(t / 2.0)  # simulate treadmill velocity in m/s
+        gait = 1.0 + 0.8 * math.sin(t / 2.0)  # simulate stride velocity in m/s
 
         _publish_sample(
             cfg,
@@ -649,6 +660,7 @@ def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = Tr
             return
         _history.add_sample(sample)
         if live:
+            _slow.add(sample)
             with _readback_lock:
                 for key in ("statusword", "assistance_level", "demand_torque"):
                     v = sample.get(key)

@@ -157,7 +157,8 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
     buf = SignalBuffer()
     st = {"on": False, "state": "off", "mode": None, "nsig": 0, "err": "", "drains": 0,
           "last_rows_wall": 0.0, "setup_ok": False, "recording": False, "restart_tried": False,
-          "recover_tried": False, "notes": []}
+          "recover_tried": False, "notes": [], "auto_reconnects": 0, "offer_recover": False}
+    MAX_AUTO_RECONNECTS = 3
 
     def note(msg):
         st["notes"] = (st["notes"] + [time.strftime("%H:%M:%S ") + msg])[-12:]
@@ -207,6 +208,7 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
                     if r.get("ok") and r.get("nsignames"):
                         for k in ("setup_fail_since", "reconnect_wall"):
                             st.pop(k, None)
+                        st.update(auto_reconnects=0, offer_recover=False)
                         st.update(setup_ok=True, mode=r.get("mode"), nsig=r.get("nsignames"), err="",
                                   last_rows_wall=time.time(), restart_tried=False, recover_tried=False)
                         note(f"stream ready: {r.get('nsignames')} signals, {r.get('mode')} mode")
@@ -216,12 +218,21 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
                             note("stream setup failed: " + err[:200])
                         st["err"] = err
                         # Automatic recovery is limited to a clean reconnect of THIS
-                        # session (never touches target recording). Restarting
-                        # recording or afo_recover are manual buttons on the page.
+                        # session (never touches target recording), at most 3 times.
+                        # After that the page offers ONE manual "Reconnect Signals"
+                        # (afo_recover). Never restarts recording by itself.
                         st.setdefault("setup_fail_since", time.time())
                         if time.time() - st["setup_fail_since"] > 15 and time.time() - st.get("reconnect_wall", 0) > 30:
+                            if st["auto_reconnects"] >= MAX_AUTO_RECONNECTS:
+                                if not st["offer_recover"]:
+                                    st["offer_recover"] = True
+                                    note(f"automatic reconnect failed {MAX_AUTO_RECONNECTS} times: "
+                                         "Reconnect Signals (afo_recover) offered on the page")
+                                continue
                             st["reconnect_wall"] = time.time()
-                            note("setup keeps failing: reconnecting this MATLAB session to the target")
+                            st["auto_reconnects"] += 1
+                            note(f"setup keeps failing: reconnecting this MATLAB session to the target "
+                                 f"(automatic {st['auto_reconnects']}/{MAX_AUTO_RECONNECTS})")
                             ml_json("afo_rc('disconnect')")
                             time.sleep(3)
                             ml_json("afo_rc('connect')")
@@ -259,7 +270,8 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
             rid, kind, args = msg
             try:
                 if kind == "status":
-                    out = {k: st[k] for k in ("on", "state", "mode", "nsig", "err", "drains", "notes")}
+                    out = {k: st[k] for k in ("on", "state", "mode", "nsig", "err", "drains", "notes",
+                                              "auto_reconnects", "offer_recover")}
                     out["silent_s"] = round(time.time() - st["last_rows_wall"], 1) if st["last_rows_wall"] else None
                     out["channels"] = buf.channels()
                 elif kind == "data":
@@ -290,8 +302,9 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
         try:
             if func == "__recover__":
                 mode = args[0]
+                # only afo_recover is offered in the UI ("Reconnect Signals");
+                # restarting recording on its own was removed (it splits the file log)
                 expr = {"reconnect": "afo_rc('disconnect')",
-                        "recording_restart": "afo_recording('stop')",
                         "afo_recover": "afo_recover('TargetPC1')"}.get(mode)
                 if expr is None:
                     raise ValueError("unknown recovery mode")
@@ -301,10 +314,10 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
                 if mode == "reconnect":
                     time.sleep(3)
                     res["steps"].append(ml_json("afo_rc('connect')"))
-                elif mode == "recording_restart":
-                    time.sleep(1)
-                    res["steps"].append(ml_json("afo_recording('start')"))
-                st.update(setup_ok=False, recording=False, restart_tried=False)
+                st.update(setup_ok=False, recording=False, restart_tried=False, auto_reconnects=0,
+                          offer_recover=False)
+                st.pop("setup_fail_since", None)
+                st.pop("reconnect_wall", None)
                 resp_q.put((rid, True, json.dumps(res)))
                 continue
             if func == "__stream__":

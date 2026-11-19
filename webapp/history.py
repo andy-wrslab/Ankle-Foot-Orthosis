@@ -40,6 +40,8 @@ class SignalHistory:
         self._gait: Deque[float] = deque(maxlen=cap)
         self._press: List[Deque[float]] = [deque(maxlen=cap) for _ in range(self._press_channels)]
         self._imu: List[Deque[float]] = [deque(maxlen=cap) for _ in range(self._imu_channels)]
+        # 5431 cols 23 (SV target), 24 (Uc), 27 (assistance level in use)
+        self._extra: Dict[str, Deque[float]] = {k: deque(maxlen=cap) for k in ("sv_target", "uc", "assistance_level")}
         self._status: float = 0.0
         self._last_trimmed = 0
 
@@ -57,6 +59,8 @@ class SignalHistory:
         for channel in self._press:
             channel.clear()
         for channel in self._imu:
+            channel.clear()
+        for channel in self._extra.values():
             channel.clear()
         self._status = 0.0
         self._last_trimmed = 0
@@ -81,6 +85,8 @@ class SignalHistory:
         self._torque.append(f(sample.get("torque", math.nan)))
         self._demand.append(f(sample.get("demand_torque", math.nan)))
         self._gait.append(f(sample.get("gait", math.nan)))
+        for k, channel in self._extra.items():
+            channel.append(f(sample.get(k, math.nan)))
 
         press_vals = sample.get("press") or []
         imu_vals = sample.get("imu") or []
@@ -164,6 +170,7 @@ class SignalHistory:
             "gait": _env(self._gait),
             "press": [_env(ch) for ch in self._press],
             "imu": [_env(ch) for ch in self._imu],
+            **{k: _env(ch) for k, ch in self._extra.items()},
             "statusword": self._status,
             # newest raw sample per channel for the numeric readouts (null if rejected)
             "latest": {
@@ -173,6 +180,7 @@ class SignalHistory:
                 "gait": _last(self._gait),
                 "press": [_last(ch) for ch in self._press],
                 "imu": [_last(ch) for ch in self._imu],
+                **{k: _last(ch) for k, ch in self._extra.items()},
             },
         }
         payload["meta"] = {
@@ -197,5 +205,82 @@ class SignalHistory:
                 channel.popleft()
             for channel in self._imu:
                 channel.popleft()
+            for channel in self._extra.values():
+                channel.popleft()
             trimmed += 1
         self._last_trimmed = trimmed
+
+
+class SlowBuffer:
+    """Last 330 s of a few 5431 channels at ~100 Hz (one sample per 10 ms of
+    model time) for the Live > Training plots (30 s / 2 min / 5 min)."""
+
+    NAMES = ("sv", "sv_target", "uc", "assistance_level", "torque", "demand_torque")
+
+    def __init__(self, keep_s: float = 330.0, dt: float = 0.01) -> None:
+        self.keep_s, self.dt = keep_s, dt
+        cap = int(keep_s / dt) + 1000
+        self._t: Deque[float] = deque(maxlen=cap)
+        self._v: Dict[str, Deque[float]] = {k: deque(maxlen=cap) for k in self.NAMES}
+        self._last_bin = None
+
+    def reset(self) -> None:
+        self._t.clear()
+        for d in self._v.values():
+            d.clear()
+        self._last_bin = None
+
+    def add(self, sample: Dict[str, object]) -> None:
+        try:
+            t = float(sample.get("t"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(t):
+            return
+        b = int(t // self.dt)
+        if self._last_bin is not None and b <= self._last_bin:
+            if b < self._last_bin - int(5.0 / self.dt):     # model restarted
+                self.reset()
+            else:
+                return
+        self._last_bin = b
+        self._t.append(t)
+        src = {"sv": sample.get("gait"), "torque": sample.get("torque")}
+        for k, d in self._v.items():
+            v = src[k] if k in src else sample.get(k)
+            try:
+                d.append(float(v))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                d.append(math.nan)
+        while self._t and self._t[-1] - self._t[0] > self.keep_s:
+            self._t.popleft()
+            for d in self._v.values():
+                d.popleft()
+
+    def data(self, names, window_s: float, max_points: int = 1500) -> Dict[str, object]:
+        n = len(self._t)
+        if n == 0:
+            return {"t_latest": None, "series": {}}
+        t = np.fromiter(self._t, dtype=np.float64, count=n)
+        newest = t[-1]
+        m = t >= newest - float(window_s)
+        tt = t[m]
+        bw = max(float(window_s) / (max(32, int(max_points)) / 2.0), self.dt)
+        bins = np.floor(tt / bw).astype(np.int64)
+        starts = np.flatnonzero(np.concatenate(([True], bins[1:] != bins[:-1])))
+        out: Dict[str, object] = {"t_latest": float(newest), "bin_width": bw, "series": {}}
+        for nm in names:
+            if nm not in self._v:
+                continue
+            y = np.fromiter(self._v[nm], dtype=np.float64, count=n)[m]
+            with np.errstate(all="ignore"):
+                lo = np.fmin.reduceat(y, starts)
+                hi = np.fmax.reduceat(y, starts)
+            x = np.empty(2 * len(starts))
+            x[0::2] = bins[starts] * bw - newest
+            x[1::2] = bins[starts] * bw + 0.5 * bw - newest
+            v = np.empty(2 * len(starts))
+            v[0::2], v[1::2] = lo, hi
+            out["series"][nm] = {"t": [round(float(q), 4) for q in x],
+                                 "v": [None if not math.isfinite(q) else float(f"{q:.6g}") for q in v]}
+        return out

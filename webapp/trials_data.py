@@ -22,12 +22,12 @@ from typing import Any, Dict, List
 import numpy as np
 
 BUS_NAMES = [
-    "time", "treadmill_velocity", "ankle_angle",
+    "time", "sv", "ankle_angle",
     "pressure_1", "pressure_2", "pressure_3", "pressure_4",
     "pressure_5", "pressure_6", "pressure_7", "pressure_8",
     "accel_x", "accel_y", "accel_z", "yaw", "pitch", "roll",
     "gyro_x", "gyro_y", "gyro_z", "raw_accel_x", "raw_accel_y", "raw_accel_z",
-    "gait_percentage", "shifted_angle_moment", "actual_torque", "heel_strike",
+    "sv_target", "uc", "actual_torque", "heel_strike",
     "assistance_level", "demand_torque", "statusword", "sync",
 ]
 DRIVE_NAMES = [f"drive_{i + 1}" for i in range(7)]

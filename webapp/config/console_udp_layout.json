@@ -1,0 +1,92 @@
+{
+  "port": 5433,
+  "format": "<12f",
+  "period_ms": 10,
+  "note": "console values not on the main bus; 5431 and 5432 unchanged",
+  "columns": [
+    {
+      "name": "t_model",
+      "tag": "",
+      "unit": "s",
+      "description": "model time, same clock as main bus 5431 column 0",
+      "column": 0
+    },
+    {
+      "name": "side",
+      "tag": "TX_Side",
+      "unit": "",
+      "description": "Left 0/Right 1 in use; -1 = unset at start, drive held disabled until 0 or 1",
+      "column": 1
+    },
+    {
+      "name": "weight_kg",
+      "tag": "TX_Weight",
+      "unit": "kg",
+      "description": "body weight constant in use (moment x weight)",
+      "column": 2
+    },
+    {
+      "name": "assist_mode",
+      "tag": "TX_Assist_Mode",
+      "unit": "",
+      "description": "Constant4 into the Multiport Switch: 1 = RL, 2 = ILC, 3 = fixed K",
+      "column": 3
+    },
+    {
+      "name": "fixed_k_pct",
+      "tag": "TX_Fixed_K",
+      "unit": "%",
+      "description": "Constant10: fixed-K assistance level",
+      "column": 4
+    },
+    {
+      "name": "cmd_motor",
+      "tag": "START_STOP",
+      "unit": "",
+      "description": "control in [1] motor, as latched by the model",
+      "column": 5
+    },
+    {
+      "name": "cmd_assist",
+      "tag": "Assistance_Signal",
+      "unit": "",
+      "description": "control in [2] assist",
+      "column": 6
+    },
+    {
+      "name": "cmd_k",
+      "tag": "K_Signal",
+      "unit": "",
+      "description": "control in [3] k",
+      "column": 7
+    },
+    {
+      "name": "cmd_calibrate_pressure",
+      "tag": "Pressure_Calibration_Trigger",
+      "unit": "",
+      "description": "control in [4] calibrate pressure",
+      "column": 8
+    },
+    {
+      "name": "cmd_reset_sv",
+      "tag": "Reset_SV_Estimator",
+      "unit": "",
+      "description": "control in [5] reset SV estimator",
+      "column": 9
+    },
+    {
+      "name": "imu_ok",
+      "tag": "IMU_OK",
+      "unit": "",
+      "description": "1 = IMU sample good and good for 20 ms",
+      "column": 10
+    },
+    {
+      "name": "imu_bad_count",
+      "tag": "IMU_Bad_Count",
+      "unit": "",
+      "description": "rejected IMU samples since app start",
+      "column": 11
+    }
+  ]
+}

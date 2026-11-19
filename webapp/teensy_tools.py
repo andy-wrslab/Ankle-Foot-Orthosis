@@ -1,114 +1,344 @@
-"""Teensy bench helpers: firmware repo, build, guarded flash, serial monitor.
+"""Teensy bench helpers: firmware source, build, guarded flash, port detection, serial monitor.
 
-Nothing here runs on its own: every action is started by a click on the
-Teensy page (OMEN only). Flashing is refused while the Speedgoat stream is
-live, without a Teensy on USB, without a build of the current commit, or
-without the branch name typed as confirmation; every attempt is logged.
+Nothing here runs on its own except the USB port scan: every action is started
+by a click on the Teensy page (OMEN only).
+
+Firmware source (2026-11-19): the page never checks out a branch. It fetches
+origin, resolves each branch to its newest commit, and reads files, diffs and
+builds straight from that commit (git show / git archive into cache/), so the
+firmware repo's working tree is never touched and every tab shows the same
+commit. Flashing is refused while the Speedgoat stream is live, without a
+Teensy on USB, or without a clean, successful build of the selected commit
+with the pinned board settings; every attempt is logged.
 """
 from __future__ import annotations
 
 import csv
+import io
+import json
 import os
 import re
+import shutil
 import subprocess
+import tarfile
 import threading
 import time
+import zlib
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
-FQBN = "teensy:avr:teensy41"
+BOARD = "teensy:avr:teensy41"
+WORKTREE = "@worktree"          # pseudo-source: the repo's working copy (uncommitted edits)
+SERIAL_BAUD = 921600            # DAQ.ino: Serial.begin(921600)
+
+# Arduino IDE Tools-menu names for the Teensy 4.1 board options (teensy:avr boards.txt).
+OPTION_NAMES = {"usb": "USB Type", "speed": "CPU Speed", "opt": "Optimize", "keys": "Keyboard Layout"}
+OPTION_LABELS = {
+    "usb": {"serial": "Serial", "serial2": "Dual Serial", "serial3": "Triple Serial", "keyboard": "Keyboard",
+            "touch": "Keyboard + Touch Screen", "hidtouch": "Keyboard + Mouse + Touch Screen",
+            "hid": "Keyboard + Mouse + Joystick", "serialhid": "Serial + Keyboard + Mouse + Joystick",
+            "mtp": "MTP Disk (Experimental)", "serialmtp": "Serial + MTP Disk (Experimental)",
+            "audio": "Audio", "serialmidiaudio": "Serial + MIDI + Audio", "midi": "MIDI",
+            "serialmidi": "Serial + MIDI", "rawhid": "Raw HID", "everything": "All of the Above"},
+    "speed": {s: f"{s} MHz" for s in ("1008", "960", "912", "816", "720", "600", "528", "450", "396", "150", "24")},
+    "opt": {"o2std": "Faster", "o2lto": "Faster with LTO", "o1std": "Fast", "o1lto": "Fast with LTO",
+            "o3std": "Fastest", "o3purestd": "Fastest + pure-code", "o3lto": "Fastest with LTO",
+            "o3purelto": "Fastest + pure-code with LTO", "ogstd": "Debug", "oglto": "Debug with LTO",
+            "osstd": "Smallest Code", "oslto": "Smallest Code with LTO"},
+    "keys": {"en-us": "US English"},
+}
+DEFAULT_OPTIONS = {"usb": "serial", "speed": "600", "opt": "o2std", "keys": "en-us"}
 
 
-def _git(cfg, *args, timeout=20) -> str:
-    repo = cfg["paths"]["firmware_repo"]
-    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, timeout=timeout,
-                       encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW,
-                       env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+# ---------------------------------------------------------------- small helpers
+def _run(cmd: List[str], timeout: float = 20, binary: bool = False, cwd: Optional[str] = None):
+    return subprocess.run(cmd, capture_output=True, text=not binary, timeout=timeout, cwd=cwd,
+                          **({} if binary else {"encoding": "utf-8", "errors": "replace"}),
+                          creationflags=CREATE_NO_WINDOW, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+
+
+def _repo(cfg) -> str:
+    return cfg["paths"]["firmware_repo"]
+
+
+def _git(cfg, *args, timeout=20, binary=False):
+    r = _run(["git", "-C", _repo(cfg), *args], timeout=timeout, binary=binary)
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or f"git {' '.join(args)} failed")
+        err = r.stderr.decode("utf-8", "replace") if binary else r.stderr
+        out = r.stdout.decode("utf-8", "replace") if binary else r.stdout
+        raise RuntimeError((err or out).strip() or f"git {' '.join(args)} failed")
     return r.stdout
 
 
-def repo_summary(cfg) -> Dict[str, Any]:
-    branch = _git(cfg, "branch", "--show-current").strip()
-    head = _git(cfg, "log", "-1", "--format=%h %s (%cr)").strip()
-    dirty = [l for l in _git(cfg, "status", "--porcelain").splitlines() if l.strip()]
-    return {"branch": branch, "head": head, "dirty": dirty, "repo": cfg["paths"]["firmware_repo"]}
-
-
-def repo_details(cfg) -> Dict[str, Any]:
-    s = repo_summary(cfg)
-    s["log"] = _git(cfg, "log", "-8", "--format=%h  %ad  %s", "--date=short").strip()
-    local = [b.strip() for b in _git(cfg, "branch", "--format=%(refname:short)").splitlines() if b.strip()]
-    remote = [b.strip()[len("origin/"):] for b in _git(cfg, "branch", "-r", "--format=%(refname:short)").splitlines()
-              if b.strip().startswith("origin/") and not b.strip().endswith("/HEAD")]
-    s["branches"] = sorted(set(local) | set(remote), key=lambda b: (b != "main", b))
-    return s
-
-
-def branch_diff(cfg, branch: str) -> str:
-    """What checking out *branch* would change in DAQ/ compared with main."""
-    ref = branch if _ref_exists(cfg, branch) else f"origin/{branch}"
-    stat = _git(cfg, "diff", "--stat", f"main...{ref}", "--", "DAQ")
-    body = _git(cfg, "diff", f"main...{ref}", "--", "DAQ")
-    commits = _git(cfg, "log", "--format=%h %s", f"main..{ref}")
-    return (f"Commits on {branch} not on main:\n{commits or '(none)'}\n\n{stat}\n{body}")[:200000]
-
-
-def _ref_exists(cfg, ref: str) -> bool:
+def _ref_sha(cfg, ref: str) -> Optional[str]:
     try:
-        _git(cfg, "rev-parse", "--verify", "--quiet", ref)
-        return True
+        return _git(cfg, "rev-parse", "--verify", "--quiet", ref + "^{commit}").strip() or None
     except RuntimeError:
+        return None
+
+
+def _is_ancestor(cfg, a: str, b: str) -> bool:
+    return _run(["git", "-C", _repo(cfg), "merge-base", "--is-ancestor", a, b]).returncode == 0
+
+
+def _cache(cfg, *parts) -> str:
+    base = cfg["paths"].get("cache_dir", "cache")
+    if not os.path.isabs(base):
+        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), base)
+    return os.path.join(base, *parts)
+
+
+def _log_dir(cfg) -> str:
+    d = cfg["paths"].get("log_dir", "logs")
+    if not os.path.isabs(d):
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), d)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+# ---------------------------------------------------------------- board settings
+def board_settings(cfg) -> Dict[str, Any]:
+    """The FQBN every build uses. Pinned in config.yaml `teensy.fqbn` (Andy's Arduino IDE
+    Tools-menu choices); without it the build uses the board defaults and says so."""
+    t = cfg.get("teensy") or {}
+    fqbn = (t.get("fqbn") or "").strip()
+    pinned = bool(fqbn)
+    if not fqbn:
+        fqbn = BOARD + ":" + ",".join(f"{k}={v}" for k, v in DEFAULT_OPTIONS.items())
+    parts = fqbn.split(":")
+    base = ":".join(parts[:3])
+    opts = dict(DEFAULT_OPTIONS)
+    if len(parts) > 3 and parts[3]:
+        for kv in parts[3].split(","):
+            if "=" in kv:
+                k, v = kv.split("=", 1)
+                opts[k.strip()] = v.strip()
+    fqbn = base + ":" + ",".join(f"{k}={opts[k]}" for k in opts)
+    labels = {OPTION_NAMES.get(k, k): OPTION_LABELS.get(k, {}).get(v, v) for k, v in opts.items()}
+    return {"fqbn": fqbn, "board": base, "options": opts, "labels": labels, "pinned": pinned,
+            "source": (t.get("fqbn_source") or "config.yaml") if pinned else "board defaults (not confirmed)",
+            "summary": ", ".join(f"{k} {v}" for k, v in labels.items())}
+
+
+# ---------------------------------------------------------------- firmware source
+_fetch_state = {"time": None, "error": None}
+_fetch_lock = threading.Lock()
+
+
+def fetch(cfg) -> Dict[str, Any]:
+    """git fetch origin --prune. Only moves origin/* refs; never touches the working tree."""
+    with _fetch_lock:
+        try:
+            _git(cfg, "fetch", "origin", "--prune", "--quiet", timeout=60)
+            _fetch_state.update(time=time.time(), error=None)
+        except Exception as exc:  # offline lab network: keep going with what we have
+            _fetch_state.update(error=str(exc).splitlines()[-1][:200] if str(exc) else "fetch failed")
+        return dict(_fetch_state)
+
+
+def fetch_state() -> Dict[str, Any]:
+    return dict(_fetch_state, running=_fetch_lock.locked())
+
+
+def fetch_in_background(cfg, min_age_s: float = 60.0) -> bool:
+    """Start a fetch unless one ran in the last *min_age_s* seconds or is running."""
+    last = _fetch_state.get("time") or 0
+    if _fetch_lock.locked() or time.time() - last < min_age_s:
         return False
 
+    def _go():
+        fetch(cfg)
+        _sources_cache.clear()
+    threading.Thread(target=_go, name="teensy-fetch", daemon=True).start()
+    return True
 
-def checkout(cfg, branch: str) -> str:
-    """Switch the firmware repo to *branch* (only with a clean working tree)."""
-    if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch or ""):
-        raise ValueError("invalid branch name")
-    dirty = [l for l in _git(cfg, "status", "--porcelain").splitlines() if l.strip()]
-    if dirty:
-        raise RuntimeError("the repo has uncommitted changes; not switching:\n" + "\n".join(dirty[:20]))
-    if _ref_exists(cfg, branch):
-        _git(cfg, "switch", branch)
+
+_sources_cache: Dict[str, Any] = {}
+
+
+def sources_cached(cfg, max_age_s: float = 10.0) -> Dict[str, Any]:
+    """sources() is ~20 git calls; the page asks every few seconds, so cache it briefly."""
+    hit = _sources_cache.get("v")
+    if hit and time.monotonic() - _sources_cache.get("t", 0) < max_age_s:
+        return hit
+    v = sources(cfg)
+    _sources_cache.update(v=v, t=time.monotonic())
+    return v
+
+
+def _main_ref(cfg) -> str:
+    return "origin/main" if _ref_sha(cfg, "origin/main") else "main"
+
+
+def _commit_info(cfg, sha: str) -> Dict[str, Any]:
+    out = _git(cfg, "log", "-1", "--format=%H%x1f%h%x1f%ct%x1f%an%x1f%s", sha).strip()
+    full, short, ct, author, subject = out.split("\x1f", 4)
+    daq = _git(cfg, "log", "-1", "--format=%ct%x1f%h", sha, "--", "DAQ").strip()
+    daq_ct, daq_short = (daq.split("\x1f") + [""])[:2] if daq else ("0", "")
+    return {"sha": full, "short": short, "time": int(ct), "author": author, "subject": subject,
+            "daq_time": int(daq_ct or 0), "daq_short": daq_short}
+
+
+def _resolve_branch(cfg, name: str) -> Optional[Dict[str, Any]]:
+    """Newest commit of *name*: origin/<name> unless the local branch has unpushed commits."""
+    local, remote = _ref_sha(cfg, f"refs/heads/{name}"), _ref_sha(cfg, f"refs/remotes/origin/{name}")
+    note = ""
+    if local and remote:
+        if local == remote or _is_ancestor(cfg, local, remote):
+            sha = remote
+        elif _is_ancestor(cfg, remote, local):
+            sha = local
+            n = _git(cfg, "rev-list", "--count", f"{remote}..{local}").strip()
+            note = f"{n} local commit(s) not pushed to GitHub"
+        else:
+            sha = remote
+            note = "local branch differs from GitHub; showing GitHub"
+    elif remote:
+        sha = remote
+    elif local:
+        sha = local
+        note = "local only, not on GitHub"
     else:
-        _git(cfg, "fetch", "origin", branch, timeout=60)
-        _git(cfg, "switch", "--track", f"origin/{branch}")
-    return repo_summary(cfg)["branch"]
+        return None
+    info = _commit_info(cfg, sha)
+    info.update(name=name, note=note, has_daq=_has_daq(cfg, sha))
+    return info
 
 
-def daq_files(cfg) -> List[str]:
-    d = os.path.join(cfg["paths"]["firmware_repo"], "DAQ")
-    return sorted(f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)))
+def _has_daq(cfg, sha: str) -> bool:
+    return _run(["git", "-C", _repo(cfg), "cat-file", "-e", f"{sha}:DAQ/DAQ.ino"]).returncode == 0
 
 
-def read_daq_file(cfg, name: str) -> str:
-    if name not in daq_files(cfg):
+def worktree_status(cfg) -> Dict[str, Any]:
+    branch = _git(cfg, "branch", "--show-current").strip() or "(detached)"
+    dirty = [l for l in _git(cfg, "status", "--porcelain", "--", "DAQ").splitlines() if l.strip()]
+    return {"branch": branch, "dirty": dirty}
+
+
+def sources(cfg) -> Dict[str, Any]:
+    """Every branch with firmware, newest commit first, plus the working copy if it has edits."""
+    names = set()
+    for line in _git(cfg, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes/origin").splitlines():
+        line = line.strip()
+        if line.startswith("refs/heads/"):
+            names.add(line[len("refs/heads/"):])
+        elif line.startswith("refs/remotes/origin/") and not line.endswith("/HEAD"):
+            names.add(line[len("refs/remotes/origin/"):])
+    branches = [b for b in (_resolve_branch(cfg, n) for n in sorted(names)) if b and b["has_daq"]]
+    branches.sort(key=lambda b: (b["daq_time"], b["time"]), reverse=True)
+    newest = branches[0]["name"] if branches else None
+    main_ref = _main_ref(cfg)
+    for b in branches:
+        b["newest"] = b["name"] == newest
+        try:
+            b["ahead_of_main"] = int(_git(cfg, "rev-list", "--count", f"{main_ref}..{b['sha']}", "--", "DAQ").strip())
+        except RuntimeError:
+            b["ahead_of_main"] = None
+    wt = worktree_status(cfg)
+    return {"branches": branches, "newest": newest, "worktree": wt, "main_ref": main_ref,
+            "fetch": fetch_state()}
+
+
+def resolve(cfg, source: str) -> Dict[str, Any]:
+    """Source -> {kind: commit|worktree, sha, short, name, ...}."""
+    if source == WORKTREE:
+        wt = worktree_status(cfg)
+        head = _commit_info(cfg, "HEAD")
+        return {"kind": "worktree", "name": f"{wt['branch']} (working copy)", "sha": head["sha"],
+                "short": head["short"], "subject": head["subject"], "time": head["time"], "dirty": wt["dirty"],
+                "note": "uncommitted edits: build only, commit and push before flashing"}
+    info = _resolve_branch(cfg, source)
+    if not info:
+        raise ValueError(f"unknown branch {source!r}")
+    info["kind"] = "commit"
+    return info
+
+
+def source_label(b: Dict[str, Any], now: Optional[float] = None) -> str:
+    age = _age(b["time"], now)
+    tags = []
+    if b.get("newest"):
+        tags.append("newest firmware")
+    if b.get("note"):
+        tags.append(b["note"])
+    return f"{b['name']} · {b['short']} · {age}" + (f" · {', '.join(tags)}" if tags else "")
+
+
+def _age(t: float, now: Optional[float] = None) -> str:
+    d = (now or time.time()) - t
+    if d < 3600:
+        return f"{max(1, int(d // 60))} min ago"
+    if d < 86400:
+        return f"{int(d // 3600)} h ago"
+    return time.strftime("%Y-%m-%d", time.localtime(t))
+
+
+def daq_files(cfg, source: str) -> List[str]:
+    if source == WORKTREE:
+        d = os.path.join(_repo(cfg), "DAQ")
+        return sorted(f for f in os.listdir(d) if os.path.isfile(os.path.join(d, f)))
+    sha = resolve(cfg, source)["sha"]
+    out = _git(cfg, "ls-tree", "--name-only", f"{sha}:DAQ")
+    return sorted(l.strip() for l in out.splitlines() if l.strip())
+
+
+def read_daq_file(cfg, source: str, name: str) -> str:
+    if name not in daq_files(cfg, source):
         raise ValueError("unknown file")
-    with open(os.path.join(cfg["paths"]["firmware_repo"], "DAQ", name), encoding="utf-8", errors="replace") as fp:
-        return fp.read()
+    if source == WORKTREE:
+        with open(os.path.join(_repo(cfg), "DAQ", name), encoding="utf-8", errors="replace") as fp:
+            return fp.read()
+    sha = resolve(cfg, source)["sha"]
+    return _git(cfg, "show", f"{sha}:DAQ/{name}", binary=True).decode("utf-8", "replace")
 
 
-def list_teensy_ports(cfg) -> List[Dict[str, str]]:
-    """Teensy USB devices (VID 16C0) with a COM port, via Windows PnP."""
-    ps = ("Get-CimInstance Win32_PnPEntity | Where-Object { $_.DeviceID -like '*VID_16C0*' } | "
-          "ForEach-Object { $_.Name + '|' + $_.DeviceID }")
-    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True,
-                       text=True, timeout=20, creationflags=CREATE_NO_WINDOW)
-    ports = []
-    for line in r.stdout.splitlines():
-        if "|" not in line:
-            continue
-        name, dev = line.split("|", 1)
-        m = re.search(r"\((COM\d+)\)", name)
-        ports.append({"name": name.strip(), "port": m.group(1) if m else "", "device": dev.strip()})
-    return ports
+def changes_vs_main(cfg, source: str) -> str:
+    """Commits and DAQ/ diff of the source compared with main (GitHub's main after a fetch)."""
+    main_ref = _main_ref(cfg)
+    if source == WORKTREE:
+        stat = _git(cfg, "diff", "--stat", main_ref, "--", "DAQ")
+        body = _git(cfg, "diff", main_ref, "--", "DAQ")
+        return f"Working copy compared with {main_ref} (DAQ/):\n\n{stat}\n{body}"[:200000]
+    sha = resolve(cfg, source)["sha"]
+    commits = _git(cfg, "log", "--format=%h  %ad  %s", "--date=short", f"{main_ref}..{sha}", "--", "DAQ")
+    stat = _git(cfg, "diff", "--stat", f"{main_ref}...{sha}", "--", "DAQ")
+    body = _git(cfg, "diff", f"{main_ref}...{sha}", "--", "DAQ")
+    if not commits.strip() and not body.strip():
+        return f"{source} has the same firmware as {main_ref}."
+    return (f"Firmware commits on {source} not on {main_ref}:\n{commits or '(none)'}\n\n{stat}\n{body}")[:200000]
 
 
-def build_dir(cfg, commit: str) -> str:
-    return os.path.join(cfg["paths"]["cache_dir"], "teensy_build", commit)
+def export_source(cfg, src: Dict[str, Any]) -> str:
+    """Sketch folder (…/DAQ) for *src* without touching the repo's working tree."""
+    if src["kind"] == "worktree":
+        dest = _cache(cfg, "teensy_src", "worktree", "DAQ")
+        if os.path.isdir(dest):
+            shutil.rmtree(dest)
+        shutil.copytree(os.path.join(_repo(cfg), "DAQ"), dest)
+        return dest
+    root = _cache(cfg, "teensy_src", src["sha"][:12])
+    dest = os.path.join(root, "DAQ")
+    if os.path.isfile(os.path.join(dest, "DAQ.ino")):
+        return dest
+    tmp = root + ".tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    data = _git(cfg, "archive", "--format=tar", src["sha"], "DAQ", binary=True, timeout=60)
+    with tarfile.open(fileobj=io.BytesIO(data)) as tf:
+        try:
+            tf.extractall(tmp, filter="data")
+        except TypeError:  # Python < 3.12
+            tf.extractall(tmp)
+    shutil.rmtree(root, ignore_errors=True)
+    os.replace(tmp, root)
+    return dest
+
+
+# ---------------------------------------------------------------- build / flash
+def build_dir(cfg, src: Dict[str, Any], fqbn: str) -> str:
+    tag = "worktree" if src["kind"] == "worktree" else src["sha"][:12]
+    return _cache(cfg, "teensy_build", f"{tag}_{zlib.crc32(fqbn.encode()):08x}")
 
 
 def parse_memory(text: str) -> Dict[str, str]:
@@ -120,48 +350,242 @@ def parse_memory(text: str) -> Dict[str, str]:
     return out
 
 
-def compile_job(cfg, job, run_process) -> Dict[str, Any]:
-    from workers import Job  # noqa: F401  (type only)
-    info = repo_summary(cfg)
-    commit = _git(cfg, "rev-parse", "--short", "HEAD").strip()
-    if info["dirty"]:
-        job.add("Note: uncommitted changes in the repo are included in this build:")
-        for l in info["dirty"]:
-            job.add("  " + l)
-    out_dir = build_dir(cfg, commit + ("-dirty" if info["dirty"] else ""))
+def compile_job(cfg, job, run_process, source: Optional[str] = None) -> Dict[str, Any]:
+    """Build *source* (a branch name or WORKTREE) with the pinned board settings.
+    source=None keeps the old behaviour of building the newest firmware branch."""
+    if source is None:
+        source = sources(cfg)["newest"] or WORKTREE
+    src = resolve(cfg, source)
+    board = board_settings(cfg)
+    job.add(f"Source: {src['name']} @ {src['short']}  {src.get('subject', '')}")
+    job.add(f"Board:  {board['fqbn']}  ({board['source']})")
+    if src["kind"] == "worktree":
+        job.add("Note: building the working copy with uncommitted edits (cannot be flashed).")
+    sketch = export_source(cfg, src)
+    out_dir = build_dir(cfg, src, board["fqbn"])
     os.makedirs(out_dir, exist_ok=True)
-    sketch = os.path.join(cfg["paths"]["firmware_repo"], "DAQ")
-    rc = run_process(job, [cfg["paths"]["arduino_cli"], "compile", "--fqbn", FQBN, "--warnings", "default",
+    rc = run_process(job, [cfg["paths"]["arduino_cli"], "compile", "--fqbn", board["fqbn"], "--warnings", "default",
                            "--build-path", out_dir, sketch], timeout=900)
     text = "\n".join(job.lines)
-    res = {"ok": rc == 0, "branch": info["branch"], "commit": commit, "dirty": bool(info["dirty"]),
+    res = {"ok": rc == 0, "source": source, "branch": src["name"], "commit": src["short"], "sha": src["sha"],
+           "kind": src["kind"], "dirty": src["kind"] == "worktree", "fqbn": board["fqbn"],
            "build_dir": out_dir, "memory": parse_memory(text), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
     job.add("BUILD OK" if rc == 0 else f"BUILD FAILED (exit {rc})")
     return res
 
 
-def flash_job(cfg, job, run_process, port: str, build: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
-    cmd = [cfg["paths"]["arduino_cli"], "upload", "--fqbn", FQBN, "-p", port, "--input-dir", build["build_dir"]]
-    result = "dry-run"
-    rc = 0
+def flash_block_reason(build: Optional[Dict[str, Any]], src: Dict[str, Any], board: Dict[str, Any]) -> str:
+    """Why the selected source cannot be flashed with *build* ('' when it can)."""
+    if src["kind"] == "worktree":
+        return "The working copy has uncommitted edits. Commit and push them, then pick the branch."
+    if not build or build.get("sha") != src["sha"] or build.get("fqbn") != board["fqbn"]:
+        return f"Build {src['name']} @ {src['short']} first."
+    if not build.get("ok"):
+        return "The last build failed."
+    return ""
+
+
+def flash_job(cfg, job, run_process, port: Dict[str, str], build: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+    addr, proto = port.get("upload_address") or port.get("port"), port.get("upload_protocol") or "serial"
+    cmd = [cfg["paths"]["arduino_cli"], "upload", "--fqbn", build["fqbn"], "-p", addr, "-l", proto,
+           "--input-dir", build["build_dir"]]
+    result, rc = "dry-run", 0
+    job.add(f"Flash {build['branch']} @ {build['commit']} with {build['fqbn']} to {port.get('label') or addr}")
     if dry_run:
         job.add("DRY RUN - the loader is NOT called. Would run:")
         job.add("  " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
     else:
         rc = run_process(job, cmd, timeout=180)
         result = "ok" if rc == 0 else f"failed (exit {rc})"
-    log_path = os.path.join(cfg["paths"]["log_dir"], "flash_log.csv")
+    log_path = os.path.join(_log_dir(cfg), "flash_log.csv")
     new = not os.path.exists(log_path)
     with open(log_path, "a", newline="", encoding="utf-8") as fp:
         w = csv.writer(fp)
         if new:
-            w.writerow(["time", "branch", "commit", "port", "dry_run", "result", "build_dir"])
-        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), build["branch"], build["commit"], port, dry_run, result,
-                    build["build_dir"]])
+            w.writerow(["time", "branch", "commit", "port", "dry_run", "result", "build_dir", "fqbn"])
+        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), build["branch"], build["commit"], port.get("label") or addr,
+                    dry_run, result, build["build_dir"], build["fqbn"]])
     job.add(f"logged to {log_path}")
     return {"ok": rc == 0, "result": result, "dry_run": dry_run}
 
 
+def last_flash(cfg) -> Optional[Dict[str, str]]:
+    """Newest real (not dry-run) successful flash from logs/flash_log.csv."""
+    path = os.path.join(_log_dir(cfg), "flash_log.csv")
+    if not os.path.exists(path):
+        return None
+    last = None
+    with open(path, newline="", encoding="utf-8") as fp:
+        for row in csv.reader(fp):
+            if len(row) >= 6 and row[0] != "time" and row[4] == "False" and row[5] == "ok":
+                last = {"time": row[0], "branch": row[1], "commit": row[2], "port": row[3],
+                        "fqbn": row[7] if len(row) > 7 else ""}
+    return last
+
+
+# ---------------------------------------------------------------- USB port detection
+def parse_board_list(text: str) -> List[Dict[str, Any]]:
+    """`arduino-cli board list --format json` (0.x list or 1.x {"detected_ports": [...]})
+    -> one entry per device, Teensys first. A Teensy in Serial mode is reported twice
+    (serial COMx + teensy usb:...); they are merged: monitor on COMx, upload via teensy."""
+    data = json.loads(text or "[]")
+    items = data.get("detected_ports", []) if isinstance(data, dict) else data
+    devices: Dict[str, Dict[str, Any]] = {}
+    for it in items or []:
+        p = it.get("port") or it
+        addr, proto = p.get("address", ""), p.get("protocol", "")
+        props = p.get("properties") or {}
+        boards = it.get("matching_boards") or it.get("boards") or []
+        vid = (props.get("vid") or "").lower().replace("0x", "")
+        label = p.get("label") or addr
+        is_teensy = vid == "16c0" or proto == "teensy" or any("teensy" in (b.get("fqbn") or "") for b in boards)
+        com = addr if re.fullmatch(r"COM\d+|/dev/\S+", addr or "") else ""
+        m = re.match(r"(COM\d+|/dev/\S+)", label or "")
+        if not com and m:
+            com = m.group(1)
+        serial_no = props.get("serialNumber") or props.get("serial") or ""
+        key = serial_no or com or addr
+        d = devices.setdefault(key, {"port": "", "label": "", "board": "", "serial_number": serial_no,
+                                     "teensy": False, "mode": "", "monitor_address": "", "monitor_protocol": "",
+                                     "upload_address": "", "upload_protocol": ""})
+        d["teensy"] |= is_teensy
+        if boards and not d["board"]:
+            d["board"] = boards[0].get("name") or boards[0].get("fqbn") or ""
+        if com:
+            d["port"] = com
+        if proto == "serial" and com:
+            d["monitor_address"], d["monitor_protocol"] = com, "serial"
+            if not d["upload_address"]:
+                d["upload_address"], d["upload_protocol"] = com, "serial"
+        if proto == "teensy":
+            d["upload_address"], d["upload_protocol"] = addr, "teensy"
+            if not d["monitor_address"]:
+                d["monitor_address"], d["monitor_protocol"] = addr, "teensy"
+            low = (label or "").lower()
+            d["mode"] = "Bootloader" if ("bootloader" in low or "halfkay" in low) else (
+                label.split(")")[-1].strip() if ")" in label else "")
+        d["label"] = d["label"] or label
+    out = list(devices.values())
+    for d in out:
+        if not d["port"]:
+            d["port"] = d["upload_address"] or d["monitor_address"]
+        name = d["board"] or ("Teensy" if d["teensy"] else "Serial device")
+        where = d["port"] if re.fullmatch(r"COM\d+|/dev/\S+", d["port"] or "") else "USB, no COM port"
+        d["label"] = f"{where} · {name}" + (f" · {d['mode']}" if d["mode"] else "")
+    out.sort(key=lambda d: (not d["teensy"], d["port"]))
+    return out
+
+
+def _pnp_ports() -> List[Dict[str, Any]]:
+    """Fallback when arduino-cli is unavailable: Teensy (VID 16C0) COM ports via Windows PnP."""
+    if os.name != "nt":
+        return []
+    ps = ("Get-CimInstance Win32_PnPEntity | Where-Object { $_.DeviceID -like '*VID_16C0*' } | "
+          "ForEach-Object { $_.Name + '|' + $_.DeviceID }")
+    r = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], timeout=20)
+    out = []
+    for line in r.stdout.splitlines():
+        if "|" not in line:
+            continue
+        name, dev = line.split("|", 1)
+        m = re.search(r"\((COM\d+)\)", name)
+        com = m.group(1) if m else ""
+        out.append({"port": com or "Teensy (no COM port)", "label": f"{com or 'no COM'} · {name.strip()}",
+                    "board": "Teensy", "serial_number": "", "teensy": True, "mode": "",
+                    "monitor_address": com, "monitor_protocol": "serial" if com else "",
+                    "upload_address": com, "upload_protocol": "serial" if com else ""})
+    return out
+
+
+class PortScanner:
+    """Background USB scan with `arduino-cli board list`: every 3 s while the Teensy page
+    is open (touched in the last 20 s), otherwise every 15 s. Reads never block."""
+
+    FAST_S, SLOW_S, ACTIVE_S = 3.0, 15.0, 20.0
+
+    def __init__(self, cfg) -> None:
+        self.cfg = cfg
+        self._lock = threading.Lock()
+        self._ports: List[Dict[str, Any]] = []
+        self._error: Optional[str] = None
+        self._scanned: Optional[float] = None
+        self._touched = 0.0
+        self._wake = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _ensure(self) -> None:
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._loop, name="teensy-ports", daemon=True)
+            self._thread.start()
+
+    def touch(self) -> None:
+        self._touched = time.monotonic()
+        self._ensure()
+
+    def rescan(self) -> None:
+        self.touch()
+        self._wake.set()
+
+    def scan_once(self) -> List[Dict[str, Any]]:
+        cli = self.cfg["paths"].get("arduino_cli")
+        try:
+            if not cli or not os.path.exists(cli):
+                raise FileNotFoundError(f"arduino-cli not found at {cli}")
+            r = _run([cli, "board", "list", "--format", "json"], timeout=20)
+            if r.returncode != 0:
+                raise RuntimeError((r.stderr or r.stdout).strip()[:200])
+            ports, err = parse_board_list(r.stdout), None
+        except Exception as exc:
+            ports, err = _pnp_ports(), f"arduino-cli board list failed ({exc}); used Windows device list"
+        with self._lock:
+            self._ports, self._error, self._scanned = ports, err, time.time()
+        return ports
+
+    def _loop(self) -> None:
+        while True:
+            try:
+                self.scan_once()
+            except Exception as exc:  # never let the scanner die
+                with self._lock:
+                    self._error = str(exc)
+            active = time.monotonic() - self._touched < self.ACTIVE_S
+            self._wake.wait(self.FAST_S if active else self.SLOW_S)
+            self._wake.clear()
+
+    def get(self) -> Dict[str, Any]:
+        self._ensure()
+        with self._lock:
+            return {"ports": [dict(p) for p in self._ports], "error": self._error, "scanned": self._scanned}
+
+
+_scanner: Optional[PortScanner] = None
+
+
+def scanner(cfg) -> PortScanner:
+    global _scanner
+    if _scanner is None:
+        _scanner = PortScanner(cfg)
+    return _scanner
+
+
+def list_teensy_ports(cfg) -> List[Dict[str, Any]]:
+    """Teensy devices from the background scan (kept for the status poller / Home)."""
+    return [p for p in scanner(cfg).get()["ports"] if p.get("teensy")]
+
+
+def repo_summary(cfg) -> Dict[str, Any]:
+    """Short status for Home: newest firmware branch + working copy state."""
+    try:
+        s = sources(cfg)
+    except Exception as exc:
+        return {"error": str(exc), "branch": "?", "head": "?", "dirty": [], "repo": _repo(cfg)}
+    newest = next((b for b in s["branches"] if b["newest"]), None)
+    head = f"{newest['short']} {newest['subject']} ({_age(newest['time'])})" if newest else "?"
+    return {"branch": newest["name"] if newest else "?", "head": head, "dirty": s["worktree"]["dirty"],
+            "repo": _repo(cfg), "checked_out": s["worktree"]["branch"]}
+
+
+# ---------------------------------------------------------------- serial monitor
 class SerialMonitor:
     """Teensy serial monitor through `arduino-cli monitor` (no pyserial needed)."""
 
@@ -177,21 +601,26 @@ class SerialMonitor:
     def running(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, port: str, baud: int = 921600) -> None:
+    def start(self, port, baud: int = SERIAL_BAUD) -> None:
+        """*port* is a scanner entry (dict) or a plain address such as 'COM5'."""
+        if isinstance(port, dict):
+            addr = port.get("monitor_address") or port.get("port")
+            proto = port.get("monitor_protocol") or "serial"
+        else:
+            addr, proto = port, "serial"
         self.stop()
-        os.makedirs(self.cfg["paths"]["log_dir"], exist_ok=True)
-        self.log_path = os.path.join(self.cfg["paths"]["log_dir"], time.strftime(f"serial_{port}_%Y%m%d_%H%M%S.log"))
-        self.port = port
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", addr).strip("_") or "port"
+        self.log_path = os.path.join(_log_dir(self.cfg), time.strftime(f"serial_{safe}_%Y%m%d_%H%M%S.log"))
+        self.port = addr
         self.error = None
         self.proc = subprocess.Popen(
-            [self.cfg["paths"]["arduino_cli"], "monitor", "-p", port, "--fqbn", FQBN, "--config", f"baudrate={baud}",
-             "--quiet"],
+            [self.cfg["paths"]["arduino_cli"], "monitor", "-p", addr, "-l", proto, "--fqbn", BOARD,
+             "--config", f"baudrate={baud}", "--quiet"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW)
-        threading.Thread(target=self._reader, daemon=True).start()
+        threading.Thread(target=self._reader, args=(self.proc,), daemon=True).start()
 
-    def _reader(self) -> None:
-        proc = self.proc
+    def _reader(self, proc) -> None:
         with open(self.log_path, "a", encoding="utf-8") as log:
             for line in proc.stdout:
                 stamped = time.strftime("%H:%M:%S ") + line.rstrip("\r\n")
@@ -199,7 +628,8 @@ class SerialMonitor:
                     self.lines.append(stamped)
                 log.write(stamped + "\n")
                 log.flush()
-        if proc.returncode not in (0, None):
+        proc.wait()
+        if proc.returncode not in (0, None) and proc is self.proc:
             self.error = f"monitor exited ({proc.returncode})"
 
     def stop(self) -> None:
@@ -221,3 +651,28 @@ class SerialMonitor:
         if filt:
             lines = [l for l in lines if filt.lower() in l.lower()]
         return "\n".join(lines[-n:])
+
+
+# ---------------------------------------------------------------- IMU data (from the live bus health)
+class ImuWatch:
+    """Remembers IMU state changes seen in the live stream's health snapshot."""
+
+    def __init__(self) -> None:
+        self.state = None
+        self.since = None
+        self.events: deque = deque(maxlen=50)
+        self.invalid_spells = 0
+
+    def update(self, health: Dict[str, Any]) -> Dict[str, Any]:
+        g = ((health or {}).get("groups") or {}).get("imu") or {}
+        st = g.get("state", "idle")
+        now = time.time()
+        if st != self.state:
+            if self.state is not None:
+                self.events.appendleft((now, self.state, st))
+            if st == "bad":
+                self.invalid_spells += 1
+            self.state, self.since = st, now
+        return {"state": st, "since": self.since, "recent_bad": g.get("recent_bad", 0),
+                "recent_total": g.get("recent_total", 0), "bad_total": g.get("bad_total", 0),
+                "total": g.get("total", 0), "invalid_spells": self.invalid_spells, "events": list(self.events)}

@@ -1,0 +1,53 @@
+/* Teensy page (design v4 tokens from afo-ui.css). Everything is scoped to .teensy. */
+.teensy { max-width: 1120px; display: flex; flex-direction: column; gap: var(--gap, 16px); }
+.teensy .toolbar { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4, 16px); flex-wrap: wrap; }
+.teensy .hint { font-size: var(--fs-12, 12px); color: var(--text-3, #73767B); }
+.teensy .mono { font-family: var(--font-num, Consolas, monospace); font-size: var(--fs-12, 12px); }
+.teensy .grid2 { display: grid; grid-template-columns: 3fr 2fr; gap: var(--gap, 16px); align-items: start; }
+@media (max-width: 900px) { .teensy .grid2 { grid-template-columns: 1fr; } }
+
+/* key / value list */
+.teensy .kv { display: grid; grid-template-columns: 152px 1fr; margin: 0; padding: var(--sp-1, 4px) var(--sp-4, 16px); }
+.teensy .kv dt, .teensy .kv dd { margin: 0; min-height: 36px; padding: 8px 0; display: flex; align-items: center;
+  border-bottom: 1px solid var(--border, #E2DFD9); line-height: 18px; }
+.teensy .kv dd { display: block; padding-top: 9px; color: var(--text, #1D1F21); min-width: 0; overflow-wrap: anywhere; }
+.teensy .kv dt { font-size: var(--fs-12, 12px); color: var(--text-2, #5B5F65); }
+.teensy .kv dt:last-of-type, .teensy .kv dd:last-of-type { border-bottom: 0; }
+.teensy .kv dd .hint { font-size: var(--fs-12, 12px); }
+@media (max-width: 760px) { .teensy .kv { grid-template-columns: 120px 1fr; } }
+.teensy .ty-note { margin: 0; padding: 0 var(--sp-4, 16px) var(--sp-3, 12px); line-height: 16px; }
+
+.teensy .card-head .hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.teensy .card-foot { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2, 8px) var(--sp-3, 12px);
+  padding: var(--sp-3, 12px) var(--sp-4, 16px); border-top: 1px solid var(--border, #E2DFD9); }
+.teensy .ty-serial-bar { border-top: 0; border-bottom: 1px solid var(--border, #E2DFD9); }
+
+/* firmware source picker */
+.teensy .ty-source { padding: var(--sp-3, 12px) var(--sp-4, 16px) 0; }
+
+/* Dash dropdowns: match .input (32 px, 6 px radius, strong border) */
+.teensy .Select-control { min-height: 32px; height: 32px; border-radius: var(--r-ctl, 6px);
+  border: 1px solid var(--border-strong, #CBC7BF); box-shadow: none; font-size: var(--fs-13, 13px); }
+.teensy .Select-placeholder, .teensy .Select--single > .Select-control .Select-value { line-height: 30px; padding-left: 10px; }
+.teensy .Select-input { height: 30px; }
+.teensy .is-focused:not(.is-open) > .Select-control { border-color: var(--accent, #1F6F78); box-shadow: 0 0 0 1px var(--accent, #1F6F78); }
+.teensy .Select-menu-outer { border-radius: 0 0 var(--r-ctl, 6px) var(--r-ctl, 6px); border-color: var(--border-strong, #CBC7BF);
+  font-size: var(--fs-13, 13px); z-index: 5; }
+.teensy .VirtualizedSelectFocusedOption { background: var(--accent-weak, #E2EEEF); }
+.teensy .ty-file { width: 240px; }
+.teensy .ty-port { width: 320px; }
+.teensy .ty-filter { width: 180px; height: 28px; font-size: var(--fs-12, 12px); }
+
+/* Dry-run checkbox */
+.teensy .ty-check label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12, 12px);
+  color: var(--text-2, #5B5F65); cursor: pointer; }
+.teensy .ty-check input { accent-color: var(--accent, #1F6F78); margin: 0; }
+
+/* tabs */
+.teensy > .seg { align-self: flex-start; }
+
+/* logs and code */
+.teensy .ty-log { margin: var(--sp-3, 12px) var(--sp-4, 16px) var(--sp-4, 16px); max-height: 260px; min-height: 64px; }
+.teensy .ty-log.tall { max-height: 560px; min-height: 320px; }
+.teensy .ty-log:empty { display: none; }
+.teensy .ty-bad { color: var(--alarm, #B42318); font-weight: 600; }

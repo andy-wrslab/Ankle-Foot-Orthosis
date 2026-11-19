@@ -4,14 +4,15 @@ Run on the OMEN: double-click `webapp\AFO_app.bat` (conda base Python; `pip`
 packages: dash, dash-extensions, plotly, numpy, h5py, scipy, pyyaml, websocket-client,
 matlabengine for the MATLAB pages). Serves **:8050** (tablet: http://192.168.7.15:8050,
 OMEN: http://127.0.0.1:8050). Listens for the Speedgoat on **UDP 5431** (live bus,
-31 x float32) and **UDP 5433** (training stream, `config/training_udp_layout.json`);
+31 x float32) and **UDP 5433** (console packet, `config/console_udp_layout.json`);
 sends commands to 192.168.7.5:5431 and parameters to :5430 only on a user press.
 OMEN-only pages/APIs (Teensy, run control, Signals stream on/off) answer loopback
 requests only. Target writes for session values are disabled in `config.yaml`
-(`session.target_writes_enabled: false`) until enabled on purpose.
+(`session.target_writes_enabled: false`) until enabled on purpose. Set
+`console.view_only: true` in the config to run a watch-only console (no UDP commands).
 
 Origin: developed on branch `afo-webapp-20261119` of SherimaX/GUI (local commits
-951d5e0..8c0311c, not pushed there: no write access), copied here as a subfolder.
+951d5e0..95638e3, not pushed there: no write access), copied here as a subfolder.
 
 ---
 

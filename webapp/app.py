@@ -46,8 +46,10 @@ class AppContext:
         self.training = TrainingSupervisor(cfg, APP_DIR, paths["log_dir"])
 
         def readback():
-            rb = dict(self.live.readback())
-            rb.update(self.training.latest())   # cmd_* / param_*: the commands latched in the model
+            # bus values (statusword, ...) from 5431; the commands latched in the
+            # model (cmd_*) from the console packet on 5433
+            rb = dict(self.training.latest())
+            rb.update(self.live.readback())
             return rb
 
         self.commands = CommandState(cfg, os.path.join(paths["log_dir"], "last_command.json"),
@@ -55,6 +57,8 @@ class AppContext:
         from session import SessionSetup
         self.session = SessionSetup(self)
         self.commands.guard = self.session.guard    # Motor/Assist blocked on a side problem
+        from filelog import FileLogRuns
+        self.filelog = FileLogRuns(self)
 
     def trial_sources(self):
         return self.trials.sources()

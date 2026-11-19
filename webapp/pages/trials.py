@@ -28,7 +28,7 @@ GROUPS = {
     "IMU euler (rad)": [("bus", 14, "yaw"), ("bus", 15, "pitch"), ("bus", 16, "roll")],
     "Gyro (rad/s)": [("bus", 17, "gx"), ("bus", 18, "gy"), ("bus", 19, "gz")],
     "Raw accel (g)": [("bus", 20, "rx"), ("bus", 21, "ry"), ("bus", 22, "rz")],
-    "Gait / assist": [("bus", 23, "gait %"), ("bus", 26, "heel strike"), ("bus", 27, "assist")],
+    "Gait / assist": [("bus", 23, "SV target"), ("bus", 24, "Uc"), ("bus", 26, "heel strike"), ("bus", 27, "assist")],
     "Status / sync": [("bus", 29, "statusword"), ("bus", 30, "sync")],
     "Drive stream": [("drive", i, f"drive {i + 1}") for i in range(7)],
 }

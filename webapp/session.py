@@ -2,9 +2,12 @@
 
 * The participant is identified by an S-ID (S + number, e.g. S47); names are
   never used in files.
-* Values entered on Home are sent to the target when committed (setparam) and
-  read back (getparam, or the training UDP echo when present); the page shows
-  them as confirmed / pending / failed. Not connected -> pending, sent on Connect.
+* Values entered in the top bar / Advanced popover are sent to the target when committed (setparam).
+  Confirmation comes ONLY from the model: its console packet on UDP 5433
+  (fresh: side, weight, mode, K %, commands) or getparam
+  (right after each setparam, then every ~5 s while connected; all values
+  until AFO_r1 is loaded). target_table() lists entered vs target values.
+  Not connected -> pending, sent on Connect.
 * Every Start reloads the app (compiled defaults), so after a successful Start
   the entered values are re-applied automatically (logged). The foot SIDE is
   safety-critical: set only after an explicit confirmation (S-ID typed + LEFT/
@@ -30,28 +33,83 @@ from typing import Any, Dict, Optional
 
 _log = logging.getLogger("afo.session")
 
-# key, label, kind, limits, training-UDP readback column
+# key, label, kind, limits, console-UDP (5433) echo column, model block|param, build default.
+# "adv" = Advanced popover (confirmed by getparam only). Block names from AFO.slx
+# (all top-level Constants/Gains; the same names exist in AFO_r1).
 SPECS = [
-    {"key": "side", "label": "Foot side", "kind": "side", "udp": "side"},
-    {"key": "weight", "label": "Body weight (kg)", "kind": "number", "min": 20, "max": 200, "udp": "weight_kg"},
-    {"key": "mode", "label": "Assistance mode", "kind": "mode", "udp": "assist_mode"},
-    {"key": "k_percent", "label": "Fixed K (%)", "kind": "number", "min": 0, "max": 10, "udp": "fixed_k_pct"},
-    {"key": "sv_target_min", "label": "SV target min (m/s)", "kind": "number", "min": 0, "max": 3},
-    {"key": "sv_target_max", "label": "SV target max (m/s)", "kind": "number", "min": 0, "max": 3},
+    {"key": "side", "label": "Foot side", "kind": "side", "udp": "side", "block": "Left 0/Right 1|Value", "default": 0},
+    {"key": "weight", "label": "Body mass", "kind": "number", "min": 20, "max": 200, "udp": "weight_kg",
+     "block": "weight|Gain", "block_r1": "weight|Value", "default": 55, "unit": "kg"},
+    {"key": "mode", "label": "Assistance mode", "kind": "mode", "udp": "assist_mode", "block": "Constant4|Value",
+     "default": 3},
+    {"key": "k_percent", "label": "K", "kind": "number", "min": 0, "max": 10, "udp": "fixed_k_pct",
+     "block": "Constant10|Value", "default": 5, "unit": "%"},
+    # Advanced: Walking-speed target
+    {"key": "sv_target_min", "label": "Min target speed", "kind": "number", "min": 0.1, "max": 3, "adv": True,
+     "block": "SV_Target_min|Value", "default": 0.8, "unit": "m/s"},
+    {"key": "sv_target_max", "label": "Max target speed", "kind": "number", "min": 0.1, "max": 3, "adv": True,
+     "block": "SV_Target_max|Value", "default": 1.5, "unit": "m/s"},
+    {"key": "target_step_up", "label": "Target step up", "kind": "number", "min": 0, "max": 0.5, "adv": True,
+     "block": "target_speed3|Value", "default": 0.04, "unit": "m/s"},
+    {"key": "target_step_down", "label": "Target step down", "kind": "number", "min": 0, "max": 0.5, "adv": True,
+     "block": "target_speed4|Value", "default": 0.08, "unit": "m/s"},
+    # Advanced: When the target steps
+    {"key": "window_up", "label": "Step-up window", "kind": "number", "min": 1, "max": 200, "adv": True,
+     "block": "window_length|Value", "default": 20, "unit": "strides"},
+    {"key": "window_down", "label": "Step-down window", "kind": "number", "min": 1, "max": 200, "adv": True,
+     "block": "window_length1|Value", "default": 10, "unit": "strides"},
+    {"key": "assist_threshold", "label": "High-assist level", "kind": "number", "min": 0, "max": 10, "adv": True,
+     "block": "assist_threshold|Value", "default": 9, "unit": "of 10"},
+    {"key": "min_cycles", "label": "High-assist strides", "kind": "number", "min": 1, "max": 200, "adv": True,
+     "block": "min_cycles|Value", "default": 10, "unit": "strides"},
+    # Advanced: Torque controller
+    {"key": "p_gain", "label": "Torque P gain", "kind": "number", "min": 0, "max": 10, "adv": True,
+     "block": "P|Value", "default": 0.6},
+    {"key": "i_gain", "label": "Torque I gain", "kind": "number", "min": 0, "max": 10, "adv": True,
+     "block": "I|Value", "default": 0.8},
+    {"key": "spring", "label": "Spring stiffness", "kind": "number", "adv": True, "readonly": True,
+     "block": "Spring Constant Nm/deg|Value", "default": -0.7651, "unit": "N·m/deg"},
+    # Advanced: Safety
+    {"key": "threshold_pressure", "label": "Standing-still cutoff", "kind": "number", "min": 0, "max": 5000,
+     "adv": True, "block": "threshold_pressure|Value", "default": 200, "unit": "counts"},
 ]
-DEFAULT_MODELS = {
-    "AFO": {"side": "AFO/Left 0/Right 1|Value", "weight": "AFO/weight|Gain", "mode": "AFO/Constant4|Value",
-            "k_percent": "AFO/Constant10|Value", "sv_target_min": "AFO/SV_Target_min|Value",
-            "sv_target_max": "AFO/SV_Target_max|Value"},
-    "AFO_r1": {"side": "AFO_r1/Left 0/Right 1|Value", "weight": "AFO_r1/weight|Value",
-               "mode": "AFO_r1/Constant4|Value", "k_percent": "AFO_r1/Constant10|Value",
-               "sv_target_min": "AFO_r1/SV_Target_min|Value", "sv_target_max": "AFO_r1/SV_Target_max|Value"},
-}
+
+
+def _model_paths(model: str) -> Dict[str, str]:
+    out = {}
+    for sp in SPECS:
+        blk = sp.get("block_r1") if model == "AFO_r1" and sp.get("block_r1") else sp["block"]
+        out[sp["key"]] = f"{model}/{blk}"
+    return out
+
+
+DEFAULT_MODELS = {"AFO": _model_paths("AFO"), "AFO_r1": _model_paths("AFO_r1")}
 MODES = {1: "RL", 3: "Fixed K"}     # Multiport Switch selector (2 = ILC is not offered)
 SIDE_NAMES = {0: "LEFT", 1: "RIGHT"}
 SIDE_WARNING = ("Side mismatch: measured torque and ankle angle are sign-inverted; "
                 "the controller would push the wrong way.")
 SID_RE = re.compile(r"^S\d{1,4}$")
+ECHO_MODEL = "AFO_r1"        # the model that sends the training UDP echo
+ECHO_MAX_AGE_S = 0.5      # console packet every 10 ms; older than this -> rows grey
+SHORT = {"side": "Foot side", "weight": "Mass", "mode": "Mode", "k_percent": "K", "sv_target_min": "SV target",
+         "sv_target_max": "SV target", "motor": "Motor command", "assist": "Assist command", "k": "K command"}
+
+
+def _num(v) -> Optional[float]:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and abs(f) != float("inf") else None
+
+
+def values_match(key: str, entered, target) -> Optional[bool]:
+    a, b = _num(entered), _num(target)
+    if a is None or b is None:
+        return None
+    if key in ("side", "mode", "motor", "assist", "k"):
+        return int(round(a)) == int(round(b))
+    return abs(a - b) <= 1e-3 * max(1.0, abs(a))     # float32 echo of a double
 
 
 class SessionSetup:
@@ -59,7 +117,8 @@ class SessionSetup:
         self.ctx = ctx
         scfg = ctx.cfg.get("session") or {}
         self.models = scfg.get("models") or DEFAULT_MODELS
-        self.writes_enabled = bool(scfg.get("target_writes_enabled", False))
+        self.writes_enabled = (bool(scfg.get("target_writes_enabled", False))
+                               and not bool((ctx.cfg.get("console") or {}).get("view_only", False)))
         self.path = os.path.join(ctx.app_dir, "data", "session_profiles.json")
         self.lock = threading.Lock()
         self.sid: Optional[str] = None
@@ -68,7 +127,10 @@ class SessionSetup:
         self.readback: Dict[str, Any] = {}
         self.readback_src: Dict[str, str] = {}
         self.readback_at: Optional[float] = None
+        self.readback_t: Dict[str, float] = {}
+        self.echo_port: Optional[int] = None
         self.side_confirmed: Optional[Dict[str, Any]] = None
+        self.after_start = False      # SPEC: every Start ends in the Confirm state
         self.profiles: Dict[str, Dict[str, Any]] = {}
         self.events: list = []        # start/stop times of this app session (for exports)
         self._load()
@@ -154,8 +216,15 @@ class SessionSetup:
             return f"{sp['label']}: not a number"
         if key == "mode" and int(v) not in MODES:
             return "Mode must be RL or Fixed K."
+        if sp.get("readonly"):
+            return f"{sp['label']} is read-only here."
         if sp["kind"] == "number" and not (sp.get("min", -1e12) <= v <= sp.get("max", 1e12)):
             return f"{sp['label']}: {v:g} is outside {sp.get('min')}..{sp.get('max')}"
+        # SV target band: 0.8-1.5 m/s for healthy participants, min 0.5 for patients (Andy 12:53)
+        lo = v if key == "sv_target_min" else self.values.get("sv_target_min")
+        hi = v if key == "sv_target_max" else self.values.get("sv_target_max")
+        if key in ("sv_target_min", "sv_target_max") and lo is not None and hi is not None and float(lo) >= float(hi):
+            return f"Min target speed ({float(lo):g}) must be below max target speed ({float(hi):g})."
         with self.lock:
             self.values[key] = v
             self._save()
@@ -166,12 +235,15 @@ class SessionSetup:
         side = (side or "").upper()
         if side not in ("LEFT", "RIGHT"):
             return "Pick LEFT or RIGHT."
-        if not self.sid or (typed_sid or "").strip().upper() != self.sid:
-            return f"Type the S-ID exactly ({self.sid or 'set the S-ID first'})."
+        if not self.sid:
+            return "Set the participant ID first."
+        if typed_sid and typed_sid.strip().upper() != self.sid:
+            return f"The ID does not match ({self.sid})."
         v = 0 if side == "LEFT" else 1
         with self.lock:
             self.values["side"] = v
             self.side_confirmed = {"sid": self.sid, "side": v, "at": time.time()}
+            self.after_start = False
             self._save()
         self.audit("side confirmed", side)
         return self._send("side", v)
@@ -203,27 +275,43 @@ class SessionSetup:
                                 "msg": "" if ok else (out.get("err") or f"read back {out.get('readback')}"),
                                 "at": time.time()}
             if ok:
-                self.readback[key] = out.get("readback")
-                self.readback_src[key] = "getparam"
-                self.readback_at = time.time()
+                self._put(key, out.get("readback"), "getparam")
             self.audit("set", f"{key}={value:g} ({blk}|{prm}) -> {json.dumps(out)[:200]}")
             return out
         self.status[key] = {"state": "sending", "msg": "", "at": time.time()}
         self.ctx.jobs.start("session", f"set {key}", run)
         return f"{sp['label']}: sending…"
 
+    def _put(self, key: str, value, src: str) -> None:
+        self.readback[key] = value
+        self.readback_src[key] = src
+        self.readback_t[key] = self.readback_at = time.time()
+
+    def echo(self) -> Dict[str, Any]:
+        """The model's own echo of its settings: the console packet on UDP 5433
+        while fresh (its validated layout proves the source), else {} and
+        getparam is used. Adds "_port" = 5433."""
+        if not hasattr(self.ctx, "training"):
+            return {}
+        tr = self.ctx.training.latest(max_age_s=ECHO_MAX_AGE_S) or {}
+        return dict(tr, _port=5433) if tr else {}
+
     def refresh_readback(self) -> None:
-        """Training UDP echo first (no MATLAB); getparam for the rest every ~5 s while connected."""
-        echo = self.ctx.training.latest() if hasattr(self.ctx, "training") else {}
+        """Echo first (no MATLAB); getparam for every value without a fresh echo."""
+        echo = self.echo()
+        self.echo_port = echo.get("_port")
         for sp in SPECS:
+            k = sp["key"]
             col = sp.get("udp")
             if col and echo.get(col) is not None:
-                self.readback[sp["key"]] = echo[col]
-                self.readback_src[sp["key"]] = "udp"
-                self.readback_at = time.time()
+                self._put(k, echo[col], "echo")
+            elif self.readback_src.get(k) == "echo":
+                # echo gone (stream stopped / other model): drop it, getparam takes over
+                self.readback.pop(k, None)
+                self.readback_src.pop(k, None)
         if not self._connected() or self.ctx.jobs.running("rc") or self.ctx.jobs.running("session"):
             return
-        need = [sp["key"] for sp in SPECS if self.readback_src.get(sp["key"]) != "udp" or not echo]
+        need = [sp["key"] for sp in SPECS if self.readback_src.get(sp["key"]) != "echo"]
         paths = {k: "|".join(self.target_path(k)) for k in need if self.target_path(k)}
         if not paths:
             return
@@ -237,16 +325,48 @@ class SessionSetup:
                 for k, pth in paths.items():
                     hit = next((v for v in vals if v.get("path") == pth), None)
                     if hit and hit.get("value") not in (None, []):
-                        self.readback[k] = hit["value"]
-                        self.readback_src[k] = "getparam"
-                self.readback_at = time.time()
+                        self._put(k, hit["value"], "getparam")
             return out
         self.ctx.jobs.start("session", "read session params", run)
+
+    def target_table(self) -> list:
+        """'Settings on the target': name, entered, target value, source (echo/getparam), match."""
+        now = time.time()
+        rows = []
+        for sp in SPECS:
+            k = sp["key"]
+            src = self.readback_src.get(k)
+            tgt = self.readback.get(k)
+            rows.append({"name": k, "label": sp["label"], "entered": self.values.get(k), "target": tgt,
+                         "source": src, "port": self.echo_port if src == "echo" else None, "age_s": round(now - self.readback_t[k], 1) if k in self.readback_t else None,
+                         "match": values_match(k, self.values.get(k), tgt)})
+        echo = self.echo()
+        cmd = self.ctx.commands
+        sent_t = dict(getattr(cmd, "toggles", {}) or {})
+        for t, col in (("motor", "cmd_motor"), ("assist", "cmd_assist"), ("k", "cmd_k")):
+            tgt = echo.get(col)
+            rows.append({"name": t, "label": SHORT[t], "entered": sent_t.get(t), "target": tgt,
+                         "source": "echo" if tgt is not None else None, "age_s": None,
+                         "port": echo.get("_port") if tgt is not None else None,
+                         "match": values_match(t, sent_t.get(t), tgt)})
+        sent_p = dict(getattr(cmd, "params", {}) or {})
+        for p, col in (getattr(cmd, "param_echo", {}) or {}).items():
+            tgt = echo.get(col)
+            rows.append({"name": p, "label": p.replace("_", " "), "entered": sent_p.get(p), "target": tgt,
+                         "source": "echo" if tgt is not None else None, "age_s": None,
+                         "port": echo.get("_port") if tgt is not None else None,
+                         "match": values_match(p, sent_p.get(p), tgt)})
+        return rows
 
     def after_connect_or_start(self, event: str) -> None:
         """After Connect: send pending values. After Start: re-apply everything entered."""
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
+            # Start reloads the build defaults: the side is never re-sent silently;
+            # the operator confirms it again (the other values are re-applied)
+            with self.lock:
+                self.side_confirmed = None
+                self.after_start = True
         order = ["side"] + [sp["key"] for sp in SPECS if sp["key"] != "side"]
         for k in order:
             if self.values.get(k) is None:
@@ -270,11 +390,11 @@ class SessionSetup:
     # ---------------------------------------------------------- safety
     def side_problem(self) -> Optional[str]:
         if not self.sid:
-            return "No participant: set the S-ID and confirm the foot side on Home first."
+            return "No participant: set the participant ID and confirm the foot side in the top bar first."
         want = self.values.get("side")
         c = self.side_confirmed
         if want is None or not c or c["sid"] != self.sid:
-            return f"Foot side not confirmed for {self.sid}: confirm it on Home first."
+            return f"Foot side not confirmed for {self.sid}: confirm it in the top bar first."
         rb = self.readback.get("side")
         if rb is None:
             # blocked until the target's side has been read back and matches
@@ -286,7 +406,7 @@ class SessionSetup:
             rbi = None
         if rbi == -1:
             # AFO_r1 compiles the side as -1 (unset): the drive cannot enable until it is set
-            return "Side not set: motor disabled. Confirm the foot side on Home."
+            return "Side not set: motor disabled. Confirm the foot side in the top bar."
         if rbi != int(want):
             return SIDE_WARNING + f" Target: {SIDE_NAMES.get(rbi, rb)}, profile: {SIDE_NAMES[int(want)]}."
         return None
@@ -320,6 +440,7 @@ class SessionSetup:
                 "side": SIDE_NAMES.get(int(self.values["side"])) if self.values.get("side") is not None else None,
                 "mode": MODES.get(int(self.values["mode"])) if self.values.get("mode") is not None else None,
                 "readback": dict(self.readback), "readback_source": dict(self.readback_src),
+                "target_table": self.target_table(),
                 "side_confirmed": self.side_confirmed, "model": self.model(),
                 "target": dict(self.ctx.runctl.status or {}), "run_events": list(self.events),
                 "commands": self.ctx.commands.view()}
@@ -330,7 +451,9 @@ class SessionSetup:
             k = sp["key"]
             rows.append({"key": k, "label": sp["label"], "value": self.values.get(k),
                          "readback": self.readback.get(k), "readback_source": self.readback_src.get(k),
+                         "match": values_match(k, self.values.get(k), self.readback.get(k)),
                          "status": self.status.get(k, {})})
         return {"sid": self.sid, "rows": rows, "side_problem": self.side_problem(), "side_chip": self.side_chip(),
                 "side_confirmed": self.side_confirmed, "readback_at": self.readback_at, "model": self.model(),
-                "writes_enabled": self.writes_enabled, "profiles": sorted(self.profiles)}
+                "writes_enabled": self.writes_enabled, "profiles": sorted(self.profiles),
+                "echo_active": bool(self.echo()), "target_table": self.target_table()}

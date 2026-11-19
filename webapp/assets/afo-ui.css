@@ -1,0 +1,481 @@
+/* =====================================================================
+   AFO webapp stylesheet  (design v4, Nov 19 2026)
+   Drop into assets/ of GUI_robust and the AFO_app. Dash loads every
+   .css in assets/ automatically. Class names are the spec's; map them
+   onto the existing components (className=...) rather than keeping
+   two parallel sets of rules.
+
+   Layout: 48 px top bar / page body on a 4 px grid / bottom control
+   dock. Neutral warm greys everywhere; colour appears only for drive
+   state (Motor fill + top-bar badge) and for abnormal conditions.
+   ===================================================================== */
+
+/* ---------- Fonts ----------------------------------------------------
+   Offline-safe: put Inter (variable, woff2) and JetBrains Mono woff2 in
+   assets/fonts/. If they are missing the stacks fall back to Segoe UI
+   and Consolas, which every Windows PC has.                           */
+@font-face { font-family: "Inter"; src: url("fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+
+:root {
+  /* Neutrals (warm, very low chroma) */
+  --bg:            #F6F5F2;   /* page */
+  --surface:       #FFFFFF;   /* cards, plots */
+  --surface-2:     #EFEDE9;   /* dock, segmented track, table header */
+  --border:        #E2DFD9;   /* card + divider, 1 px */
+  --border-strong: #CBC7BF;   /* inputs, OFF pill, secondary buttons */
+  --text:          #1D1F21;   /* values, titles */
+  --text-2:        #5B5F65;   /* labels, nav */
+  --text-3:        #73767B;   /* units, axis ticks, hints */
+
+  /* Single accent: selection, focus, primary action. Never status. */
+  --accent:        #1F6F78;
+  --accent-hover:  #18585F;
+  --accent-weak:   #E2EEEF;
+
+  /* Drive state (Andy's colours, from the Speedgoat statusword) */
+  --drive-disabled:#CCCCCC;   /* 0x260 switch-on disabled            */
+  --drive-fault:   #FF9E9E;   /* fault bit 0x0008 set, e.g. 0x228 STO */
+  --drive-ready:   #FFD280;   /* 0x237 ready / switched on           */
+  --drive-on:      #8FE38F;   /* 0x637 operation enabled, target reached */
+  --drive-unknown: #FFFFFF;   /* no data: white with dashed border    */
+  --on-status:     #1D1F21;   /* text on any drive fill               */
+
+  /* Abnormal only (stream stalled, link lost, invalid IMU) */
+  --alarm:         #B42318;
+  --alarm-weak:    #FDECEA;
+  --caution:       #8A5A00;
+  --caution-weak:  #FFF4DB;
+  --ok:            #1D6B2C;   /* status button "Ready" text (Andy 12:19: green) */
+  --ok-weak:       #DDF2DA;
+
+  /* Plot series */
+  --s-meas:  #1D1F21;   /* measured torque, stride velocity */
+  --s-cmd:   #1F6F78;   /* command / reference, dashed      */
+  --s-x:     #1F6F78;   /* IMU x */
+  --s-y:     #C2702E;   /* IMU y */
+  --s-z:     #6E5BA8;   /* IMU z */
+  /* FSR 1..8, heel -> toe, one teal ramp */
+  --fsr1:#A9D3D7; --fsr2:#8CC2C7; --fsr3:#6FB0B6; --fsr4:#529DA4;
+  --fsr5:#3A8890; --fsr6:#28727A; --fsr7:#1B5B62; --fsr8:#10444A;
+
+  /* Type */
+  --font-ui:   "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-num:  "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --fs-11: 11px;  /* axis ticks, pill text, overline        */
+  --fs-12: 12px;  /* labels, units, table header, captions  */
+  --fs-13: 13px;  /* body, buttons, nav, table cells        */
+  --fs-14: 14px;  /* card titles                            */
+  --fs-16: 16px;  /* app name in top bar, page headings     */
+  --fs-20: 20px;  /* live readout values                    */
+
+  /* Space (4 px grid) */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-6: 24px; --sp-8: 32px;
+  --gutter: 24px;          /* page side padding, desktop */
+  --gap: 16px;             /* between cards               */
+
+  /* Shape */
+  --r-ctl: 6px; --r-card: 8px; --r-pill: 999px;
+
+  /* Sizes */
+  --topbar-h: 48px;
+  --dock-h:   64px;
+  --btn-sm: 28px; --btn-md: 32px; --btn-lg: 40px;
+
+  /* Motion: UI chrome only. Plots never animate. */
+  --t-fast: 120ms; --t-med: 180ms; --ease: cubic-bezier(.2,.0,.0,1);
+}
+
+@media (max-width: 1400px) { :root { --gutter: 16px; --gap: 12px; }
+  .topbar { gap: var(--sp-4); } .meta .mt-label { display: none; }
+  .btn-toggle { min-width: 112px; } .dock { gap: var(--sp-4); } .dock .readouts { gap: var(--sp-4); }
+  .meta .num { display: none; } }
+@media (pointer: coarse)    { :root { --btn-md: 40px; --btn-lg: 44px; --dock-h: 72px; } }
+@media (prefers-reduced-motion: reduce) { :root { --t-fast: 0ms; --t-med: 0ms; } }
+
+/* ---------- Base ---------------------------------------------------- */
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: var(--font-ui); font-size: var(--fs-13); line-height: 20px;
+  -webkit-font-smoothing: antialiased; font-feature-settings: "cv11", "ss01";
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+.app > .topbar { flex: none; height: var(--topbar-h); }
+.app > .page { flex: 1; }
+.app > .dock, .app > .sys-banner { flex: none; }
+
+/* ---------- Top bar ------------------------------------------------- */
+.topbar {
+  display: flex; align-items: center; gap: var(--sp-6);
+  padding: 0 var(--gutter); background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .appname { font-size: var(--fs-16); font-weight: 600; letter-spacing: -.01em; }
+.nav { display: flex; gap: var(--sp-1); flex: none; }
+.nav a {
+  height: 32px; display: inline-flex; align-items: center; padding: 0 var(--sp-3);
+  border-radius: var(--r-ctl); color: var(--text-2); text-decoration: none; font-weight: 500;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.nav a:hover { background: var(--surface-2); color: var(--text); }
+.nav a[aria-current="page"] { color: var(--accent); background: var(--accent-weak); }
+.topbar .spacer { flex: 1; }
+.meta { display: flex; align-items: center; gap: var(--sp-4); color: var(--text-2); font-size: var(--fs-12); white-space: nowrap; }
+.meta .num { font-family: var(--font-num); font-size: var(--fs-12); color: var(--text); }
+
+/* Target controls in the top bar (like the MATLAB SLRT toolstrip):
+   Connect | Start | Stop. No Load: the AFO app is always the one loaded.
+   Stop uses the inline two-step confirm. No link dot (Andy 12:18): the
+   status button already reads "No data" when the link is down. */
+.target { display: flex; align-items: center; gap: var(--sp-2); }
+.btn-group { display: inline-flex; }
+.btn-group .btn { border-radius: 0; margin-left: -1px; }
+.btn-group .btn:first-child { border-radius: var(--r-ctl) 0 0 var(--r-ctl); margin-left: 0; }
+.btn-group .btn:last-child  { border-radius: 0 var(--r-ctl) var(--r-ctl) 0; }
+.topbar .vr { width: 1px; height: 24px; background: var(--border); }
+/* Busy: Connect ~25 s, Start ~5 s + UDP, Stop ~1.5 min (log import).
+   The whole group is disabled; the acting button shows a spinner + verb. */
+.btn.busy { color: var(--text-2); cursor: progress; }
+.btn.busy:disabled { opacity: 1; }   /* busy stays readable */
+.btn.busy::before { content: ""; width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); border-top-color: var(--accent); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .btn.busy::before { animation: none; border-color: var(--accent); } }
+
+/* Foot side: quiet when correct (Andy 11:55: "not so apparent"); it only
+   gets loud through the banners when it needs confirming or differs. */
+.side-chip { height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; text-decoration: none;
+  border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--border-strong); font-size: var(--fs-12); font-weight: 500;
+  color: var(--text-2); white-space: nowrap; }
+.side-chip { border: 0; background: transparent; font-family: var(--font-ui); cursor: pointer; }
+.side-chip:hover { color: var(--text); background: var(--surface-2); }
+.side-chip:disabled { cursor: not-allowed; opacity: .7; }
+/* Foot-side popup (Andy 12:13): click the chip -> Left | Right; picking the
+   other side shows an in-popup confirm. Neutral colours only, no red. */
+.side-pop { width: 280px; left: auto; }
+.side-pick { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); padding: var(--sp-4); }
+.side-opt { height: 40px; border-radius: var(--r-ctl); border: 1px solid var(--border-strong); background: var(--surface);
+  font: 500 var(--fs-13)/1 var(--font-ui); color: var(--text); cursor: pointer; }
+.side-opt:hover { background: var(--surface-2); }
+.side-opt[aria-pressed="true"] { border-color: var(--text); box-shadow: inset 0 0 0 1px var(--text); font-weight: 600; cursor: default; }
+.side-confirm { padding: 0 var(--sp-4) var(--sp-4); }
+.side-confirm p { margin: 0 0 var(--sp-3); font-size: var(--fs-13); line-height: 18px; }
+.side-act { display: flex; justify-content: flex-end; gap: var(--sp-2); }
+.side-chip.unset    { box-shadow: inset 0 0 0 1px var(--caution); color: var(--caution); background: var(--caution-weak); font-weight: 600; }
+.side-chip.mismatch { box-shadow: inset 0 0 0 1px var(--alarm);   color: var(--alarm);   background: var(--alarm-weak);   font-weight: 600; }
+.lock-note { font-size: var(--fs-12); color: var(--text-3); }
+/* Auto-send status for Home fields */
+.sent { font-size: var(--fs-12); color: var(--text-3); }
+.sent.pending { color: var(--text-2); }
+.sent.error   { color: var(--alarm); }
+
+/* Full-width system banner under the top bar, on every page.
+   .caution = foot side needs confirming (Start, Motor, Assist disabled)
+   .alarm   = app side != target read-back (Motor, Assist disabled)  */
+.sys-banner { display: flex; align-items: center; gap: var(--sp-4); min-height: 44px; padding: var(--sp-2) var(--gutter);
+  font-size: var(--fs-13); border-bottom: 1px solid var(--border); }
+.sys-banner b { font-weight: 600; }
+.sys-banner .spacer { flex: 1; }
+.sys-banner.caution { background: var(--caution-weak); color: var(--caution); }
+.sys-banner.alarm   { background: var(--alarm-weak);   color: var(--alarm); }
+.sys-banner .btn { height: var(--btn-sm); font-size: var(--fs-12); padding: 0 12px; }
+.lock-note { font-size: var(--fs-12); color: var(--text-3); }
+
+/* Drive badge: same fill as the Motor button */
+.drive-badge {
+  height: 24px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px;
+  border-radius: var(--r-pill); font-size: var(--fs-12); font-weight: 500; color: var(--on-status);
+  background: var(--drive-unknown); border: 1px dashed var(--border-strong);
+}
+.drive-badge .code { font-family: var(--font-num); font-size: var(--fs-11); opacity: .75; }
+
+button.drive-badge { cursor: pointer; font-family: var(--font-ui); }
+button.drive-badge:hover { filter: brightness(.96); }
+
+/* Status button, top right (Andy 12:17-12:19). ONE word or short phrase
+   that sums up link + data streams + settings echo. Green "Ready" when the
+   app runs, both UDP streams are live and every echoed setting matches;
+   "Connected" when linked with the app stopped. Otherwise it names the
+   problem. NO drive/STO state here: that is the Motor button fill.
+   Click opens the popover (settings table + rig status). */
+.status-btn { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; flex: none;
+  border-radius: var(--r-pill); border: 1px solid var(--border-strong); background: var(--surface);
+  cursor: pointer; font: 500 var(--fs-12)/1 var(--font-ui); color: var(--text-2); white-space: nowrap; }
+.status-btn:hover { filter: brightness(.97); }
+.status-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.status-btn .sb-txt .secs { font-family: var(--font-num); font-weight: 500; }
+.status-btn .sb-mark:empty { display: none; }
+.status-btn.ok      { background: var(--ok-weak); border-color: transparent; color: var(--ok); }
+.status-btn.busy .sb-mark { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid var(--border-strong); border-top-color: var(--text-2); animation: spin .8s linear infinite; }
+.status-btn.caution { background: var(--caution-weak); border-color: transparent; color: var(--caution); font-weight: 600; }
+.status-btn.alarm   { background: var(--alarm-weak);   border-color: transparent; color: var(--alarm);   font-weight: 600; }
+/* No marks (Andy 12:28): the tint and the words carry the state; only busy shows a spinner. */
+
+/* Hover hold: while the pointer is on a plot, that plot stops scrolling so
+   the unified hover label (time + every trace's value) stays readable.
+   Data keeps buffering and the plot catches up when the pointer leaves. */
+.plot-card.holding .card-head::after { content: "Held"; margin-left: var(--sp-3); height: 20px; display: inline-flex; align-items: center;
+  padding: 0 8px; border-radius: var(--r-pill); background: var(--surface-2); color: var(--text-2); font-size: var(--fs-11); font-weight: 500; }
+
+/* Settings table at the top of the status popover: Entered vs Target uses. */
+.echo-table { width: 100%; border-collapse: collapse; font-size: var(--fs-12); }
+.echo-table th { font-weight: 500; color: var(--text-3); text-align: left; height: 28px; padding: 0 var(--sp-2); }
+.echo-table td { height: 32px; padding: 0 var(--sp-2); border-top: 1px solid var(--border); color: var(--text); }
+.echo-table th:first-child, .echo-table td:first-child { padding-left: var(--sp-4); color: var(--text-2); }
+.echo-table .r { text-align: right; }
+.echo-table td.mono { font-family: var(--font-num); }
+.echo-table th:last-child, .echo-table td:last-child { padding-right: var(--sp-4); }
+/* Andy 12:28: no check marks; colour says it. Matching row = green tint,
+   waiting = grey text, differs = amber tint. */
+.echo-table tr.ok td { background: var(--ok-weak); color: var(--ok); }
+.echo-table tr.ok td:first-child { color: var(--ok); }
+.echo-table tr.sending td { color: var(--text-3); }
+.echo-table tr.differs td, .echo-table tr.differs td:first-child { background: var(--caution-weak); color: var(--caution); font-weight: 600; }
+.echo-table tbody tr td { border-top: 2px solid var(--surface); }
+.pop-head.sub { border-top: 1px solid var(--border); }
+/* Rig status popover: opened from the drive badge (Andy 11:57: status
+   lives behind the top-right badge, not on Home). */
+.popover { position: fixed; top: calc(var(--topbar-real, var(--topbar-h)) + 4px); right: var(--gutter); width: 360px; max-width: calc(100vw - 32px); z-index: 20;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: 0 8px 24px rgba(29,31,33,.12); }
+.pop-head { display: flex; align-items: center; height: 40px; padding: 0 var(--sp-4); border-bottom: 1px solid var(--border); }
+.pop-head .spacer { flex: 1; }
+
+/* Session fields in the top bar (Andy 12:09): ID, Mass, foot side, Advanced.
+   Inline label + 28 px input; a committed value flashes the accent border. */
+.session-bar { display: flex; align-items: center; gap: var(--sp-2); }
+/* Andy 12:30: a bar separates participant (ID, Mass, foot) from Advanced. */
+.session-bar .sb-sep { margin: 0 var(--sp-2); }
+.tb-field { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--text-3); }
+.tb-field .input { height: 28px; padding: 0 8px; font-size: var(--fs-12); }
+.tb-field #sPart { width: 56px; }
+.tb-field #sMass { width: 44px; text-align: right; }
+.input.sent-flash { border-color: var(--accent); transition: border-color 600ms var(--ease); }
+.input.send-error { border-color: var(--alarm); }
+.adv-pop.top { position: fixed; top: calc(var(--topbar-real, var(--topbar-h)) + 4px); left: auto; right: var(--gutter); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* (superseded) Session row at the top of Live (Andy 11:58: Home merged into Live).
+   One 64 px card: Participant · Foot side · Body mass · Advanced…, then the
+   auto-send status on the right. Values send on Enter/blur. */
+.session-strip { position: relative; display: flex; align-items: flex-end; gap: var(--sp-4); padding: 10px var(--sp-4) 12px; flex: none; }
+.session-strip .field-label { margin-bottom: 2px; }
+.session-strip .spacer { flex: 1; }
+.ss-status { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; padding-bottom: 6px; }
+.adv-pop { position: absolute; top: calc(100% + 4px); left: var(--sp-4); right: auto; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 80px); overflow: auto; }
+/* Advanced popover: 4 sections in 2 columns (Andy 12:09) */
+.adv-groups { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-3); padding: var(--sp-4); align-items: start; }
+/* Andy 12:24: each section is its own tinted, rounded region (same layout).
+   Four quiet tints, one per section; inputs stay white. The legend is
+   floated so it sits INSIDE the region instead of on its border. */
+.adv-sec { margin: 0; padding: var(--sp-3) var(--sp-3) var(--sp-3); display: flex; flex-direction: column; gap: 6px; min-width: 0;
+  border: 1px solid var(--sec-line, var(--border)); border-radius: var(--r-card); background: var(--sec-bg, var(--surface-2)); }
+.adv-sec legend { float: left; width: 100%; padding: 0 0 6px; font-size: var(--fs-11); font-weight: 600; color: var(--sec-ink, var(--text-2)); letter-spacing: .05em; text-transform: uppercase; }
+.adv-sec legend + * { clear: both; }
+.adv-sec:nth-of-type(1) { --sec-bg: #EEF3F8; --sec-line: #DCE5EF; --sec-ink: #3D5A78; }   /* Walking-speed target: blue */
+.adv-sec:nth-of-type(2) { --sec-bg: #EEF5EF; --sec-line: #D9E8DB; --sec-ink: #3E6A47; }   /* When the target steps: green */
+.adv-sec:nth-of-type(3) { --sec-bg: #FAF3E8; --sec-line: #EEE1CB; --sec-ink: #7A5A2A; }   /* Torque controller: sand */
+.adv-sec:nth-of-type(4) { --sec-bg: #F3F0F8; --sec-line: #E3DDEE; --sec-ink: #5B4C7A; }   /* Safety: lilac */
+.adv-sec label { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-12); color: var(--text-2); white-space: nowrap; }
+.adv-sec label > span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); width: 152px; flex: none; }   /* fixed slot: inputs line up whether or not a unit follows */
+.adv-sec .input { width: 80px; height: 28px; font-family: var(--font-num); text-align: right; }
+.adv-sec .input[readonly] { background: transparent; border-style: dashed; color: var(--text-2); }
+.adv-sec .sec-note { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); margin-left: 6px; }
+.adv-sec .sec-help { margin: 0; font-size: var(--fs-11); line-height: 16px; color: var(--text-3); white-space: normal; }
+/* UDP 5430 params: shown, greyed, not editable (no block reads them, Andy 12:32). */
+.adv-nc { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed var(--sec-line, var(--border)); display: flex; flex-direction: column; gap: 4px; opacity: .7; }
+.adv-nc .nc-head { font-size: var(--fs-11); color: var(--text-3); }
+.adv-nc label { font-size: var(--fs-11); }
+.adv-nc .input { height: 24px; background: transparent; }
+@media (max-width: 760px) { .adv-groups { grid-template-columns: 1fr; } }
+.adv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-2) var(--sp-6); padding: var(--sp-4); }
+.adv-grid label { white-space: nowrap; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-12); color: var(--text-2); }
+.adv-grid label > span { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); }
+.adv-grid .input { width: 88px; height: 28px; font-family: var(--font-num); text-align: right; }
+.unit-input { display: inline-flex; align-items: center; gap: 6px; color: var(--text-3); font-size: var(--fs-12); }
+
+/* Stream alarm: shown ONLY when packets stop or values go invalid */
+.alarm-badge {
+  height: 24px; display: inline-flex; align-items: center; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: var(--fs-12); font-weight: 600; color: var(--alarm); background: var(--alarm-weak);
+}
+
+/* ---------- Page body ----------------------------------------------- */
+.page { padding: var(--sp-6) var(--gutter); min-height: 0; overflow: auto; }
+.page.live { display: flex; flex-direction: column; gap: var(--gap); overflow: hidden; }
+.toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+.page-title { font-size: var(--fs-16); font-weight: 600; margin: 0; }
+
+/* ---------- Cards / plot panels -------------------------------------- */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); }
+.plot-card { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.card-head {
+  display: flex; align-items: center; gap: var(--sp-4);
+  height: 40px; padding: 0 var(--sp-4); border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: var(--fs-14); font-weight: 600; }
+.card-unit  { font-size: var(--fs-12); color: var(--text-3); margin-left: -8px; }
+.card-head .spacer { flex: 1; }
+.plot-body { flex: 1; min-height: 0; padding: var(--sp-1) var(--sp-2) 0; }
+.plot-body.stale { opacity: .35; transition: opacity var(--t-med) var(--ease); }
+
+/* Legend lives in the card head, not in Plotly */
+.legend { display: flex; gap: var(--sp-3); font-size: var(--fs-12); color: var(--text-2); }
+.legend i { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+.legend i.dash { border-top-style: dashed; }
+
+/* ---------- Readouts (label + fixed-width value) ---------------------- */
+.readout { display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.readout .lbl { font-size: var(--fs-12); color: var(--text-2); }
+.readout .val {
+  font-family: var(--font-num); font-variant-numeric: tabular-nums; font-size: var(--fs-13);
+  color: var(--text); display: inline-block; text-align: right;
+  width: 7ch;              /* fixed: "+123.45" never reflows. Use 6ch/8ch per field. */
+}
+.readout .unit { font-size: var(--fs-12); color: var(--text-3); }
+.readout.lg .val { font-size: var(--fs-20); font-weight: 500; }
+
+/* ---------- Buttons --------------------------------------------------- */
+.btn {
+  height: var(--btn-md); display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  padding: 0 14px; border-radius: var(--r-ctl); border: 1px solid var(--border-strong);
+  background: var(--surface); color: var(--text); font: 500 var(--fs-13)/1 var(--font-ui); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), transform var(--t-fast) var(--ease);
+}
+.btn:hover  { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; transform: none; }
+.btn.sm { height: var(--btn-sm); padding: 0 10px; font-size: var(--fs-12); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn.danger  { color: var(--alarm); }
+.btn.confirming { background: var(--alarm); border-color: var(--alarm); color: #fff; }
+
+/* Dock toggles: Motor / Assist / K. Fill = actual state, pill = command */
+.btn-toggle { height: var(--btn-lg); min-width: 148px; justify-content: space-between; padding: 0 8px 0 14px; }
+.btn-motor  { border-color: transparent; color: var(--on-status); }
+/* Drive fill: same rule for the Motor button and the top-bar badge.
+   Set data-drive from the statusword: fault bit 0x0008 -> fault,
+   0x637 -> on, 0x237 -> ready, 0x260 -> disabled, no packets -> unknown. */
+.btn-motor[data-drive="disabled"], .drive-badge[data-drive="disabled"] { background: var(--drive-disabled); border: 1px solid transparent; }
+.btn-motor[data-drive="fault"],    .drive-badge[data-drive="fault"]    { background: var(--drive-fault);    border: 1px solid transparent; }
+.btn-motor[data-drive="ready"],    .drive-badge[data-drive="ready"]    { background: var(--drive-ready);    border: 1px solid transparent; }
+.btn-motor[data-drive="on"],       .drive-badge[data-drive="on"]       { background: var(--drive-on);       border: 1px solid transparent; }
+.btn-motor[data-drive="unknown"],  .drive-badge[data-drive="unknown"]  { background: var(--drive-unknown);  border: 1px dashed var(--border-strong); }
+.btn-motor:hover { filter: brightness(.96); }
+.btn-toggle.pending .pill { opacity: .5; }
+.btn-toggle.mismatch { box-shadow: 0 0 0 2px var(--alarm); }   /* command != feedback > 1 s */
+
+/* Assistance mode (Andy 11:57): RL | Fixed K, with K as a percentage.
+   The K field is only live in Fixed K; values send on Enter/blur. */
+.mode { display: inline-flex; align-items: center; gap: var(--sp-2); height: var(--btn-lg); padding: 0 6px 0 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-ctl); background: var(--surface); }
+.mode .lbl { font-size: var(--fs-12); color: var(--text-2); }
+.k-field { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: var(--fs-12); }
+.k-field .input { width: 64px; height: 28px; text-align: right; font-family: var(--font-num); }
+.k-field.off { display: none; }   /* hidden in RL mode (Andy 12:08) */
+.mode.mismatch { box-shadow: 0 0 0 2px var(--alarm); }
+
+/* ON/OFF pill */
+.pill {
+  height: 20px; min-width: 38px; padding: 0 8px; border-radius: var(--r-pill);
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 600 var(--fs-11)/1 var(--font-ui); letter-spacing: .05em; text-transform: uppercase;
+}
+.pill.on  { background: var(--text); color: #fff; }
+.pill.off { background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--border-strong); }
+/* Command not known yet (console just opened, commands are held on the
+   target): dashed outline + "?" until read back or pressed. */
+.pill.unknown { background: transparent; color: var(--text-2); border: 1px dashed var(--border-strong); letter-spacing: 0; }
+
+/* Banner: a stream is lost but the rest still works. Abnormal only. */
+.banner { display: flex; align-items: center; gap: var(--sp-3); min-height: 36px; padding: 0 var(--sp-4);
+  border-radius: var(--r-ctl); background: var(--alarm-weak); color: var(--alarm); font-size: var(--fs-13); font-weight: 500; }
+.banner .sub { color: var(--text-2); font-weight: 400; }
+.banner { padding-block: 6px; } .banner .spacer { flex: 1; }
+/* Signals: one "Reconnect Signals" button lives ONLY in this banner
+   (Andy 12:20-12:22), shown after auto-reconnect has failed. */
+
+/* Segmented control: page switch, 2 s / 10 s */
+.seg { display: inline-flex; padding: 2px; gap: 2px; background: var(--surface-2); border-radius: var(--r-ctl); }
+.seg button {
+  white-space: nowrap;
+  height: 24px; padding: 0 10px; border: 0; border-radius: 4px; background: transparent;
+  font: 500 var(--fs-12)/1 var(--font-ui); color: var(--text-2); cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+@media (pointer: coarse) { .seg button { height: 32px; padding: 0 14px; } }
+
+/* ---------- Bottom control dock -------------------------------------- */
+.dock {
+  display: flex; align-items: center; gap: var(--sp-6); min-height: var(--dock-h);
+  padding: var(--sp-3) var(--gutter); background: var(--surface); border-top: 1px solid var(--border);
+}
+.dock .controls { display: flex; gap: var(--sp-3); }
+.dock .divider  { width: 1px; align-self: stretch; background: var(--border); }
+.dock .readouts { display: flex; gap: var(--sp-6); flex-wrap: wrap; }
+.dock .spacer   { flex: 1; }
+/* One-shot actions at the right end of the dock (Andy 12:15): same 40 px
+   height as the toggles, no pill (they are momentary, not states). */
+.dock .actions { display: flex; gap: var(--sp-3); }
+.btn.act { height: var(--btn-lg); padding: 0 16px; }
+
+/* ---------- Tables (Trials, Signals list) ------------------------------ */
+.table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
+.table th { text-align: left; font-size: var(--fs-12); font-weight: 500; color: var(--text-2); background: var(--surface-2);
+            height: 32px; padding: 0 var(--sp-3); border-bottom: 1px solid var(--border); }
+.table td { height: 40px; padding: 0 var(--sp-3); border-bottom: 1px solid var(--border); }
+.table td.num { font-family: var(--font-num); font-variant-numeric: tabular-nums; text-align: right; font-size: var(--fs-12); }
+.table tr:hover td { background: #FAF9F7; }
+/* Trials (Andy 12:30-12:31): every run in the target's file log, newest
+   first. Click a row to select it (teal = selection); the export file name
+   and the Export button sit in a bar at the BOTTOM of the card. No Open
+   (files are never opened here). Status is colour + word, no marks. */
+.table.runs td.l { text-align: left; width: 56px; }
+.table.runs tbody tr:not(.rec) { cursor: pointer; }
+.table.runs tr[aria-selected="true"] td { background: var(--accent-weak); }
+.table.runs tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.table.runs tr.rec td { color: var(--text-3); }
+.exp-st { font-size: var(--fs-12); color: var(--text-2); }
+.exp-st.done { color: var(--ok); background: var(--ok-weak); padding: 2px 8px; border-radius: var(--r-pill); font-weight: 500; }
+.exp-st.rec { color: var(--text-3); }
+.export-bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border-top: 1px solid var(--border); background: var(--surface-2); border-radius: 0 0 var(--r-card) var(--r-card); }
+.export-bar .field-label { margin: 0; }
+.export-bar #expName { width: 300px; text-align: left; }
+.export-bar .spacer { flex: 1; }
+
+/* ---------- Forms ----------------------------------------------------- */
+.input { height: var(--btn-md); padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--r-ctl);
+         background: var(--surface); font: var(--fs-13) var(--font-ui); color: var(--text); }
+.input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.field-label { font-size: var(--fs-12); color: var(--text-2); display: block; margin-bottom: var(--sp-1); }
+
+/* ---------- Log pane -------------------------------------------------- */
+.log { font: var(--fs-12)/18px var(--font-num); color: var(--text-2); background: var(--surface-2);
+       border-radius: var(--r-ctl); padding: var(--sp-3); overflow: auto; white-space: pre; }
+.log .err { color: var(--alarm); }
+
+/* ---------- Top bar fit (Andy 12:19: the badge ran off the edge) -----
+   The top bar must never be wider than the window. Step down in order:
+   1400: drop model time + labels; 1180: tighter gaps, no dividers;
+   980: wrap the nav onto a second row (popovers follow --topbar-real,
+   set from JS to the bar's real height). Test: no horizontal scroll and
+   the status button's right edge <= window - gutter at every width. */
+@media (max-width: 1400px) { .topbar { gap: var(--sp-4); } }
+@media (max-width: 1180px) { .topbar { gap: var(--sp-3); } .topbar .vr { display: none; } .nav a { padding: 0 var(--sp-2); } }
+@media (max-width: 980px)  { .app > .topbar { height: auto; flex-wrap: wrap; padding-block: var(--sp-2); row-gap: var(--sp-2); }
+  .nav { order: 9; flex: 1 1 100%; overflow-x: auto; } .topbar .spacer { display: none; } .session-bar { margin-left: auto; }
+  .app > .dock { height: auto; min-height: var(--dock-h); flex-wrap: wrap; padding-block: var(--sp-2); row-gap: var(--sp-2); }
+  .btn-toggle { min-width: 96px; } }
+
+/* ---------- Dash specifics -------------------------------------------- */
+/* Keep Plotly's own hover/legend chrome quiet and stop resize flashes. */
+.js-plotly-plot .plotly .modebar { display: none !important; }
+.dash-graph { height: 100%; }
+._dash-loading, ._dash-loading-callback { display: none; }   /* no spinner flicker at 20 Hz */

@@ -31,7 +31,7 @@ packet:
 # Extend or modify as your Simulink model evolves.
 signals:
   time: 0
-  treadmill_velocity: 1
+  sv: 1                      # stride velocity (model inport SV; was labelled treadmill_velocity)
   ankle_angle: 2
 
   # Plantar pressure sensors (insole), left-aligned indices 3-10
@@ -58,8 +58,8 @@ signals:
   imu_11: 21 # raw_accel_y
   imu_12: 22 # raw_accel_z
 
-  gait_percentage: 23
-  shifted_angle_moment: 24
+  sv_target: 23              # SV target (inport SV_Target; was gait_percentage)
+  uc: 24                     # Uc (inport Uc; was shifted_angle_moment)
   actual_torque: 25
   heel_strike: 26
   assistance_level: 27
@@ -75,7 +75,7 @@ signals:
 validation:
   ranges:
     time: [0, 1.0e7]                 # s, model time
-    treadmill_velocity: [-1, 5]      # m/s
+    sv: [-1, 5]                      # m/s
     ankle_angle: [-180, 180]         # deg
     "pressure_*": [-50, 5000]        # FSR (live values ~3-11)
     imu_1: [-16, 16]                 # accel_x, g
@@ -94,6 +94,14 @@ validation:
     demand_torque: [-200, 200]       # Nm
     statusword: [0, 65535]
 
+# ---- Teensy page ----
+teensy:
+  # Board settings for every build (Arduino IDE Tools menu). Read from Andy's Arduino IDE
+  # build cache on the OMEN (Nov 19 2026): all four cached DAQ builds, newest 2026-08-17
+  # (git\Ankle-Foot-Orthosis\DAQ), used exactly this FQBN.
+  fqbn: "teensy:avr:teensy41:usb=serial,speed=600,opt=o2std,keys=en-us"
+  fqbn_source: "Arduino IDE build cache on the OMEN (DAQ build 2026-08-17)"
+
 # ---- AFO web app ----
 paths:
   afo_root: "C:/Users/Andy/Desktop/AFO"
@@ -108,14 +116,16 @@ live:
   # ping. In the lab app that could be mistaken for data, so it is off.
   fake_data_when_offline: false
 
-# Training-data stream from the Speedgoat (layout v1 from the Simulink thread).
-# Received by training_worker.py in its own process; not shown on the Live page.
-# Its cmd_* / param_* columns are the commands actually latched in the model and
-# are used as the authoritative command readback (commands.py).
+# Console packet from the Speedgoat (UDP 5433, '<12f' every 10 ms; layout from the
+# Simulink thread's make_afo_r1 -> config/console_udp_layout.json): t_model, side,
+# weight_kg, assist_mode, fixed_k_pct, cmd_motor/assist/k/calibrate/reset_sv,
+# imu_ok, imu_bad_count. Received by training_worker.py in its own process. The
+# cmd_* columns are the commands latched in the model (authoritative readback);
+# side/weight/mode/K confirm the session settings. Optional: enabled false -> getparam only.
 training:
   enabled: true
   listen_host: "0.0.0.0"
-  layout: "config/training_udp_layout.json"   # port, format and columns come from here
+  layout: "config/console_udp_layout.json"   # port, format and columns come from here
 
 session:
   # Target access hold (2026-11-19): session values are saved and shown as pending,
@@ -128,10 +138,6 @@ commands:
   # model's receiver expects 6 singles, so the UI greys them out. Packet format is
   # unchanged until it is decided in the Simulink thread.
   params_used_by_model: false
-  # training-stream column that echoes each parameter (cols 45-49 = raw param floats 0..4)
-  param_echo_columns:
-    epsilon_up: param_epsilon_up
-    epsilon_down: param_epsilon_down
-    step_up: param_step_up
-    step_down: param_step_down
-    v_min: param_v_min
+  # No parameter echo on UDP any more (console packet has none): parameters are
+  # confirmed by getparam read-back. Map a parameter to a console column here if one appears.
+  param_echo_columns: {}

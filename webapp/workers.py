@@ -58,9 +58,11 @@ class LiveSupervisor:
     def _spawn(self) -> None:
         import live_worker
         self.q = _SPAWN.Queue(maxsize=16)
+        self.req = _SPAWN.Queue()
+        self.resp = _SPAWN.Queue()
         self.stop_evt = _SPAWN.Event()
         self.proc = _SPAWN.Process(target=live_worker.worker_main,
-                                   args=(self.cfg, self.q, self.stop_evt, self.log_dir),
+                                   args=(self.cfg, self.q, self.stop_evt, self.log_dir, self.req, self.resp),
                                    name="afo-live-worker", daemon=True)
         self.proc.start()
         self.last_hb = time.monotonic()
@@ -120,6 +122,26 @@ class LiveSupervisor:
         s = self.get_status()
         age = s.get("age_s")
         return bool(s.get("live_seen")) and age is not None and age < 5.0
+
+    def slow_data(self, names, window_s: float = 120.0, max_points: int = 1500, timeout: float = 1.0):
+        """Live > Training data from the 5431 bus (~100 Hz, up to 330 s), min/max binned."""
+        if self.proc is None or not self.proc.is_alive():
+            return None
+        if not hasattr(self, "_req_lock"):
+            self._req_lock = threading.Lock()
+            self._ids = itertools.count(1)
+        with self._req_lock:
+            rid = next(self._ids)
+            self.req.put((rid, "slow", [list(names), float(window_s), int(max_points)]))
+            t_end = time.monotonic() + timeout
+            while time.monotonic() < t_end:
+                try:
+                    got = self.resp.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if got[0] == rid:
+                    return json.loads(got[1])
+        return None
 
     def readback(self) -> Dict[str, Any]:
         """Bus values for command readback (statusword, assistance_level, ...); {} if stale."""
@@ -424,7 +446,7 @@ class TrainingSupervisor:
     def __init__(self, cfg: Dict[str, Any], app_dir: str, log_dir: str) -> None:
         tcfg = cfg.get("training") or {}
         self.enabled = bool(tcfg.get("enabled", False))
-        lp = tcfg.get("layout", "config/training_udp_layout.json")
+        lp = tcfg.get("layout", "config/console_udp_layout.json")
         self.layout_path = lp if os.path.isabs(lp) else os.path.join(app_dir, lp)
         self.host = tcfg.get("listen_host", "0.0.0.0")
         self.log_dir = log_dir

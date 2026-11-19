@@ -62,6 +62,12 @@ class RunControl:
             if action == "save" and ok and getattr(job, "export_meta", None):
                 meta = job.export_meta
                 meta["saved"] = res
+                sp = res.get("splits") or []
+                if isinstance(sp, dict):
+                    sp = [sp]
+                # recording restarts inside this app session: where the joined runs meet
+                meta["file_log_runs_joined"] = int(res.get("n_runs") or 1)
+                meta["split_t_model_s"] = [s.get("t_model") for s in sp]
                 with open(meta["json_path"], "w", encoding="utf-8") as fp:
                     json.dump(meta, fp, indent=1, default=str)
                 res["settings_json"] = meta["json_path"]
@@ -72,6 +78,11 @@ class RunControl:
                     job.add(f"session re-apply failed: {exc}")
             if action == "stop" and ok and hasattr(self.ctx, "session"):
                 self.ctx.session.note_stop()
+            if action == "stop" and ok and hasattr(self.ctx, "filelog"):
+                try:   # the run that was recording is now complete and exportable
+                    self.ctx.filelog.refresh_job(job)
+                except Exception as exc:
+                    job.add(f"file-log list after stop failed: {exc}")
             self.audit(action, " ".join(str(a) for a in args) + " -> " + json.dumps(res)[:400], ok)
             if action not in ("status",):
                 try:
@@ -114,7 +125,7 @@ class RunControl:
         mat = os.path.join(folder, cand + ".mat")
         meta = self.ctx.session.settings_record()
         meta.update({"file": mat, "json_path": os.path.join(folder, cand + ".json"),
-                     "exported_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+                     "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"), "file_log_run": None})
         job = self.run_action("save", mat, _meta=meta)
         return job, f"Exporting {os.path.basename(mat)}"
 
