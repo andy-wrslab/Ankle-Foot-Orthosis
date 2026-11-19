@@ -1,0 +1,137 @@
+# UDP connection parameters
+udp:
+  # IP address to bind the UDP listener ("0.0.0.0" means all interfaces)
+  listen_host: "0.0.0.0"
+  listen_port: 5431  # incoming data from Simulink
+
+  # Where to send outbound control packets (Simulink UDP Receive block)
+  send_host: "192.168.7.5"
+  send_port: 5431
+  # Port for parameter/tuning packet (deadband, margin, step up/down, v_min)
+  param_port: 5430
+
+# Dashboard web server
+dash:
+  # "0.0.0.0" serves on every interface, so the tablet can still reach the
+  # dashboard when the Speedgoat link is down and its IP is not assigned yet.
+  # Set a single IP here to restrict which network can reach it.
+  host: "0.0.0.0"
+  port: 8050
+
+# Packet definition
+packet:
+  # struct-format string describing the binary layout of a single UDP datagram.
+  # Below: 31 little-endian 32-bit floats (31 × 4 bytes = 124 bytes). Change to "<d" if you use doubles.
+  format: "<31f"
+
+  # Total number of signals contained in one packet (redundant but explicit).
+  size: 31
+
+# Mapping from human-friendly signal names to their 0-based position in the packet.
+# Extend or modify as your Simulink model evolves.
+signals:
+  time: 0
+  treadmill_velocity: 1
+  ankle_angle: 2
+
+  # Plantar pressure sensors (insole), left-aligned indices 3-10
+  pressure_1: 3
+  pressure_2: 4
+  pressure_3: 5
+  pressure_4: 6
+  pressure_5: 7
+  pressure_6: 8
+  pressure_7: 9
+  pressure_8: 10
+
+  # IMU channels
+  imu_1: 11 # accel_x
+  imu_2: 12 # accel_y
+  imu_3: 13 # accel_z
+  imu_4: 14 # yaw
+  imu_5: 15 # pitch
+  imu_6: 16 # roll
+  imu_7: 17 # gyro_x
+  imu_8: 18 # gyro_y
+  imu_9: 19 # gyro_z
+  imu_10: 20 # raw_accel_x
+  imu_11: 21 # raw_accel_y
+  imu_12: 22 # raw_accel_z
+
+  gait_percentage: 23
+  shifted_angle_moment: 24
+  actual_torque: 25
+  heel_strike: 26
+  assistance_level: 27
+  demand_torque: 28
+  statusword: 29
+  sync: 30
+
+# Plausibility checks applied to every incoming value (network.py _build_decoder).
+# A value that is NaN/Inf or outside [min, max] is shown as a gap in its own
+# trace and counted on the health lamp of its group (IMU / FSR / Drive / Packets).
+# A packet whose time is rejected is dropped as a whole.
+# Signals not listed here only need to be finite. "*" matches several names.
+validation:
+  ranges:
+    time: [0, 1.0e7]                 # s, model time
+    treadmill_velocity: [-1, 5]      # m/s
+    ankle_angle: [-180, 180]         # deg
+    "pressure_*": [-50, 5000]        # FSR (live values ~3-11)
+    imu_1: [-16, 16]                 # accel_x, g
+    imu_2: [-16, 16]                 # accel_y, g
+    imu_3: [-16, 16]                 # accel_z, g
+    imu_4: [-3.5, 3.5]               # yaw, rad (live stream shows +/-pi)
+    imu_5: [-3.5, 3.5]               # pitch, rad
+    imu_6: [-3.5, 3.5]               # roll, rad
+    imu_7: [-35, 35]                 # gyro_x, rad/s (2000 dps range)
+    imu_8: [-35, 35]                 # gyro_y, rad/s
+    imu_9: [-35, 35]                 # gyro_z, rad/s
+    imu_10: [-16, 16]                # raw_accel_x
+    imu_11: [-16, 16]                # raw_accel_y
+    imu_12: [-16, 16]                # raw_accel_z
+    actual_torque: [-200, 200]       # Nm
+    demand_torque: [-200, 200]       # Nm
+    statusword: [0, 65535]
+
+# ---- AFO web app ----
+paths:
+  afo_root: "C:/Users/Andy/Desktop/AFO"
+  firmware_repo: "C:/Users/Andy/Desktop/AFO/git/Ankle-Foot-Orthosis"
+  arduino_cli: "C:/Users/Andy/AppData/Local/Programs/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe"
+  cache_dir: "cache"            # relative to this folder
+  log_dir: "logs"
+  matlab_paths: ["matlab", "C:/Users/Andy/Desktop/AFO/git/Ankle-Foot-Orthosis/host_tools/matlab"]
+
+live:
+  # The old GUI showed made-up sine waves when the target did not answer a
+  # ping. In the lab app that could be mistaken for data, so it is off.
+  fake_data_when_offline: false
+
+# Training-data stream from the Speedgoat (layout v1 from the Simulink thread).
+# Received by training_worker.py in its own process; not shown on the Live page.
+# Its cmd_* / param_* columns are the commands actually latched in the model and
+# are used as the authoritative command readback (commands.py).
+training:
+  enabled: true
+  listen_host: "0.0.0.0"
+  layout: "config/training_udp_layout.json"   # port, format and columns come from here
+
+session:
+  # Target access hold (2026-11-19): session values are saved and shown as pending,
+  # never written to the Speedgoat, until this is set to true on purpose.
+  target_writes_enabled: false
+
+commands:
+  # The 5 Parameters (epsilon up/down, step up/down, v_min) go out as '<5f' to
+  # udp.param_port (5430). As of 2026-11-19 no block in AFO.slx reads them and the
+  # model's receiver expects 6 singles, so the UI greys them out. Packet format is
+  # unchanged until it is decided in the Simulink thread.
+  params_used_by_model: false
+  # training-stream column that echoes each parameter (cols 45-49 = raw param floats 0..4)
+  param_echo_columns:
+    epsilon_up: param_epsilon_up
+    epsilon_down: param_epsilon_down
+    step_up: param_step_up
+    step_down: param_step_down
+    v_min: param_v_min

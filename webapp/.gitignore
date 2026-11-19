@@ -1,0 +1,15 @@
+# Ignore compiled Python files
+*.pyc
+
+# Ignore Python cache directories
+__pycache__/
+
+# Ignore log files
+# AFO web app runtime files
+cache/
+logs/
+test/e2e/
+__pycache__/
+*.pyc
+data/
+test/*_console.txt
