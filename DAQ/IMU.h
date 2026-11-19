@@ -432,6 +432,55 @@ void YEIsetStreamingMode(HardwareSerial& serial, uint8_t slot1, uint8_t slot2, u
   delay(YEI_DELAY_AFTER_COMMAND);
 }
 
+// ---------------------------------------------------------------------------
+// Byte-slip protection (2026-11-19).
+// Replies carry no header or checksum (see YEIsettingsHeader), so the 52 bytes
+// read below are trusted blindly. A stray byte on the RX line (touching the IMU
+// pins) used to shift every later packet for good: the data was garbage
+// (NaN, +/-1e38), yet each packet was "complete", so lastIMUDataTime kept being
+// refreshed and the 0.2 s watchdog never re-initialised the IMU.
+// Now: (1) stale RX bytes are dropped before every request, (2) a request with
+// no full reply in YEI_REQUEST_TIMEOUT_US is abandoned and re-sent, and
+// (3) every packet is sanity-checked before it replaces the last good one.
+// ---------------------------------------------------------------------------
+#define YEI_REQUEST_TIMEOUT_US 10000UL   // reply normally lands within ~3 ms of the request
+uint32_t imu_req_t = 0;                  // micros() when the pending request was sent
+volatile uint32_t yeiBadPackets = 0;      // replies rejected by YEIpacketLooksValid()
+volatile uint32_t yeiRequestTimeouts = 0; // requests abandoned without a full reply
+
+// Drop whatever is waiting in the RX buffer (stale bytes, noise, a partial reply).
+static inline void YEIdrainRx(HardwareSerial& serial)
+{
+  while (serial.available() > 0) {
+    serial.read();
+  }
+}
+
+static inline bool yeiFinite(float v)
+{
+  return (v == v) && (v < 1.0e30f) && (v > -1.0e30f);  // rejects NaN, +/-Inf and +/-1e38 junk
+}
+
+// Plausibility check of one decoded packet. Units: quaternion (unit norm),
+// accelerations in g (range set to 24 g in setupIMU), gyro in rad/s (2000 dps = 34.9 rad/s).
+bool YEIpacketLooksValid(const structStreamingData& d)
+{
+  const float f[13] = {d.acc.r_ax, d.acc.r_ay, d.acc.r_az,
+                       d.gyro.wx, d.gyro.wy, d.gyro.wz,
+                       d.lAcc.ax, d.lAcc.ay, d.lAcc.az,
+                       d.q.qw, d.q.qx, d.q.qy, d.q.qz};
+  for (uint8_t i = 0; i < 13; ++i) {
+    if (!yeiFinite(f[i])) return false;
+  }
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (fabsf(f[i]) > 25.0f) return false;      // corrected accelerometer [g]
+    if (fabsf(f[3 + i]) > 36.0f) return false;  // gyro [rad/s]
+    if (fabsf(f[6 + i]) > 25.0f) return false;  // linear acceleration [g]
+  }
+  const float n2 = d.q.qw * d.q.qw + d.q.qx * d.q.qx + d.q.qy * d.q.qy + d.q.qz * d.q.qz;
+  return (n2 > 0.81f) && (n2 < 1.21f);          // |q| within 0.9 .. 1.1
+}
+
 // Polling mode
 // Returns true only when a complete, valid packet was parsed this call.
 bool YEIgetStreamingBatch(unionStreamingData& uStreamingDataIMU1)
@@ -440,8 +489,13 @@ bool YEIgetStreamingBatch(unionStreamingData& uStreamingDataIMU1)
   int bIMU = 0;
 
   if (!write_command_sent) {
+    // A new reply is requested only after the previous one was consumed, so any
+    // byte still waiting here is stale or noise: drop it so the reply starts at
+    // byte 0 of tmpBuf. This alone re-aligns the stream on every poll.
+    YEIdrainRx(IMU1);
     YEIwriteCommandNoDelay(IMU1, CMD_GET_STREAMING_BATCH);
     write_command_sent = 1;
+    imu_req_t = micros();
   }
 
   // Bounded wait for the rest of the packet to arrive (max ~800 us)
@@ -475,15 +529,37 @@ bool YEIgetStreamingBatch(unionStreamingData& uStreamingDataIMU1)
     uint8_t tmpBuf[sizeof(uStreamingDataIMU1)];
     size_t readCount = IMU1.readBytes(tmpBuf, nPacketStreamingData);
     if (readCount == (size_t)nPacketStreamingData) {
+      // Decode into a temporary first; the caller's packet (the last good one,
+      // which is what goes out on EtherCAT) is only replaced by a valid packet.
+      unionStreamingData candidate;
       for (int i = 0; i < nPacketStreamingData; ++i) {
-        uStreamingDataIMU1.vData[nPacketStreamingData - i - 1] = tmpBuf[i];
+        candidate.vData[nPacketStreamingData - i - 1] = tmpBuf[i];
       }
       write_command_sent = 0;
+      if (!YEIpacketLooksValid(candidate.sData)) {
+        // Misaligned or corrupted: keep the last good values, drop the rest of
+        // this reply, and let the next poll re-request. lastIMUDataTime is not
+        // refreshed (we return false), so if it stays bad for 0.2 s the
+        // existing watchdog in loop() still re-initialises the IMU.
+        yeiBadPackets++;
+        YEIdrainRx(IMU1);
+        return false;
+      }
+      uStreamingDataIMU1.sData = candidate.sData;
       return true;   // a complete, valid packet was parsed
     }
   }
 
-  return false;      // no complete packet available this call
+  // Lost or late reply (e.g. a dropped byte leaves 51 bytes forever): give up
+  // on this request after YEI_REQUEST_TIMEOUT_US and ask again, instead of
+  // waiting for the 0.2 s watchdog re-init.
+  if (write_command_sent && (uint32_t)(micros() - imu_req_t) > YEI_REQUEST_TIMEOUT_US) {
+    yeiRequestTimeouts++;
+    YEIdrainRx(IMU1);
+    write_command_sent = 0;
+  }
+
+  return false;      // no complete valid packet this call
 }
 
 
