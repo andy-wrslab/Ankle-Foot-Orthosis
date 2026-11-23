@@ -293,7 +293,8 @@ button.drive-badge:hover { filter: brightness(.96); }
 .tb-field { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--text-3); }
 .tb-field .input { height: 28px; padding: 0 8px; font-size: var(--fs-12); }
 .tb-field #sPart { width: 56px; }
-.tb-field #sMass, .tb-field #sGear { width: 44px; text-align: right; }
+.tb-field #sMass, .tb-field #sGear { width: 44px; }
+.tb-field #sMass { text-align: center; }   /* centred like #sPart (Andy 14:57) */
 .input.sent-flash { border-color: var(--accent); transition: border-color 600ms var(--ease); }
 .input.send-error { border-color: var(--alarm); }
 /* held value, not sent yet (not an error): amber, distinct from the red send error */
@@ -471,6 +472,8 @@ button.drive-badge:hover { filter: brightness(.96); }
 .btn.act.lit, .btn.act.lit:hover { background: var(--text); border-color: var(--text); color: #fff; }
 .btn.act.pressed { background: var(--surface-2); transform: translateY(1px); }
 .btn.act.lit.pressed { opacity: .85; }
+/* Calibrate IMU / Reset SV (Andy 15:22 "like black when holding on it"): dark only while held */
+.btn.act.momentary:active:not(:disabled):not([aria-disabled="true"]) { background: var(--text); border-color: var(--text); color: #fff; }
 
 /* ---------- Tables (Trials, Signals list) ------------------------------ */
 .table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
@@ -658,10 +661,11 @@ button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:fo
    tick labels and is taller by exactly that height, so every drawing area is the same size */
 #page-live .plot-card { flex: 1 1 0px; }
 #page-live .plot-card#torqueCard, #page-live .plot-card:has(#torque) { flex: 1 1 0px; }
-#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 26px; }
+/* equal cards: every plot reserves the same x-axis band (live_uplot X_AXIS_H), empty on the top ones */
+#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 0px; }
 .sensor-grid { display: flex; flex-direction: column; }
 .sensor-grid .plot-card { flex: 1 1 0px; }
-.sensor-grid .plot-card:has(#imu) { flex: 1 1 26px; }
+.sensor-grid .plot-card:has(#imu) { flex: 1 1 0px; }
 #page-live .plot-body { padding-top: var(--sp-2); }
 /* entries centred in their boxes (Andy 14:57): ID, Mass, K %, Advanced */
 #sPart, #sMass, #kPct, .k-field .input, .adv-sec .input, .adv-grid .input, .adv-in { text-align: center; }

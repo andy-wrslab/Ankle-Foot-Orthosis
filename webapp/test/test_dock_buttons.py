@@ -181,6 +181,10 @@ def page():
     check("page: dock render goes through AFODockActions.render", "AFODockActions.render({zero: $('bZero')" in js)
     css = open(os.path.join(APP, "assets", "afo-ui.css"), encoding="utf-8").read()
     check("css: lit and pressed styles for the dock buttons", ".btn.act.lit" in css and ".btn.act.pressed" in css)
+    check("Calibrate IMU / Reset SV momentary: dark only while held (:active), no pressed tint, never lit",
+          'class="btn act momentary" id="bImuCal"' in js and 'class="btn act momentary" id="bResetSV"' in js
+          and ".btn.act.momentary:active" in css and "!b.classList.contains('momentary')" in js
+          and "lit: false, locked: !ic.enabled" in da and "ic.state === 'busy'" not in da)
     if os.name != "nt":
         print("skip: JScript harness needs Windows (cscript)")
         return

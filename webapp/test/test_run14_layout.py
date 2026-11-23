@@ -4,7 +4,8 @@ and round1\\console_udp_layout.json EXACTLY. Seconds, no browser, no app server,
 - 5434 packet: 32 bytes, '<8f', magic 4134, version 1, field order as in the JSON;
 - 5433: the layout's 'column' key (no 'index'), '<18f'; the receiver parses 18 floats (and
   still 12 / 15) with cols 12-17 bif_valid, bif_cal_progress, bif_bias_ready,
-  gyro_cal_request, settings_seq, bif_mass_kg; config/console_udp_layout.json = round1 copy;
+  gyro_cal_request, settings_seq, bif_mass_kg (pinned copies in test/fixtures since run 15
+  replaced the round1 files; config/ now parses 12 / 15 / 18 / 31, see test_run15_layout);
 - a side or mass press carries the ECHOED gyro_cal_request unchanged (any change re-runs
   the 5 s gyro bias), also after the device counter moved; only Calibrate IMU sends
   echoed + 1; nothing remembered is ever sent;
@@ -32,6 +33,7 @@ import udp_settings as U  # noqa: E402
 
 ROUND1 = os.path.join(os.path.dirname(APP), "round1") if os.path.isdir(os.path.join(os.path.dirname(APP), "round1")) \
     else r"C:\Users\Andy\Desktop\AFO\round1"
+FIX = os.path.join(HERE, "fixtures")      # the run-14 layouts, pinned (round1 now has run 15)
 FAILS = []
 
 
@@ -42,7 +44,7 @@ def check(name, cond, got=None):
 
 
 def settings_packet():
-    lay = json.load(open(os.path.join(ROUND1, "settings_udp_layout.json"), encoding="utf-8"))
+    lay = json.load(open(os.path.join(FIX, "run14_settings_udp_layout.json"), encoding="utf-8"))
     names = [f["name"] for f in sorted(lay["fields"], key=lambda f: f["index"])]
     check("settings layout: '<8f', 32 B, port 5434", lay["format"] == "<8f" and lay["bytes"] == 32 and lay["port"] == 5434, lay)
     check("settings layout: field order", names == ["magic", "version", "seq", "side", "body_mass_kg", "assist_mode",
@@ -85,7 +87,7 @@ def settings_packet():
 
 
 def console_parse():
-    lay = json.load(open(os.path.join(ROUND1, "console_udp_layout.json"), encoding="utf-8"))
+    lay = json.load(open(os.path.join(FIX, "run14_console_udp_layout.json"), encoding="utf-8"))
     cols = lay["columns"]
     check("console layout: '<18f', 'column' key and no 'index'", lay["format"] == "<18f" and all("column" in c and "index" not in c for c in cols)
           and len(cols) == 18, lay["format"])
@@ -93,9 +95,10 @@ def console_parse():
     check("console layout: cols 12-17", names[12:] == ["bif_valid", "bif_cal_progress", "bif_bias_ready", "gyro_cal_request",
                                                        "settings_seq", "bif_mass_kg"], names[12:])
     cfg_lay = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
-    check("config/console_udp_layout.json is the round1 layout", cfg_lay == lay)
+    cfg_names = [c["name"] for c in sorted(cfg_lay["columns"], key=lambda c: c["column"])]
+    check("config/console_udp_layout.json keeps the run-14 columns 0-17 unchanged", cfg_names[:18] == names, cfg_names[:18])
     import training_worker as TW
-    _, tw_names = TW.load_layout(os.path.join(APP, "config", "console_udp_layout.json"))
+    _, tw_names = TW.load_layout(os.path.join(FIX, "run14_console_udp_layout.json"))
     check("receiver reads the 'column' key in order", tw_names == names, tw_names)
     out_q = Q.Queue()
     stop = threading.Event()

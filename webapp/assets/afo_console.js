@@ -162,9 +162,9 @@
         '<span class="spacer"></span>' +
         '<div class="actions">' +
           '<button class="btn act" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
-          '<button class="btn act" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
+          '<button class="btn act momentary" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
           '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
-          '<button class="btn act" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
+          '<button class="btn act momentary" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
         '</div>';
     }
 
@@ -473,11 +473,27 @@
             gear.title = (gs === 'pending' || gs === 'error') ? (sv.status_msg.bif_mass || 'Not sent') :
                 low ? 'Target has ' + (+rb) + ' kg: the Bi-LSTM gives no assist until this is more than 20 kg' : '';
         }
-        var advOn = !!(st.target && st.target.connected);
+        // run 15 (31-float echo): the values in use come from the echo (no MATLAB connection
+        // needed); read-only (disabled, no hint) until the 5435 sender is there
+        var av = sv.adv || {}, advUdp = !!av.udp;
+        var advOn = advUdp || !!(st.target && st.target.connected);
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (document.activeElement === inp || S.editing['adv-' + inp.getAttribute('data-k')]) { return; }
             var k = inp.getAttribute('data-k'), v = sv.values[k];
-            if (v == null && sv.readback && sv.readback[k] != null) { v = sv.readback[k]; }
+            if (advUdp) {
+                var sending = sv.status[k] === 'sending' && v != null;
+                v = sending ? v : (sv.readback || {})[k];
+                var ro = !av.send || !!av.frozen;
+                inp.disabled = ro; inp.readOnly = ro || inp.hasAttribute('readonly');
+                inp.classList.remove('adv-stale');
+                var tu = v == null ? '' : String(+v); if (inp.value !== tu) { inp.value = tu; }
+                var su = sv.status[k];
+                inp.classList.toggle('send-error', su === 'error' && !ro);
+                inp.classList.toggle('send-pending', su === 'sending' && !ro);
+                inp.title = av.frozen ? (av.msg || '') : (su === 'error' && !ro) ? (sv.status_msg[k] || 'Not sent') : '';
+                return;
+            }
+            if (inp.disabled) { inp.disabled = false; }
             var last = (sv.adv_last || {})[k];
             if (!advOn) {
                 // not connected: the last values read, greyed; "–" if never read (Connect is on Trials)
@@ -904,8 +920,8 @@
             var b = $(id);
             if (!b || b.disabled) { return; }
             if (b.getAttribute('aria-disabled') === 'true') { dockMsg(b.title, true); return; }
-            if (id === 'bImuCal' && b.classList.contains('lit')) { return; }    // running: wait for IMU ready
-            if (window.AFODockActions) { AFODockActions.press(b, Date.now()); }
+            // toggles: a brief pressed tint; IMU / Reset SV: dark only while held (CSS :active)
+            if (window.AFODockActions && !b.classList.contains('momentary')) { AFODockActions.press(b, Date.now()); }
             post(url, body).then(function (r) {
                 if (!r.ok) { dockMsg(r.msg, true); }
                 else if (r.state === 0 || r.state === 1) { b.classList.toggle('lit', r.state === 1); }

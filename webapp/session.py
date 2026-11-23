@@ -293,6 +293,14 @@ class SessionSetup:
 
     def enter_value(self, key: str, value: Any) -> str:
         """A committed edit of a number or mode field (not the side)."""
+        if key in self.ADV_ECHO_COL and self.adv_echo():
+            # run 15: Advanced goes over 5435 only (never setparam); no S-ID needed
+            sp = self.spec(key)
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                return f"{sp['label']}: not a number"
+            return self._send(key, v)
         if not self.sid:
             return "Set the S-ID first."
         self.entered.add(key)
@@ -512,6 +520,17 @@ class SessionSetup:
             return f"{sp['label']}: sending…"
         if lk is not None and key == "bif_mass":
             return f"{sp['label']}: follows Body mass (5434)"
+        if key in self.ADV_ECHO_COL and self.adv_echo():
+            alk = self.adv_send_link()
+            if alk is None:
+                self.status[key] = {"state": "error", "msg": self.ADV_READONLY_MSG, "at": time.time()}
+                return f"{sp['label']}: {self.ADV_READONLY_MSG}"
+            r = alk.press(self.ADV_ECHO_COL[key], value)
+            if not r.get("ok"):
+                self.status[key] = {"state": "error", "msg": r.get("msg") or "not sent", "at": time.time()}
+                return f"{sp['label']}: {r.get('msg')}"
+            self.audit("udp set", f"{key}={value:g} (5435)")
+            return f"{sp['label']}: sending…"
         tp = self.target_path(key)
         if tp is None:
             self.status[key] = {"state": "error", "msg": f"no block for {key} in model {self.model()}", "at": time.time()}
@@ -575,7 +594,7 @@ class SessionSetup:
         return self.REFUSED_ELSEWHERE if m == self.ELSEWHERE_MSG else ("Target refused: " + m)
 
     def _put(self, key: str, value, src: str) -> None:
-        if src == "getparam" and key in self.advanced_keys():
+        if src in ("getparam", "echo") and key in self.advanced_keys():
             self.adv_last[key] = {"value": value, "at": time.time()}     # survives a disconnect
         self.readback[key] = value
         self.readback_src[key] = src
@@ -594,6 +613,24 @@ class SessionSetup:
     # (the root constant BIF_mass_kg stays 0: the UDP settings override it inside the model)
     ECHO18_COL = {"bif_mass": "bif_mass_kg"}
     ECHO_ONLY_KEYS = ("side", "weight", "bif_mass", "mode", "k_percent")
+    # run 15 (31-float echo): the 11 Advanced values in use = 5433 cols 18-28, in the order of
+    # round1/settings_adv_udp_layout.json; col 29 adv_seq; col 30 spring stiffness is ignored
+    ADV_ECHO_COL = {"sv_target_min": "sv_target_min", "sv_target_max": "sv_target_max",
+                    "target_step_up": "target_step_up", "target_step_down": "target_step_down",
+                    "window_up": "step_up_window", "window_down": "step_down_window",
+                    "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
+                    "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff"}
+    ADV_READONLY_MSG = "Advanced is read-only on this build (sending over UDP 5435 comes next)"
+
+    def adv_echo(self, echo: Optional[Dict[str, Any]] = None) -> bool:
+        """Run 15: the fresh 5433 echo carries the Advanced values (31 floats, adv_seq)."""
+        e = self.echo() if echo is None else echo
+        return e.get("adv_seq") is not None and all(e.get(c) is not None for c in self.ADV_ECHO_COL.values())
+
+    def adv_send_link(self):
+        """The 5435 Advanced sender when the device speaks it, else None."""
+        lk = getattr(self.ctx, "adv_link", None)
+        return lk if lk is not None and lk.active() else None
 
     def refresh_echo(self) -> None:
         """The cheap part of refresh_readback (no MATLAB): readbacks from the fresh 5433 echo.
@@ -601,11 +638,21 @@ class SessionSetup:
         echo = self.echo()
         self.echo_port = echo.get("_port")
         udp = self.link() is not None
+        adv = self.adv_echo(echo)
         for sp in self.specs():
             k = sp["key"]
-            col = sp.get("udp") or (self.ECHO18_COL.get(k) if udp else None)
+            col = sp.get("udp") or (self.ECHO18_COL.get(k) if udp else None) or (self.ADV_ECHO_COL.get(k) if adv else None)
             if col and echo.get(col) is not None:
                 self._put(k, echo[col], "echo")
+                if adv and k in self.ADV_ECHO_COL:
+                    # run 15: the page adopts the device's Advanced values (nothing is sent); a
+                    # value held for "after Start" from a run-14 session is dropped, never setparam'd
+                    with self.lock:
+                        self.values[k] = float(echo[col])
+                        self.src[k] = "adopted31"
+                        self.entered.discard(k)
+                        if (self.status.get(k) or {}).get("state") == "pending":
+                            self.status.pop(k, None)
             elif self.readback_src.get(k) == "echo" or (udp and k in self.ECHO_ONLY_KEYS):
                 # echo gone (stream stopped / other model), or a getparam leftover on run 14:
                 # drop it (run <= 13: getparam takes over)
@@ -624,6 +671,8 @@ class SessionSetup:
         mass / BIF / mode / K / Gyro_Cal: those come from the echo); runs <= 13 everything
         without a fresh echo."""
         if self.link() is not None:
+            if self.adv_echo():
+                return []                     # run 15: the Advanced values come from the echo too
             return [k for k in self.advanced_keys() if k not in self.ECHO_ONLY_KEYS]
         return [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
 

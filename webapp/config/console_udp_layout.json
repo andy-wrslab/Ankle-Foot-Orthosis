@@ -1,6 +1,6 @@
 {
   "port": 5433,
-  "format": "<18f",
+  "format": "<31f",
   "period_ms": 10,
   "note": "console values not on the main bus; 5431 and 5432 unchanged",
   "columns": [
@@ -129,6 +129,97 @@
       "unit": "kg",
       "description": "body mass in use by the Bi-LSTM (0 = not set yet)",
       "column": 17
+    },
+    {
+      "name": "sv_target_min",
+      "tag": "ADV_SVMin",
+      "unit": "m/s",
+      "description": "min walking-speed target in use (SV_Target_min)",
+      "column": 18
+    },
+    {
+      "name": "sv_target_max",
+      "tag": "ADV_SVMax",
+      "unit": "m/s",
+      "description": "max walking-speed target in use (SV_Target_max)",
+      "column": 19
+    },
+    {
+      "name": "target_step_up",
+      "tag": "ADV_StepUp",
+      "unit": "m/s",
+      "description": "target step up in use (target_speed3)",
+      "column": 20
+    },
+    {
+      "name": "target_step_down",
+      "tag": "ADV_StepDown",
+      "unit": "m/s",
+      "description": "target step down in use (target_speed4)",
+      "column": 21
+    },
+    {
+      "name": "step_up_window",
+      "tag": "ADV_WinUp",
+      "unit": "strides",
+      "description": "step-up window in use (window_length)",
+      "column": 22
+    },
+    {
+      "name": "step_down_window",
+      "tag": "ADV_WinDown",
+      "unit": "strides",
+      "description": "step-down window in use (window_length1)",
+      "column": 23
+    },
+    {
+      "name": "high_assist_level",
+      "tag": "ADV_AssistThr",
+      "unit": "",
+      "description": "high-assist level in use (assist_threshold, 0-10)",
+      "column": 24
+    },
+    {
+      "name": "high_assist_strides",
+      "tag": "ADV_MinCycles",
+      "unit": "strides",
+      "description": "high-assist strides in use (min_cycles)",
+      "column": 25
+    },
+    {
+      "name": "torque_p_gain",
+      "tag": "ADV_P",
+      "unit": "",
+      "description": "torque PI P gain in use",
+      "column": 26
+    },
+    {
+      "name": "torque_i_gain",
+      "tag": "ADV_I",
+      "unit": "",
+      "description": "torque PI I gain in use (a change resets the PI integrator)",
+      "column": 27
+    },
+    {
+      "name": "standing_still_cutoff",
+      "tag": "ADV_PThresh",
+      "unit": "counts",
+      "description": "standing-still cutoff in use (threshold_pressure, pSum range over 0.7 s)",
+      "column": 28
+    },
+    {
+      "name": "adv_seq",
+      "tag": "ADV_Seq",
+      "unit": "",
+      "description": "seq of the last accepted 5435 Advanced packet (0 = none yet)",
+      "column": 29
+    },
+    {
+      "name": "spring_stiffness",
+      "tag": "ADV_Spring",
+      "unit": "N*m/deg",
+      "description": "spring stiffness (Spring Constant Nm/deg), read-only",
+      "column": 30
     }
   ]
 }

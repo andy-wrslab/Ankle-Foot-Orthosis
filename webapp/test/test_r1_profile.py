@@ -100,7 +100,8 @@ def profile_checks():
 
 
 def replay_checks():
-    lay, names = load_layout(os.path.join(APP, "config", "console_udp_layout.json"))
+    # the 12-float run-12 layout, pinned (config/ moved on to 18, then 31 floats)
+    lay, names = load_layout(os.path.join(HERE, "fixtures", "run12_console_udp_layout.json"))
     check("layout is 12 floats", lay["format"] == "<12f" and len(names) == 12, lay["format"])
     lay["port"] = PORT
     tmpd = tempfile.mkdtemp(prefix="afo_r1_console_")

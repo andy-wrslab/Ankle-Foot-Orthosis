@@ -8,6 +8,8 @@ the next valid packet. Echo at 100 Hz to 127.0.0.1:<console_port> (test: 15433),
 the 12 base console columns + bif_valid, bif_cal_progress, bif_bias_ready +
 gyro_cal_request, last accepted seq, bif_mass_kg. stall(s) stops the echo for s seconds;
 n_floats=15 sends the run-13 packet instead (no settings columns, 5434 ignored).
+n_floats=31 is run 15: + cols 18-28 the 11 Advanced values in use (order of
+round1/settings_adv_udp_layout.json), 29 adv_seq, 30 spring_stiffness (self.adv / adv_seq / spring).
 """
 import socket
 import struct
@@ -17,6 +19,10 @@ import time
 BASE = ["t_model", "side", "weight_kg", "assist_mode", "fixed_k_pct", "cmd_motor", "cmd_assist", "cmd_k",
         "cmd_calibrate_pressure", "cmd_reset_sv", "imu_ok", "imu_bad_count",
         "bif_valid", "bif_cal_progress", "bif_bias_ready", "gyro_cal_request", "settings_seq", "bif_mass_kg"]
+ADV_FIELDS = ["sv_target_min", "sv_target_max", "target_step_up", "target_step_down", "step_up_window",
+              "step_down_window", "high_assist_level", "high_assist_strides", "torque_p_gain", "torque_i_gain",
+              "standing_still_cutoff"]
+ADV_DEFAULTS = [0.8, 1.5, 0.04, 0.08, 20.0, 10.0, 9.0, 10.0, 0.6, 0.8, 200.0]
 
 
 class FakeRun14:
@@ -27,6 +33,9 @@ class FakeRun14:
         self.n = n_floats
         self.v = {"side": side, "mass": mass, "mode": mode, "k": k, "gyro": gyro, "seq": seq,
                   "motor": motor, "assist": assist, "kk": kk}
+        self.adv = dict(zip(ADV_FIELDS, ADV_DEFAULTS))     # run 15: Advanced values in use
+        self.adv_seq = 0.0
+        self.spring = 1.25                                 # read-only, echoed as col 30
         self.received = []        # (time, tuple) of every packet that arrived
         self.accepted = 0
         self.ignored = 0
@@ -79,6 +88,7 @@ class FakeRun14:
         t = 20.0 + (time.time() - self.t0)
         row = [t, v["side"], v["mass"], v["mode"], v["k"], v["motor"], v["assist"], v["kk"], 0.0, 0.0, 1.0, 0.0,
                1.0, 1.0, 1.0, v["gyro"], v["seq"], v["mass"]]
+        row += [self.adv[f] for f in ADV_FIELDS] + [self.adv_seq, self.spring]
         return row[:self.n]
 
     def _tx_loop(self):
@@ -101,6 +111,7 @@ class FakeRun14:
         """Start reloads the app: side -1, mass 0 until the next valid packet."""
         with self.lock:
             self.v["side"], self.v["mass"], self.v["gyro"], self.v["seq"] = -1.0, 0.0, 0.0, 0.0
+            self.adv, self.adv_seq = dict(zip(ADV_FIELDS, ADV_DEFAULTS)), 0.0     # build values again
 
     def stall(self, seconds):
         self._stall_until = time.time() + seconds

@@ -20,6 +20,9 @@ the old way.
 
 Run 14 (UDP settings, '<18f'): 3 more after those, cols 15-17 = gyro_cal_request in
 use, last accepted 5434 seq, bif_mass_kg in use (RUN14_TAIL).
+Run 15 (Advanced over UDP 5435, '<31f'): 13 more, cols 18-28 = the 11 Advanced values in
+use (order of round1/settings_adv_udp_layout.json), 29 adv_seq, 30 spring_stiffness
+(read-only; the page ignores it) (RUN15_TAIL). Any layout parses 12, 15, 18 and 31 floats.
 
 Sends ("hb", status) 20 times a second: rates, counters, the latest valid row as
 {name: value} and its age. Answers ("data", names, window_s) requests with the
@@ -51,6 +54,10 @@ DEFAULT_TAIL = ["bif_valid", "bif_cal_progress", "bif_bias_ready"]
 # run 14 (UDP settings 5434): 3 more floats, cols 15-17 = gyro_cal_request in use, last
 # accepted 5434 seq (0 = none), bif_mass_kg in use (0 = unset) -> '<18f'
 RUN14_TAIL = ["gyro_cal_request", "settings_seq", "bif_mass_kg"]
+# run 15 (Advanced over UDP 5435): 13 more floats, cols 18-30 -> '<31f'
+RUN15_TAIL = ["sv_target_min", "sv_target_max", "target_step_up", "target_step_down", "step_up_window",
+              "step_down_window", "high_assist_level", "high_assist_strides", "torque_p_gain", "torque_i_gain",
+              "standing_still_cutoff", "adv_seq", "spring_stiffness"]
 
 
 def load_layout(path):
@@ -91,28 +98,30 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     # those last columns are an optional tail, so 12-float packets of older builds
     # still parse (base = the first 12 columns).
     opt = list(lay.get("optional_columns") or DEFAULT_TAIL)
-    # run 14 layout ('<18f', round1/console_udp_layout.json): base 12 + both tails
-    if (len(names) > len(opt) + len(RUN14_TAIL) and names[-len(RUN14_TAIL):] == RUN14_TAIL
-            and names[-len(RUN14_TAIL) - len(opt):-len(RUN14_TAIL)] == opt
-            and fmt.format.startswith("<") and fmt.format.endswith("f")):
-        names = names[:-len(RUN14_TAIL)]
+    tails = [opt, RUN14_TAIL, RUN15_TAIL]
+    # a longer layout (15 / 18 / 31 columns) = base 12 + the known tails: strip them from the
+    # end (outermost first), so every shorter packet of an older build still parses
+    if fmt.format.startswith("<") and fmt.format.endswith("f"):
+        for tl in reversed(tails):
+            if len(names) > len(tl) and names[-len(tl):] == tl:
+                names = names[:-len(tl)]
         n = len(names)
         fmt = struct.Struct(f"<{n}f")
-    if len(names) > len(opt) and names[-len(opt):] == opt and fmt.format.startswith("<") and fmt.format.endswith("f"):
-        names = names[:-len(opt)]
-        n = len(names)
-        fmt = struct.Struct(f"<{n}f")
-    tail = [t for t in opt if t not in names]
-    fmt_ext = tail_struct(fmt, tail)
-    if fmt_ext is None:
-        tail = []
-    tail14 = [t for t in RUN14_TAIL if t not in names and t not in tail] if tail else []
-    fmt_ext14 = tail_struct(fmt, tail + tail14) if tail14 else None
-    names = names + tail + tail14        # history rows always carry the tails (NaN when absent)
+    # accepted sizes: base, base + opt, + run 14, + run 15 (each only if the previous one is)
+    added = []
+    sizes = {fmt.size: (fmt, n)}
+    for tl in tails:
+        more = [t for t in tl if t not in names and t not in added]
+        if not more:
+            break
+        sx = tail_struct(fmt, added + more)
+        if sx is None:
+            break
+        added += more
+        sizes[sx.size] = (sx, n + len(added))
+    names = names + added                # history rows always carry the tails (NaN when absent)
     n_all = len(names)
-    n15 = n + len(tail)
-    pad = (float("nan"),) * (len(tail) + len(tail14))
-    pad15 = (float("nan"),) * len(tail14)
+    sizes_txt = " / ".join(str(k) for k in sorted(sizes))
     idx = {nm: i for i, nm in enumerate(names)}
     i_time = idx.get("t_model", 0)
     versioned = "layout_version" in idx and "packet_counter" in idx
@@ -208,9 +217,8 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             st["bind_error"] = None
             sock.settimeout(0.5)
             buf = bytearray(65536)
-            log.info("listening for console packets on %s:%d (%s, %d columns%s%s)", host, port, lay["format"], n,
-                     f", or {n15} with {', '.join(tail)}" if tail else "",
-                     f", or {n_all} with {', '.join(tail14)}" if tail14 else "")
+            log.info("listening for console packets on %s:%d (%s, %d columns; %s floats accepted)", host, port,
+                     lay["format"], n, ", ".join(str(v[1]) for k, v in sorted(sizes.items())))
             try:
                 while not stop_evt.is_set():
                     try:
@@ -219,18 +227,13 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
                         continue
                     except ConnectionResetError:
                         continue
-                    if nbytes == fmt.size:
-                        row, n_used = fmt.unpack_from(buf) + pad, n
-                    elif fmt_ext is not None and nbytes == fmt_ext.size:
-                        row, n_used = fmt_ext.unpack_from(buf) + pad15, n15
-                    elif fmt_ext14 is not None and nbytes == fmt_ext14.size:
-                        row, n_used = fmt_ext14.unpack_from(buf), n_all
-                    else:
+                    hit = sizes.get(nbytes)
+                    if hit is None:
                         st["bad_length"] += 1
-                        rl("len", f"console packet of {nbytes} bytes dropped (expected {fmt.size}"
-                                  + (f" / {fmt_ext.size}" if fmt_ext is not None else "")
-                                  + (f" / {fmt_ext14.size}" if fmt_ext14 is not None else "") + ")")
+                        rl("len", f"console packet of {nbytes} bytes dropped (expected {sizes_txt})")
                         continue
+                    n_used = hit[1]
+                    row = hit[0].unpack_from(buf) + (float("nan"),) * (n_all - n_used)
                     if not accept(row, n_used):
                         continue
                     st["packets_ok"] += 1

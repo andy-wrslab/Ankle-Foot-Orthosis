@@ -57,9 +57,9 @@ check("cal: lit when latched on, never locked", b.cal.classList.contains("lit") 
 A.render(b, st({assist: 1, cal: 0}), t);
 check("cal: unlit when off", !b.cal.classList.contains("lit"), "lit");
 check("cal: label 'Calibrate FSR', no countdown", b.cal.textContent === "Calibrate FSR", b.cal.textContent);
-// 4. Calibrate IMU: lit while running (bias_ready 0), label fixed, not greyed
-A.render(b, st({assist: 0, imu: "busy", imuText: "Hold still 3 s…"}), t);
-check("imu: lit while running, not greyed", b.imu.classList.contains("lit") && b.imu.getAttribute("aria-disabled") === "false" && b.imu.disabled === false,
+// 4. Calibrate IMU: momentary (Andy 15:22): never lit, not driven by bias_ready / busy
+A.render(b, st({assist: 0, imu: "busy", imuText: "Hold still 3 s"}), t);
+check("imu: NOT lit while the recal runs (busy), still pressable", !b.imu.classList.contains("lit") && b.imu.getAttribute("aria-disabled") === "false" && b.imu.disabled === false,
       b.imu.attrs["aria-disabled"]);
 check("imu: label 'Calibrate IMU' while running (no 'Hold still' / countdown)", b.imu.textContent === "Calibrate IMU", b.imu.textContent);
 A.render(b, st({assist: 0, imu: "done", imuText: "IMU ready"}), t);

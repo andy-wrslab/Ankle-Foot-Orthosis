@@ -69,8 +69,14 @@ def spec_and_endpoint():
           and [s["plots"][k]["xlabels"] for k in ("torque", "gait", "press", "imu", "tr-assist", "tr-uc")] ==
           [False, True, False, True, False, True], {k: (v["ylabel"], v["xlabels"]) for k, v in s["plots"].items()})
     css = open(os.path.join(APP, "assets", "afo-ui.css"), encoding="utf-8").read()
-    check("bottom card taller by the x-axis height (26 px)", "#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 26px; }" in css
-          and ".sensor-grid .plot-card:has(#imu) { flex: 1 1 26px; }" in css)
+    check("equal cards (the x-axis band is on every plot, so no taller bottom card)",
+          "#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 0px; }" in css
+          and ".sensor-grid .plot-card:has(#imu) { flex: 1 1 0px; }" in css and "flex: 1 1 26px" not in css)
+    import re as _re
+    ms = [m.group(1) for m in _re.finditer(r"([^{}]*#sMass[^{}]*)\{([^}]*)\}", css) if "text-align" in m.group(2)]
+    check("Mass entry centred like ID (no text-align: right rule left on #sMass)",
+          all("text-align: right" not in _re.search(_re.escape(sel) + r"\{([^}]*)\}", css).group(1) for sel in ms)
+          and ".tb-field #sMass { text-align: center; }" in css, ms)
     live = open(os.path.join(APP, "pages", "live.py"), encoding="utf-8").read()
     check("live cards: no header row (no title / legend chips above the plots)", 'className="card-head"' not in live.split("def _card", 1)[1].split("def layout", 1)[0])
     check("spec: command traces dashed", s["plots"]["torque"]["series"][1]["dash"] == [5, 4]

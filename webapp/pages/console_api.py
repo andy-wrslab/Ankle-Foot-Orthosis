@@ -235,7 +235,10 @@ def console_state(ctx) -> Dict[str, Any]:
                     "adv_last": {k: v["value"] for k, v in getattr(sess, "adv_last", {}).items()},
                     "status": {k: (v or {}).get("state") for k, v in sess.status.items()},
                     "status_msg": {k: (v or {}).get("msg") for k, v in sess.status.items()},
-                    "writes_enabled": sess.writes_enabled},
+                    "writes_enabled": sess.writes_enabled,
+                    # run 15 (31-float echo): Advanced values from the echo; editable only with the
+                    # 5435 sender (until then read-only, no hint)
+                    "adv": _adv_view(ctx)},
         "model": {"name": sess.model(), "label": prof["label"], "bif": bool(prof.get("bif")),
                   "loaded": rc.get("app") or None,
                   "source": ("loaded" if rc.get("app") in sess.models else
@@ -247,6 +250,20 @@ def console_state(ctx) -> Dict[str, Any]:
         "imu_cal": _imu_cal_view(ctx),
         "link": (ctx.settings_link.view() if getattr(ctx, "settings_link", None) is not None else None),
     }
+
+
+def _adv_view(ctx) -> Dict[str, Any]:
+    sess = ctx.session
+    try:
+        udp = bool(sess.adv_echo())
+    except Exception:
+        udp = False
+    lk = sess.adv_send_link() if udp and hasattr(sess, "adv_send_link") else None
+    out = {"udp": udp, "send": lk is not None, "frozen": False, "msg": "", "rules": {}}
+    if lk is not None:
+        v = lk.view()
+        out.update(frozen=bool(v.get("frozen")), msg=v.get("msg") or "", rules=lk.rules_for_page())
+    return out
 
 
 def register(server, ctx) -> None:

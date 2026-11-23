@@ -129,8 +129,12 @@ if (CASE === "hold") {
     check("x tick labels only on the bottom plot (Torque none, Stride velocity '10 s')", vt.join("") === "" && vg[0] === "10 s",
           stringify(vt) + " " + stringify(vg));
     check("vertical grid lines on every plot", optsOf.torque.axes[0].grid.show === true && optsOf.gait.axes[0].grid.show === true, "");
-    check("equal drawing areas: the bottom plot is taller by exactly its x-axis height (CSS 26 px)",
-          optsOf.gait.axes[0].size - optsOf.torque.axes[0].size === 26, optsOf.gait.axes[0].size + " - " + optsOf.torque.axes[0].size);
+    check("equal drawing areas: the same x-axis band on every plot (empty on the top one), equal cards",
+          optsOf.gait.axes[0].size === optsOf.torque.axes[0].size && optsOf.gait.axes[0].size === 30 &&
+          (!optsOf.press || optsOf.press.axes[0].size === optsOf.imu.axes[0].size), optsOf.gait.axes[0].size + " / " + optsOf.torque.axes[0].size);
+    check("y labels 16 px medium in a 24 px band on every plot (Andy 15:21)", /^500 16px/.test(optsOf.torque.axes[1].labelFont)
+          && optsOf.torque.axes[1].labelSize === 24 && optsOf.gait.axes[1].labelSize === 24 && optsOf.gait.axes[1].labelFont === optsOf.torque.axes[1].labelFont,
+          optsOf.torque.axes[1].labelFont + " " + optsOf.torque.axes[1].labelSize);
     check("same y gutter + label width on every plot", optsOf.torque.axes[1].size + optsOf.torque.axes[1].labelSize ===
           optsOf.gait.axes[1].size + optsOf.gait.axes[1].labelSize, "");
     check("tick font 13 px", /^13px/.test(optsOf.torque.axes[0].font), optsOf.torque.axes[0].font);

@@ -30,7 +30,8 @@ PORT = 15433
 
 
 def main():
-    lay, names = load_layout(os.path.join(APP, "config", "console_udp_layout.json"))
+    # the 12-float run-12 layout, pinned (config/ moved on to 18, then 31 floats)
+    lay, names = load_layout(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "run12_console_udp_layout.json"))
     lay["port"] = PORT
     tmpd = tempfile.mkdtemp(prefix="afo_console_")
     lp = os.path.join(tmpd, "layout.json")
