@@ -98,6 +98,13 @@ def main():
     top_status(ctx)
     check("no repeated WARNING while it stays", len([l for l in cap.lines if "startup app" in l]) == 1, cap.lines)
 
+    # the startup app's dead drive (fault bit set) must not hide it: it outranks "Drive fault (STO)"
+    ctx.live.readback = lambda: {"t_model": 2.6, "statusword": 0x0628}
+    st = top_status(ctx)
+    check("outranks the red 'Drive fault (STO)' on the button", "drive-fault" in keys(st)
+          and st["text"] == "Speedgoat restarted: AFO_r1 not running (startup app)" and keys(st)[0] == "speedgoat-restarted",
+          (st["text"], keys(st)))
+
     # settings links frozen: nothing sent
     import udp_settings as U
     sent = []

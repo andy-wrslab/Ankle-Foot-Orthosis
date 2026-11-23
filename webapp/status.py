@@ -290,7 +290,11 @@ def top_status(ctx) -> Dict[str, Any]:
     # the oldest silent stream first among the reds
     prio = {"speedgoat-restarted": 0, "speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
             "bif-mass": 5, "imu-not-ready": 6, "calibrating": 7, "bif-unknown": 10}   # "... differs": 9
-    issues.sort(key=lambda i: (0 if i["level"] == "red" else 1, prio.get(i["key"], 9), -(i.get("age_s") or 0)))
+    # the wrong app running explains the rest (a dead drive is expected then): it outranks
+    # every red, e.g. "Drive fault (STO)"
+    first = ("speedgoat-restarted",)
+    issues.sort(key=lambda i: (0 if i["key"] in first else 1, 0 if i["level"] == "red" else 1,
+                               prio.get(i["key"], 9), -(i.get("age_s") or 0)))
     out = dict(base)
     if base["state"] != "busy" and issues:      # a run-control action in progress wins (it pauses data)
         top = issues[0]
