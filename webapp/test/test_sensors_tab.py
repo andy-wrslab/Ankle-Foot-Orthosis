@@ -104,7 +104,7 @@ JSON.stringify((function(){
     card.querySelectorAll('.xtick text').forEach(function(t){ ticks.push(t.textContent); });
   });
   var p = window._afoLastSnapshot || {};
-  return {plots: plots, ticks: ticks, t_latest: p.t_latest};
+  return {plots: plots, ticks: ticks, t_latest: p.t_latest, split: !!(window._afoLive && window._afoLive.splitPending)};
 })())
 """
 
@@ -173,10 +173,20 @@ def main():
             check(f"{tag} sensors: inside bounds, no h-scroll", not s2["out_of_bounds"] and not s2["hscroll"],
                   (s2["out_of_bounds"], s2["hscroll"]))
             # legend click hides / shows
+            names = json.loads(c.js("JSON.stringify(Array.from(document.querySelectorAll('.lg[data-g=press] .lg-n'))"
+                                    ".map(function(e){return e.textContent.trim();}))"))
+            want = ["Hallux (FSR1)", "Heel medial (FSR2)", "Met 1 (FSR3)", "Met 5 (FSR4)", "Arch (FSR5)", "Toes (FSR6)",
+                    "Heel lateral (FSR7)", "Met 3 (FSR8)"]
+            check(f"{tag} pressure legend: FSR1..8 names (Heel medial / Heel lateral)",
+                  [" ".join(n.split()) for n in names] == want, names)
+            wrap = json.loads(c.js("JSON.stringify(Array.from(document.querySelectorAll('.lg[data-g=press]'))"
+                                   ".filter(function(e){var r=e.getClientRects();return r.length>1 || e.scrollWidth>e.clientWidth+1;})"
+                                   ".map(function(e){return e.textContent;}))"))
+            check(f"{tag} pressure legend chips: no wrap / clip", not wrap, wrap)
             c.js("document.querySelector('.lg[data-g=\"press\"][data-k=\"1\"]').click(); 1")
             c.pump(1.0)
             v = json.loads(c.js(STATE_JS))["cards"]["press"]["vis"]
-            check(f"{tag} legend click hides Heel 1", v[1] == "legendonly" and v[0] is True, v)
+            check(f"{tag} legend click hides Heel medial", v[1] == "legendonly" and v[0] is True, v)
             c.js("document.querySelector('.lg[data-g=\"press\"][data-k=\"1\"]').click(); 1")
             c.pump(1.0)
             v = json.loads(c.js(STATE_JS))["cards"]["press"]["vis"]
@@ -198,12 +208,26 @@ def main():
                 c.js("document.getElementById('%s').click(); 1" % btn)
                 c.pump(2.5 if sub == "training" else 1.2)
                 r = json.loads(c.js(ENDS_JS))
+                for _ in range(20):            # Sensors draws a tick over two frames: read a settled one
+                    if not r.get("split"):
+                        break
+                    time.sleep(0.01)
+                    r = json.loads(c.js(ENDS_JS))
                 ends = [e for _, e, _ in r["plots"]]
                 tl = r["t_latest"]
                 check(f"{tag} {sub}: all plots end at one model time", ends and max(ends) - min(ends) <= 0.1,
                       r["plots"])
-                lag = 1.2 if sub == "training" else 0.1   # training refreshes once a second
-                check(f"{tag} {sub}: ends at t_latest (+-{lag} s)", ends and abs(max(ends) - tl) <= lag, (tl, ends))
+                # training refreshes once a second; Sensors draws its 7 plots 5x / s (main thread
+                # budget, test_click_latency), so it may trail the newest sample by one tick
+                lag = 1.2 if sub == "training" else 0.3 if sub == "sensors" else 0.1
+                # training: never below 0, [max(0, t - 2 min), max(2 min, t)] (round 2)
+                want_end = max(120.0, tl) if sub == "training" else tl
+                check(f"{tag} {sub}: ends at {'max(2 min, t)' if sub == 'training' else 't_latest'} (+-{lag} s)",
+                      ends and abs(max(ends) - want_end) <= lag, (tl, ends))
+                if sub == "training":
+                    starts = [s0 for _, _, s0 in r["plots"]]
+                    check(f"{tag} training: starts at max(0, t - 2 min), never negative",
+                          starts and min(starts) >= 0 and abs(max(starts) - max(0.0, tl - 120)) <= lag, (tl, starts))
                 ticks = r["ticks"]
                 check(f"{tag} {sub}: ticks in model seconds", ticks and all(x.endswith(" s") for x in ticks)
                       and max(float(x[:-2].replace("−", "-")) for x in ticks) > 15, ticks[:6])

@@ -202,7 +202,7 @@ def fetch_in_background(cfg, min_age_s: float = 60.0) -> bool:
 
     def _go():
         fetch(cfg)
-        _sources_cache.clear()
+        _refresh_sources(cfg)       # rebuilt here, so the page never waits for a cold read
     _fetch_thread = threading.Thread(target=_go, name="teensy-fetch", daemon=True)
     _fetch_thread.start()       # fetch_state() says running from here on, no gap
     return True
@@ -211,14 +211,49 @@ def fetch_in_background(cfg, min_age_s: float = 60.0) -> bool:
 _sources_cache: Dict[str, Any] = {}
 
 
+_sources_refresh = threading.Lock()
+
+
+def _refresh_sources(cfg) -> Optional[Dict[str, Any]]:
+    """Rebuild the branch list (~20 git calls, ~2 s cold). One rebuild at a time."""
+    if not _sources_refresh.acquire(blocking=False):
+        return None
+    try:
+        v = sources(cfg)
+        _sources_cache.update(v=v, t=time.monotonic())
+        return v
+    finally:
+        _sources_refresh.release()
+
+
 def sources_cached(cfg, max_age_s: float = 10.0) -> Dict[str, Any]:
-    """sources() is ~20 git calls; the page asks every few seconds, so cache it briefly."""
+    """sources() is ~20 git calls; the page asks every few seconds. Stale-while-revalidate:
+    any cached list is returned at once and refreshed in the background when older than
+    *max_age_s*; only the very first call (cache empty) waits for git."""
     hit = _sources_cache.get("v")
-    if hit and time.monotonic() - _sources_cache.get("t", 0) < max_age_s:
+    if hit:
+        if time.monotonic() - _sources_cache.get("t", 0) >= max_age_s and not _sources_refresh.locked():
+            threading.Thread(target=_refresh_sources, args=(cfg,), name="teensy-sources", daemon=True).start()
         return hit
-    v = sources(cfg)
-    _sources_cache.update(v=v, t=time.monotonic())
+    v = _refresh_sources(cfg)
+    if v is None:                  # another thread is building it: wait for that one
+        with _sources_refresh:
+            pass
+        v = _sources_cache.get("v")
+    if v is None:
+        v = sources(cfg)
+        _sources_cache.update(v=v, t=time.monotonic())
     return v
+
+
+def sources_peek() -> Optional[Dict[str, Any]]:
+    """The cached branch list without any git call (None before the first read)."""
+    return _sources_cache.get("v")
+
+
+def warm_sources(cfg) -> None:
+    """Read the branch list in the background at app start, so the Teensy page opens filled."""
+    threading.Thread(target=lambda: sources_cached(cfg), name="teensy-sources-warm", daemon=True).start()
 
 
 def _main_ref(cfg) -> str:
@@ -933,15 +968,14 @@ class PortScanner:
         self._ensure()
 
     def rescan(self) -> None:
-        """Fresh list now. Ignored while a (re)scan is still running (no double scans) or
-        while a flash runs (the loader owns the USB port then)."""
+        """Fresh list now. While a (re)scan is still running (no double scans) or a flash
+        runs (the loader owns the USB port then) no new scan starts, but the press is still
+        recorded, so the page shows "Rescanned … · N Teensy found" once the list settles."""
         self.touch()
-        if FLASHING.is_set():
-            return
         with self._lock:
-            if self._busy_locked():
-                return
             self._rescan_at = time.time()
+            if FLASHING.is_set() or self._busy_locked():
+                return
             self._scan_started = time.time()
             proc = self._proc if self.mode == "watch" else None
             if proc is not None and proc.poll() is None:

@@ -1,6 +1,7 @@
 // Live snapshot stream: ONE EventSource per tab, opened once and kept open.
-// Each message goes into the dcc.Store "es" (data = the raw JSON text), which
-// drives the Live plot clientside callback. Replaces the dash_extensions
+// The first message(s) go into the dcc.Store "es" (data = the raw JSON text), which
+// starts the Live plot clientside callback; that callback installs window._afoLiveMsg,
+// and from then on each message is handed to it directly (no Dash cycle per message). Replaces the dash_extensions
 // EventSource, which re-created its connection on every render (one /events
 // request per message, ~21 per second per tab, and 503s past MAX_CLIENTS).
 // The browser's own retry handles dropped connections; a refused one (e.g. 503,
@@ -12,6 +13,9 @@
     window._afoSse = {opens: 0, messages: 0, errors: 0, dropped_unmounted: 0};
 
     function push(data) {
+        // once the Live callback has set up its handler, messages go straight to it (no Dash
+        // store update + callback per message: ~20 / s); before that, through the store
+        if (typeof window._afoLiveMsg === 'function') { pending = null; window._afoLiveMsg(data); return; }
         // (a dcc.Store has no DOM node, so readiness = Dash's set_props existing)
         var dc = window.dash_clientside;
         if (!dc || !dc.set_props) {

@@ -216,6 +216,13 @@ def e2e():
             except Exception:
                 time.sleep(0.5)
         time.sleep(3)
+        # the newest firmware branch changes as firmware is pushed: read it from the same repo
+        try:
+            newest = tt.sources(cfg)
+            want_sha = next(x["short"] for x in newest["branches"] if x["name"] == newest["newest"])
+        except Exception as exc:
+            want_sha = "?"
+            print("cannot read the firmware repo:", exc)
         b = Browser(19381, 1600, 1000)
         c = b.c
         c.call("Page.navigate", url=BASE + "/teensy")
@@ -226,7 +233,7 @@ def e2e():
               "flash_dis:fb&&fb.disabled,stage:t('ty-job-stage'),last_build:t('ty-build-summary'),last_flash:t('ty-flash-summary'),"
               "fw_last_flash:t('ty-lastflash'),msg:t('ty-flash-msg'),port:t('ty-port'),source:t('ty-source')};})())")
         st0 = json.loads(c.js(rd))
-        check("teensy tab: source preselected", "6f5fa6c" in (st0["source"] or ""), st0)
+        check(f"teensy tab: newest source preselected ({want_sha})", want_sha in (st0["source"] or ""), st0)
         check("teensy tab: Last build / Last flash rows", st0["last_build"] is not None and st0["last_flash"] is not None, st0)
         # double click Build
         c.js("(function(){var b=document.getElementById('ty-build-btn'); b.click(); b.click(); return 1;})()")
@@ -255,7 +262,7 @@ def e2e():
         check("double click -> one build job", len(ids) == 1, ids)
         check("stage line moved through the build", len(stages) >= 2, stages)
         st2 = json.loads(c.js(rd))
-        check("build done: Last build OK row", (st2["last_build"] or "").startswith("OK") and "6f5fa6c" in st2["last_build"], st2)
+        check("build done: Last build OK row", (st2["last_build"] or "").startswith("OK") and want_sha in st2["last_build"], st2)
         check("build done: stage says Build OK", (st2["stage"] or "").startswith("Build OK"), st2)
         if "COM" not in (st2["port"] or ""):
             check("Teensy on USB for the flash part (skipped: no Teensy)", True)
@@ -284,7 +291,7 @@ def e2e():
         # the stand-in uploads nothing, so the board never enters its bootloader: the page must say so
         check("Flash (stand-in): FAILED · board never entered bootloader",
               "Flash FAILED" in (st6["stage"] or "") and "never entered bootloader" in (st6["stage"] or ""), st6)
-        check("Flash: Last flash row FAILED", (st6["last_flash"] or "").startswith("FAILED") and "6f5fa6c" in st6["last_flash"], st6)
+        check("Flash: Last flash row FAILED", (st6["last_flash"] or "").startswith("FAILED") and want_sha in st6["last_flash"], st6)
         check("Flash: Last build row unchanged", st6["last_build"] == st2["last_build"], (st6["last_build"], st2["last_build"]))
         job = json.loads(urllib.request.urlopen(BASE + "/api/status", timeout=5).read())["jobs"]["teensy"]
         check("Flash: the stand-in answered the upload (nothing uploaded)", "FAKE arduino-cli upload" in job["log"],

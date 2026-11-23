@@ -29,6 +29,9 @@ class RunControl:
         self.status = {}
         self.status_at = 0.0
         self.banner = None
+        # last Connect failed (no answer / ping timeout): {"at", "err"}; the status button says
+        # "Speedgoat offline" until Disconnect or a successful connect
+        self.offline = None
 
     def audit(self, action: str, detail: str, ok) -> None:
         path = os.path.join(self.ctx.cfg["paths"]["log_dir"], "run_control.csv")
@@ -46,6 +49,13 @@ class RunControl:
         job.add(json.dumps(res))
         if "connected" in res:
             self.status, self.status_at = res, time.time()
+            if res.get("connected"):
+                self.offline = None
+            if res.get("connected") and res.get("app") and hasattr(self.ctx, "session"):
+                try:
+                    self.ctx.session.remember_app(res.get("app"))
+                except Exception as exc:
+                    job.add(f"remember model failed: {exc}")
             # connected to an app that is already running (or started elsewhere): held side /
             # mass / mode / K % go out now, not at a Start that may never come
             if res.get("connected") and res.get("running") and action != "stop" and hasattr(self.ctx, "session"):
@@ -62,7 +72,18 @@ class RunControl:
                      "stop": "Stopping…", "load": "Loading…", "save": "Exporting…"}.get(action)
             if stage and hasattr(job, "meta"):
                 job.meta["stage"] = stage
-            res = self.call(job, action, *args)
+            if action == "connect":
+                try:
+                    res = self.call(job, action, *args)
+                except Exception as exc:
+                    self.offline = {"at": time.time(), "err": str(exc).strip()[:300] or type(exc).__name__}
+                    raise
+                if not res.get("ok") or not res.get("connected"):
+                    self.offline = {"at": time.time(), "err": str(res.get("err") or "no answer from the target")[:300]}
+            else:
+                res = self.call(job, action, *args)
+            if action == "disconnect":
+                self.offline = None
             if action in ("connect", "start") and res.get("ok") and hasattr(job, "meta"):
                 job.meta["stage"] = "Sending side, mass…"
             ok = bool(res.get("ok"))

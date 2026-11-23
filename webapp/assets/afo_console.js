@@ -354,7 +354,8 @@
                   ['Console UDP', R.console_udp.enabled ? '<span class="mono">' + R.console_udp.rate + '</span>&nbsp;packets/s · ' + R.console_udp.lost + ' lost' +
                       (R.console_udp.rejected ? ' · ' + R.console_udp.rejected + ' rejected' : '') : 'off'],
                   ['Drive statusword', '<span class="mono">' + esc(R.statusword) + '</span>'], ['IMU', esc(R.imu)]];
-        if (st.model) { kv.splice(1, 0, ['Model profile', esc(st.model.label)]); }
+        if (st.model) { kv.splice(1, 0, ['Model profile', esc(st.model.label) +
+            (st.model.source === 'last connect' ? ' <span class="muted">· last connected</span>' : '')]); }
         if (st.bif && st.bif.phase !== 'unknown') { kv.push(['Bi-LSTM', esc(st.bif.text.replace(/^Bi-LSTM: /, '')) + (st.bif.state_text ? ' · ' + esc(st.bif.state_text) : '') +
             (st.bif.source ? ' <span class="hint">(' + esc(st.bif.source) + ')</span>' : '')]); }
         var kvh = kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd>' + x[1] + '</dd>'; }).join('');
@@ -453,8 +454,8 @@
         if (!chip) { return; }
         var sd = st.side, motorOn = st.commands.toggles.motor.value === 1, onLive = S.page === 'live';
         chip.textContent = sd.chip;
-        // the attention style of "? CONFIRM FOOT" only on Live; elsewhere the chip stays quiet
-        chip.className = 'side-chip' + (sd.state === 'confirm' && onLive ? ' unset' : sd.state === 'mismatch' ? ' mismatch' :
+        // the attention style of "? CONFIRM FOOT" only on Live and connected; else the chip stays quiet
+        chip.className = 'side-chip' + (sd.state === 'confirm' && onLive && sd.connected ? ' unset' : sd.state === 'mismatch' ? ' mismatch' :
             sd.state === 'pending' ? ' pending' : '');
         chip.disabled = motorOn;
         chip.title = motorOn ? 'Locked while Motor is on' : 'Foot side on the target';

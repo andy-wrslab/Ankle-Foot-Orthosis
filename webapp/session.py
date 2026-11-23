@@ -152,6 +152,16 @@ class SessionSetup:
         self.app_elsewhere: Optional[float] = None
         self._flushing = False       # flush_pending thread running
         self.configured_model = mp.configured_model(ctx.cfg)
+        # last application read on a successful connect (data/last_model.json): with
+        # target.model auto and the target off, the page keeps that profile (AFO_r1 controls)
+        # instead of falling back to AFO (GPR)
+        self.last_model_path = os.path.join(ctx.app_dir, "data", "last_model.json")
+        self.last_model: Optional[str] = None
+        try:
+            lm = json.load(open(self.last_model_path, encoding="utf-8")).get("app")
+            self.last_model = lm if lm in self.models else None
+        except (OSError, ValueError, AttributeError):
+            pass
         self.profiles: Dict[str, Dict[str, Any]] = {}
         self.events: list = []        # start/stop times of this app session (for exports)
         self._load()
@@ -187,12 +197,29 @@ class SessionSetup:
         return next(s for s in SPECS if s["key"] == key)
 
     def model(self) -> str:
-        """Loaded app when it is a known profile, else config target.model, else AFO."""
+        """Loaded app when it is a known profile, else config target.model (when not auto),
+        else the app of the last successful connect, else AFO."""
         app = (self.ctx.runctl.status or {}).get("app")
         if app in self.models:
             return app
         cm = self.configured_model
-        return cm if cm in self.models else mp.DEFAULT_MODEL
+        if cm in self.models:
+            return cm
+        return self.last_model if self.last_model in self.models else mp.DEFAULT_MODEL
+
+    def remember_app(self, app: Optional[str]) -> None:
+        """A successful connect read *app*: keep it as the offline profile (only when it changes)."""
+        if app not in self.models or app == self.last_model:
+            return
+        old, self.last_model = self.last_model, app
+        try:
+            os.makedirs(os.path.dirname(self.last_model_path), exist_ok=True)
+            tmp = self.last_model_path + ".tmp"
+            json.dump({"app": app, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, open(tmp, "w", encoding="utf-8"))
+            os.replace(tmp, self.last_model_path)
+        except OSError:
+            pass
+        self.audit("model profile", f"{old or '-'} -> {app} (read on connect)")
 
     def profile(self) -> Dict[str, Any]:
         return mp.PROFILES.get(self.model(), mp.PROFILES[mp.DEFAULT_MODEL])

@@ -11,12 +11,22 @@
    ===================================================================== */
 
 /* ---------- Fonts ----------------------------------------------------
-   Offline-safe: put Inter (variable, woff2) and JetBrains Mono woff2 in
-   assets/fonts/. If they are missing the stacks fall back to Segoe UI
-   and Consolas, which every Windows PC has.                           */
-/* Fonts: Inter / JetBrains Mono files are not on the OMEN yet (downloading them needs Andy's
-   OK), so no @font-face here (it only produced 404s). The stacks below fall back to Segoe UI /
-   Cascadia Mono / Consolas; a locally installed Inter or JetBrains Mono is still used. */
+   Bundled, never fetched from the internet (Andy, Nov 23): assets/fonts/
+   Inter 4.1 (rsms/inter release, InterVariable.woff2, weights 100-900) and
+   JetBrains Mono 2.304 (JetBrains/JetBrainsMono release, 400/500/600/700),
+   both SIL OFL 1.1 (licence files next to the fonts). Inter for the UI,
+   JetBrains Mono for numbers, readouts and code. font-display: swap; the
+   stacks fall back to Segoe UI / Consolas if a file is missing.          */
+@font-face { font-family: "Inter"; src: url("fonts/inter/InterVariable.woff2") format("woff2");
+             font-weight: 100 900; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+             font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono/JetBrainsMono-Medium.woff2") format("woff2");
+             font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+             font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono/JetBrainsMono-Bold.woff2") format("woff2");
+             font-weight: 700; font-style: normal; font-display: swap; }
 
 :root {
   /* Neutrals (warm, very low chroma) */
@@ -61,8 +71,8 @@
   --fsr5:#3A8890; --fsr6:#28727A; --fsr7:#1B5B62; --fsr8:#10444A;
 
   /* Type */
-  --font-ui:   "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
-  --font-num:  "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --font-ui:   "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-num:  "JetBrains Mono", Consolas, ui-monospace, monospace;
   --fs-11: 11px;  /* axis ticks, pill text, overline        */
   --fs-12: 12px;  /* labels, units, table header, captions  */
   --fs-13: 13px;  /* body, buttons, nav, table cells        */
@@ -580,3 +590,4 @@ ul.pop-checklist li.done { color: var(--text-2); }
                      display: inline-block; animation: spin .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .ty-stage .ty-spin { animation: none; } }
 .btn.danger.confirming { font-variant-numeric: tabular-nums; }
+#rigKv .muted { color: var(--text-3); font-weight: 400; }

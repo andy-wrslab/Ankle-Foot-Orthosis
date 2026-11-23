@@ -150,7 +150,7 @@ def training_plots() -> list:
 # ---- Live > Sensors (Nov 23): every sensor column of the main bus 5431 -------------
 # FSR names by insole position (configs/gpr_default.yaml on WRSLAB). NOT yet
 # confirmed by Andy (Met 1/3/5 order, which heel is medial): change only here.
-FSR_NAMES = ["Hallux", "Heel 1", "Met 1", "Met 5", "Arch", "Toes", "Heel 2", "Met 3"]   # FSR1..FSR8 = cols 3..10
+FSR_NAMES = ["Hallux", "Heel medial", "Met 1", "Met 5", "Arch", "Toes", "Heel lateral", "Met 3"]   # FSR1..FSR8 = cols 3..10
 
 # eight clearly different hues (FSR traces), readable on the light card
 CATEGORICAL = ["#1F6F78", "#C2702E", "#6E5BA8", "#2E7D4F", "#B5446E", "#4C6EB5", "#8A7A2E", "#3F3F46"]

@@ -1,19 +1,20 @@
-"""Click -> visible feedback with REAL input events while 100 Hz data streams (test ports only).
+"""Click -> visible feedback and main-thread load while the fake target streams at full rate.
 
 App on 127.0.0.1:18050 (AFO_r1, target writes disabled), replay bus 1 kHz -> :15432 and
-console 100 Hz -> :15433. The page's fetch is wrapped (in the page only): the state the
-app returns is shown as connected + running, so Stop is enabled, and every POST to
-/api/run/* is answered in the page after 2 s with {ok: true} and never reaches the app
-(nothing is started, stopped or sent to MATLAB / the target).
+console 100 Hz -> :15433 (test ports only). The page's fetch is wrapped (in the page
+only): the state the app returns is shown as connected + running, so Stop is enabled, and
+every POST to /api/run/* is answered in the page after 2 s with {ok: true} and never
+reaches the app (nothing is started, stopped or sent to MATLAB / the target).
 
-Clicks are CDP Input.dispatchMouseEvent (queued like a user's click, unlike el.click()),
-on Live > Sensors (heaviest view) and Live > Torque. Measured: wall time from the
-mouse-up dispatch to the first text change of the button (MutationObserver), and the
-long tasks (> 50 ms) on the main thread during streaming.
-
-Checks (< 100 ms each): Stop -> "Confirm stop?", confirm -> "Stopping…" and it stays
-"Stopping…" through later renders (1.5 s), Calibrate FSR -> "Calibrating…". Calibrate FSR
-sends one pulse to the test listener on :15990 only.
+Per Live sub-tab (Gait, Sensors, Training), in the installed Chrome (headless):
+- main-thread busy % over 10 s from a Chrome trace (top-level tasks on the renderer
+  main thread), the longest task and the number of tasks > 50 ms;
+- clicks as CDP Input.dispatchMouseEvent (queued like a user's click): wall time from the
+  mouse-DOWN dispatch (so input delivery is included) to the first text change of the
+  button (MutationObserver): Stop -> "Confirm stop?", confirm -> "Stopping…" (kept
+  through later renders), Calibrate FSR -> "Calibrating…".
+Limits: every click < 150 ms, main thread busy < 40 %. Calibrate FSR sends pulses to
+the test listener on :15990 only. A line "LATENCY {json}" carries the numbers.
 
     python test/test_click_latency.py
 """
@@ -35,7 +36,8 @@ import replay_senders  # noqa: E402  (also lowers this process's priority)
 from test_ui_v18 import BASE, Browser, Listener, api  # noqa: E402
 
 FAILS = []
-LIMIT_MS = 100
+LIMIT_MS = 150          # click -> first DOM change, input delivery included
+BUSY_MAX = 40.0         # main thread busy %, 10 s of streaming
 
 
 def check(name, cond, got=None):
@@ -86,13 +88,68 @@ ARM = r"""
 def real_click(c, sel):
     info = json.loads(c.js(ARM % sel))
     x, y = info["x"], info["y"]
+    t_down = time.time()            # before the press: CDP waits until the renderer takes the event
     c.call("Input.dispatchMouseEvent", type="mousePressed", x=x, y=y, button="left", clickCount=1)
-    t_up = time.time()
     c.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="left", clickCount=1)
     c.pump(0.6)
     m = json.loads(c.js("JSON.stringify(window._m)"))
-    ms = None if m["t"] is None else round(m["t"] - t_up * 1000.0)
+    ms = None if m["t"] is None else round(m["t"] - t_down * 1000.0)
     return ms, m["text"], info
+
+
+def trace_busy(c, seconds=10.0):
+    """Main-thread busy % of the page's renderer over *seconds* from a Chrome trace:
+    the sum of top-level tasks (RunTask) on CrRendererMain / wall time."""
+    cats = ["devtools.timeline", "disabled-by-default-devtools.timeline", "toplevel"]
+    c.call("Tracing.start", traceConfig={"includedCategories": cats, "recordMode": "recordAsMuchAsPossible"},
+           transferMode="ReportEvents")
+    events = []
+    c.ws.settimeout(0.5)
+    end = time.time() + seconds
+    while time.time() < end:
+        try:
+            msg = json.loads(c.ws.recv())
+        except Exception:
+            continue
+        if msg.get("method") == "Tracing.dataCollected":
+            events.extend(msg["params"]["value"])
+    c.n += 1
+    c.ws.send(json.dumps({"id": c.n, "method": "Tracing.end", "params": {}}))
+    c.ws.settimeout(20)
+    while True:
+        msg = json.loads(c.ws.recv())
+        if msg.get("method") == "Tracing.dataCollected":
+            events.extend(msg["params"]["value"])
+        elif msg.get("method") == "Tracing.tracingComplete":
+            break
+    mains = {(e["pid"], e["tid"]) for e in events
+             if e.get("ph") == "M" and e.get("name") == "thread_name" and (e.get("args") or {}).get("name") == "CrRendererMain"}
+    best = None
+    for key in mains:
+        tasks = [e for e in events if (e.get("pid"), e.get("tid")) == key and e.get("ph") == "X"
+                 and e.get("name") in ("RunTask", "ThreadControllerImpl::RunTask") and e.get("dur") is not None]
+        busy_us = sum(e["dur"] for e in tasks)
+        if best is None or busy_us > best[0]:
+            best = (busy_us, tasks)
+    if not best or not best[1]:
+        return {"busy_pct": None, "longest_ms": None, "n_over_50ms": None}
+    _, tasks = best
+    # RunTask events nest (ThreadControllerImpl::RunTask wraps RunTask): keep the outermost
+    # ones only, so time is counted once
+    outer, end = [], -1
+    for e in sorted(tasks, key=lambda e: (e["ts"], -e["dur"])):
+        if e["ts"] >= end:
+            outer.append(e)
+            end = e["ts"] + e["dur"]
+        elif e["ts"] + e["dur"] > end:          # overlapping but not contained: extend
+            outer.append({"ts": end, "dur": e["ts"] + e["dur"] - end})
+            end = e["ts"] + e["dur"]
+    busy_us = sum(e["dur"] for e in outer)
+    ts0 = min(e["ts"] for e in outer)
+    ts1 = max(e["ts"] + e["dur"] for e in outer)
+    wall_us = max(ts1 - ts0, 1)
+    return {"busy_pct": round(100.0 * busy_us / wall_us, 1), "longest_ms": round(max(e["dur"] for e in outer) / 1000.0, 1),
+            "n_over_50ms": sum(1 for e in outer if e["dur"] > 50000), "tasks": len(outer)}
 
 
 def main():
@@ -134,38 +191,44 @@ def main():
         b = Browser(19451, 1920, 1080)
         c = b.c
         c.call("Page.addScriptToEvaluateOnNewDocument", source=STUB)
-        for view in ("Sensors", "Torque"):
+        out = {}
+        views = [v for v in (("Gait", "pgGait"), ("Sensors", "pgSensors"), ("Training", "pgTraining"))
+                 if v[0] in os.environ.get("AFO_LAT_VIEWS", "Gait,Sensors,Training").split(",")]
+        for view, btn in views:
             c.call("Page.navigate", url=BASE + "/live")
             c.pump(5)
-            if view == "Sensors":
-                c.js("document.getElementById('pgSensors').click(); 1")
+            c.js("document.getElementById('%s').click(); 1" % btn)
             c.pump(4)
-            c.js("window._long = []; 1")
-            c.pump(6)
-            longs = json.loads(c.js("JSON.stringify(window._long)"))
-            print(f"[{view}] long tasks in 6 s of streaming: n={len(longs)} max={max(longs) if longs else 0} ms")
-            check(f"{view}: no main-thread task > {LIMIT_MS} ms while streaming", not longs or max(longs) <= LIMIT_MS, longs[:10])
-            ms, txt, info = real_click(c, "#tStop")
-            print(f"[{view}] Stop -> {txt!r} {ms} ms {info}")
-            check(f"{view}: Stop -> 'Confirm stop?' < {LIMIT_MS} ms", txt == "Confirm stop?" and ms is not None and ms < LIMIT_MS, (txt, ms, info))
-            ms, txt, info = real_click(c, "#tStop")
-            print(f"[{view}] confirm -> {txt!r} {ms} ms")
-            check(f"{view}: confirm -> 'Stopping…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Stopping") and ms is not None
-                  and ms < LIMIT_MS, (txt, ms))
+            tr = trace_busy(c, 10.0)
+            print(f"[{view}] main thread busy {tr['busy_pct']} % over 10 s, longest task {tr['longest_ms']} ms, "
+                  f"{tr['n_over_50ms']} tasks > 50 ms", flush=True)
+            check(f"{view}: main thread busy < {BUSY_MAX:.0f} %", tr["busy_pct"] is not None and tr["busy_pct"] < BUSY_MAX, tr)
+            ms1, txt, info = real_click(c, "#tStop")
+            print(f"[{view}] Stop -> {txt!r} {ms1} ms", flush=True)
+            check(f"{view}: Stop -> 'Confirm stop?' < {LIMIT_MS} ms", txt == "Confirm stop?" and ms1 is not None and ms1 < LIMIT_MS,
+                  (txt, ms1, info))
+            ms2, txt, info = real_click(c, "#tStop")
+            print(f"[{view}] confirm -> {txt!r} {ms2} ms", flush=True)
+            check(f"{view}: confirm -> 'Stopping…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Stopping")
+                  and ms2 is not None and ms2 < LIMIT_MS, (txt, ms2))
             c.pump(1.0)
             held = c.js("document.getElementById('tStop').textContent")
             check(f"{view}: 'Stopping…' kept through renders (1.6 s)", str(held).startswith("Stopping"), held)
             posts = json.loads(c.js("JSON.stringify(window._runPosts)"))
             check(f"{view}: stop POST stayed in the page stub", posts and all(p.endswith("/api/run/stop") for p in posts), posts)
             c.pump(2.5)
-            ms, txt, info = real_click(c, "#bCal")
-            print(f"[{view}] Calibrate FSR -> {txt!r} {ms} ms")
+            ms3, txt, info = real_click(c, "#bCal")
+            print(f"[{view}] Calibrate FSR -> {txt!r} {ms3} ms", flush=True)
             check(f"{view}: Calibrate FSR -> 'Calibrating…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Calibrating")
-                  and ms is not None and ms < LIMIT_MS, (txt, ms))
+                  and ms3 is not None and ms3 < LIMIT_MS, (txt, ms3))
             c.pump(1.0)
             held = c.js("document.getElementById('bCal').textContent")
             check(f"{view}: Calibrating… kept (1.6 s)", str(held).startswith("Calibrating"), held)
-            c.pump(30.5)          # let the 30 s calibration end before the next view
+            out[view] = dict(tr, click_ms=[ms1, ms2, ms3], click_max_ms=max(x for x in (ms1, ms2, ms3) if x is not None)
+                             if any(x is not None for x in (ms1, ms2, ms3)) else None)
+            if view != views[-1][0]:
+                c.pump(28.0)      # let the 30 s calibration end before the next view
+        print("LATENCY " + json.dumps(out), flush=True)
         check("UDP only to the test listener (FSR pulses), no param writes", not prm.pkts and len(ctl.pkts) <= 20,
               (len(ctl.pkts), len(prm.pkts)))
         check("no browser errors", not c.console, c.console[:4])

@@ -158,6 +158,25 @@ def test_rescan_busy_then_done_and_no_double_scan(env):
     assert first_proc.poll() is not None
 
 
+def test_rescan_during_first_scan_shows_result(env):
+    """Rescan pressed while the first list is still settling: no second scan, but the
+    page must end with "Rescanned hh:mm:ss · N Teensy found" (it showed nothing)."""
+    from pages.teensy import _scan_view
+    ports, make = env
+    ports.write_text(json.dumps(TEENSY))
+    sc = make()
+    assert sc.status()["scanning"]                      # first list pending
+    first_proc = None
+    sc.rescan()                                         # pressed during the first scan
+    assert sc.status()["rescan_at"]
+    assert wait(lambda: not sc.status()["scanning"])
+    first_proc = sc._proc
+    lbl, dis, txt = _scan_view(sc.status(), sc.get()["ports"])
+    assert (lbl, dis) == ("Rescan", False), (lbl, dis)
+    assert txt.startswith("Rescanned ") and txt.endswith("1 Teensy found"), txt
+    assert sc._proc is first_proc and first_proc.poll() is None    # no restart for that press
+
+
 def test_rescan_ignored_while_flashing(env):
     ports, make = env
     sc = make()
@@ -167,6 +186,7 @@ def test_rescan_ignored_while_flashing(env):
     try:
         sc.rescan()
         assert not sc.status()["scanning"] and sc._proc is proc and proc.poll() is None
+        assert sc.status()["rescan_at"]                 # the press is still shown as a result
     finally:
         tt.FLASHING.clear()
 

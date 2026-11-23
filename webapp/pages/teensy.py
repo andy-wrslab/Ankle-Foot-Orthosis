@@ -32,7 +32,21 @@ def _panel(key, children):
                         style={} if key == "build" else {"display": "none"})
 
 
+_CFG = {}       # set by register(): layout() fills the branch list from the warm cache
+
+
+def _source_options(s):
+    opts = [{"label": tt.source_label(b), "value": b["name"]} for b in s["branches"]]
+    if s["worktree"]["dirty"]:
+        opts.append({"label": f"{s['worktree']['branch']} working copy · {len(s['worktree']['dirty'])} "
+                              f"uncommitted file(s) · build only", "value": tt.WORKTREE})
+    return opts
+
+
 def layout() -> html.Div:
+    s = tt.sources_peek()
+    opts = _source_options(s) if s else []
+    val = s["newest"] if s else None
     if not is_local():
         return html.Div(className="narrow", children=[html.H1("Teensy", className="page-title"), locked_notice("Teensy")])
     return html.Div(className="narrow teensy", children=[
@@ -55,7 +69,8 @@ def layout() -> html.Div:
                                 title="git fetch from GitHub. Only updates the branch list; files are never changed."),
                 ]),
                 html.Div(className="ty-source", children=[
-                    dcc.Dropdown(id="ty-source", clearable=False, searchable=False, placeholder="Loading branches…"),
+                    dcc.Dropdown(id="ty-source", clearable=False, searchable=False, placeholder="Loading branches…",
+                                 options=opts, value=val),
                 ]),
                 _kv([("Commit", "ty-commit"), ("Compared with main", "ty-vsmain"),
                      ("Board settings", "ty-board"), ("Last flash", "ty-lastflash")]),
@@ -151,7 +166,7 @@ def _fetch_view(f):
 def _block_reason(ctx, cfg, source, dry_run=False):
     """'' when Flash may run, else the reason (shown next to the disabled button)."""
     if not source:
-        return "Pick a firmware branch."
+        return "Pick a firmware branch." if tt.sources_peek() else "Loading branches…"
     if ctx.jobs.running("teensy"):
         return "A build or flash is running."
     if ctx.live.stream_live():
@@ -232,27 +247,29 @@ def register(app, ctx) -> None:
     cfg = ctx.cfg
     serial = ctx.serial
     imu = tt.ImuWatch()
+    _CFG["cfg"] = cfg
+    tt.warm_sources(cfg)
 
     # ---- firmware source list (fetch on open, cached git reads)
-    # The list reloads when the fetch label changes (fetch finished), so new commits
-    # show up at once instead of on the next 5 s tick.
+    # The list reloads when a fetch finished ("Fetched …"), so new commits show up at once
+    # instead of on the next 5 s tick; "Fetching…" and errors do not reload it.
     @app.callback(Output("ty-source", "options"), Output("ty-source", "value"),
                   Input("url", "pathname"), Input("ty-slow", "n_intervals"), Input("ty-fetched", "children"),
                   State("ty-source", "value"))
     @local_only
-    def source_list(path, _n, _f, current):
+    def source_list(path, _n, fetched, current):
         if path != "/teensy":
             return no_update, no_update
-        if dctx.triggered_id in ("url", None):
+        trig = dctx.triggered_id
+        if trig == "ty-fetched" and not str(fetched or "").startswith("Fetched"):
+            return no_update, no_update
+        if trig in ("url", None):
             tt.fetch_in_background(cfg, min_age_s=60)
         try:
             s = tt.sources_cached(cfg)
         except Exception as exc:
             return [{"label": f"Repo error: {exc}", "value": "", "disabled": True}], None
-        opts = [{"label": tt.source_label(b), "value": b["name"]} for b in s["branches"]]
-        if s["worktree"]["dirty"]:
-            opts.append({"label": f"{s['worktree']['branch']} working copy · {len(s['worktree']['dirty'])} "
-                                  f"uncommitted file(s) · build only", "value": tt.WORKTREE})
+        opts = _source_options(s)
         values = {o["value"] for o in opts}
         value = current if current in values else s["newest"]
         return opts, value
@@ -277,9 +294,13 @@ def register(app, ctx) -> None:
     @app.callback(Output("ty-commit", "children"), Output("ty-vsmain", "children"), Output("ty-board", "children"),
                   Output("ty-lastflash", "children"), Output("ty-file", "options"), Output("ty-file", "value"),
                   Output("ty-diff", "children"), Output("ty-code-src", "children"),
-                  Input("ty-source", "value"), Input("ty-slow", "n_intervals"), State("ty-file", "value"))
+                  Input("ty-source", "value"), Input("ty-slow", "n_intervals"), Input("url", "pathname"),
+                  State("ty-file", "value"))
     @local_only
-    def source_details(source, _n, cur_file):
+    def source_details(source, _n, path, cur_file):
+        trig = dctx.triggered_id
+        if path != "/teensy" and trig == "ty-slow":
+            return [no_update] * 8          # other pages: no git reads every 5 s
         if not source:
             return ["–"] * 4 + [[], None, "", ""]
         try:
@@ -303,7 +324,6 @@ def register(app, ctx) -> None:
                               title=board["fqbn"])
         last = _flash_row(cfg)
         file_val = cur_file if cur_file in files else ("DAQ.ino" if "DAQ.ino" in files else (files[0] if files else None))
-        trig = dctx.triggered_id
         try:
             diff = tt.changes_vs_main(cfg, source) if trig != "ty-slow" else no_update
         except Exception as exc:

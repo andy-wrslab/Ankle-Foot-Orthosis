@@ -16,7 +16,7 @@ from flask import jsonify, request
 
 from pages.common import is_local
 from session import MODES, SIDE_NAMES, SPECS, values_match
-from status import top_status
+from status import NO_DATA_S, _age as _status_age, top_status
 
 BUSY_TEXT = {"connect": ("Connecting…", "Connecting… attaching MATLAB"),
              "disconnect": ("Disconnecting…", "Disconnecting…"),
@@ -115,12 +115,28 @@ def side_view(ctx) -> Dict[str, Any]:
     else:
         state = "confirm"
     shown = SIDE_NAMES.get(rbi) if rbi in (0, 1) else (SIDE_NAMES.get(int(want)) if want is not None else None)
+    connected = bool((ctx.runctl.status or {}).get("connected"))
+    # the target counts as there when MATLAB is connected OR its live stream is fresh (data
+    # proves the app runs, as for the status button); only with neither is the chip quiet
+    try:
+        lst = ctx.live.get_status()
+        age = _status_age(ctx.live, lst) if lst.get("live_seen") else None
+        live_now = age is not None and age < NO_DATA_S
+    except Exception:
+        live_now = False
+    online = connected or live_now
+    if state == "confirm" and not online:
+        # offline: no attention "? CONFIRM FOOT"; the side is confirmed in the chip's popover
+        # (then pending) or asked for when connected
+        quiet = (f"{SIDE_NAMES[int(want)].capitalize()} foot · not confirmed" if want is not None
+                 else "Foot side · not set")
     return {"state": state, "app": SIDE_NAMES.get(int(want)) if want is not None else None,
             "target": SIDE_NAMES.get(rbi) if rbi in (0, 1) else ("UNSET" if rbi == -1 else None),
             "chip": (f"{shown.capitalize()} foot" if state == "ok" and shown else
                      "! FOOT MISMATCH" if state == "mismatch" else
-                     chip["text"] if state == "pending" else "? CONFIRM FOOT"),
-            "sid": sess.sid, "connected": bool((ctx.runctl.status or {}).get("connected")),
+                     chip["text"] if state == "pending" else
+                     quiet if not online else "? CONFIRM FOOT"),
+            "sid": sess.sid, "connected": online,
             "msg": (sess.status.get("side") or {}).get("msg") or "",
             "after_start": bool(getattr(sess, "after_start", False)), "problem": sess.side_problem()}
 
@@ -212,7 +228,10 @@ def console_state(ctx) -> Dict[str, Any]:
                     "status_msg": {k: (v or {}).get("msg") for k, v in sess.status.items()},
                     "writes_enabled": sess.writes_enabled},
         "model": {"name": sess.model(), "label": prof["label"], "bif": bool(prof.get("bif")),
-                  "loaded": rc.get("app") or None},
+                  "loaded": rc.get("app") or None,
+                  "source": ("loaded" if rc.get("app") in sess.models else
+                             "config" if sess.configured_model in sess.models else
+                             "last connect" if sess.last_model in sess.models else "default")},
         "bif": bif, "checklist": chk,
         "side": side_view(ctx), "settings": settings_rows(ctx), "commands": commands_view(ctx),
         "rig": rig_view(ctx),
