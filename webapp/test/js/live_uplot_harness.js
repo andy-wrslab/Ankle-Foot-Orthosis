@@ -67,7 +67,7 @@ eval(code);
 var E = window._afoPlots;
 
 // ---- feed: 100 Hz samples in 50 ms messages (20 / s), like the server
-var t0 = 20.0, n = 0;
+var t0 = CASE === "early" ? 1.0 : 20.0, n = 0;
 function message(kind, k0, k1, torqueOf) {
     var m = {kind: kind, t: [], torque: [], demand_torque: [], gait: [], sv_target: [], press: [[]], imu: [[]], meta: {session: 1}};
     for (var k = k0; k < k1; k++) {
@@ -85,6 +85,22 @@ function countX(id) { var c = calls[id] || [], m = 0; for (var i = 0; i < c.leng
 var results = [];
 function check(name, cond, detail) { results.push((cond ? "ok   " : "FAIL ") + name + (cond ? "" : ": " + detail)); }
 
+if (CASE === "early") {
+    window._afoLiveMsg(message("full", 0, 100, function () { return 0; }));     // t 1.0 .. 1.99
+    n = 100; var neg = 0, okShape = true;
+    for (var e = 0; e < 20 * 12; e++) {                                         // 12 s
+        window._afoLiveMsg(message("delta", n, n + 5, function () { return 0; })); n += 5; runFrames(3);
+        var g1 = lastX("torque"), g2 = lastX("gait");
+        if (!g1 || !g2) { continue; }
+        if (g1.min < 0 || g2.min < 0) { neg++; }
+        var tt = E.clock;
+        if (Math.abs(g1.min - Math.max(0, tt - 10)) > 1e-9 || Math.abs(g1.max - Math.max(10, tt)) > 1e-9) { okShape = false; }
+    }
+    check("early: Gait x range never negative (t from 1 s)", neg === 0, neg + " negative frames");
+    check("early: range = [max(0, t - w), max(w, t)]", okShape, stringify(lastX("torque")));
+    for (var r0 = 0; r0 < results.length; r0++) { WScript.Echo(results[r0]); }
+    WScript.Quit(0);
+}
 var torqueOf = CASE === "real" ? function (k) { return 5 * Math.sin(k / 30); } : function (k) { return 0.0; };   // STO: exactly 0.0
 window._afoLiveMsg(message("full", 0, 1000, torqueOf));
 n = 1000;

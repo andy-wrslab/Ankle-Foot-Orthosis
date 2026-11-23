@@ -27,6 +27,35 @@ _clients = {"n": 0}
 _clients_lock = threading.Lock()
 
 
+def load_path_ok(cfg, f):
+    """The resolved path when *f* is an existing <afo_root>\\round1\\target_build*\\AFO_r1.mldatx, else None."""
+    import fnmatch
+    if not f or not isinstance(f, str):
+        return None
+    root = (cfg.get("paths") or {}).get("afo_root") or r"C:\Users\Andy\Desktop\AFO"
+    real = os.path.realpath(f)
+    pat = os.path.normcase(os.path.join(os.path.realpath(root), "round1", "target_build*", "AFO_r1.mldatx"))
+    if not fnmatch.fnmatch(os.path.normcase(real), pat) or not os.path.isfile(real):
+        return None
+    # one directory level only (target_build* must be a direct child of round1)
+    if os.path.normcase(os.path.dirname(os.path.dirname(real))) != os.path.normcase(os.path.join(os.path.realpath(root), "round1")):
+        return None
+    return real
+
+
+def load_request(ctx, body):
+    """/api/run/load checks (OMEN-local is checked by the route): view-only 403, running 409,
+    path not an existing round1/target_build*/AFO_r1.mldatx 400; else (200, {"file": path})."""
+    if (ctx.cfg.get("console") or {}).get("view_only"):
+        return 403, {"ok": False, "err": "View-only console: Load is disabled in this app."}
+    if (ctx.runctl.status or {}).get("running"):
+        return 409, {"ok": False, "err": "The app is running: stop it before loading."}
+    path = load_path_ok(ctx.cfg, (body or {}).get("file"))
+    if not path:
+        return 400, {"ok": False, "err": r"file must be an existing round1\target_build*\AFO_r1.mldatx"}
+    return 200, {"ok": True, "file": path}
+
+
 def serve_layout(ctx):
     def layout():
         local = is_local()
@@ -226,13 +255,19 @@ def build_app(ctx) -> dash.Dash:
     def api_run_action(action):  # type: ignore
         if not is_local():
             return jsonify({"ok": False, "err": "OMEN only"}), 403
-        if action not in ("connect", "disconnect", "status", "start", "stop", "save"):
+        if action not in ("connect", "disconnect", "status", "start", "stop", "save", "load"):
             return jsonify({"ok": False, "err": "unknown action"}), 404
-        if action in ("start", "stop") and (ctx.cfg.get("console") or {}).get("view_only"):
-            return jsonify({"ok": False, "err": "View-only console: Start and Stop are disabled in this app."}), 403
+        if action in ("start", "stop", "load") and (ctx.cfg.get("console") or {}).get("view_only"):
+            return jsonify({"ok": False, "err": "View-only console: Start, Stop and Load are disabled in this app."}), 403
         if ctx.jobs.running("rc"):
             return jsonify({"ok": False, "err": "another run-control action is running"}), 409
         args = []
+        if action == "load":
+            # load a built AFO_r1 app from the page's own MATLAB session (run 14 go-live)
+            code, payload = load_request(ctx, request.get_json(silent=True) or {})
+            if code != 200:
+                return jsonify(payload), code
+            args = [payload["file"]]
         if action == "save":
             import re as _re
             body = request.get_json(silent=True) or {}

@@ -91,6 +91,13 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     # those last columns are an optional tail, so 12-float packets of older builds
     # still parse (base = the first 12 columns).
     opt = list(lay.get("optional_columns") or DEFAULT_TAIL)
+    # run 14 layout ('<18f', round1/console_udp_layout.json): base 12 + both tails
+    if (len(names) > len(opt) + len(RUN14_TAIL) and names[-len(RUN14_TAIL):] == RUN14_TAIL
+            and names[-len(RUN14_TAIL) - len(opt):-len(RUN14_TAIL)] == opt
+            and fmt.format.startswith("<") and fmt.format.endswith("f")):
+        names = names[:-len(RUN14_TAIL)]
+        n = len(names)
+        fmt = struct.Struct(f"<{n}f")
     if len(names) > len(opt) and names[-len(opt):] == opt and fmt.format.startswith("<") and fmt.format.endswith("f"):
         names = names[:-len(opt)]
         n = len(names)

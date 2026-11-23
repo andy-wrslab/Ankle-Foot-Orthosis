@@ -188,6 +188,11 @@
         host.addEventListener('touchstart', function () { P.held = performance.now(); P.lastMove = P.held; card(P, true); }, {passive: true});
         return P;
     }
+    function destroy(P) {
+        try { if (P.ro) { P.ro.disconnect(); } } catch (e) { /* ignore */ }
+        try { P.u.destroy(); } catch (e) { /* ignore */ }
+        E.destroyed = (E.destroyed || 0) + 1;
+    }
     function card(P, on) { var c = P.host.closest('.plot-card'); if (c) { c.classList.toggle('holding', on); } }
     function isHeld(P, now) {
         if (!P.held) { return false; }
@@ -282,6 +287,7 @@
             if (!host || host.offsetParent === null) { return; }
             var P = E.plots[id];
             if (!P || P.host !== host) {
+                if (P) { destroy(P); E.plots[id] = null; }      // host re-rendered: free the old plot first
                 try { P = E.plots[id] = make(id, S.plots[id], host); } catch (e) { console.error('[AFO] ' + id + ' create failed', e); return; }
                 if (!P) { return; }
             }
@@ -293,7 +299,7 @@
             if (isHeld(P, now)) { return; }
             try {
                 if (S.plots[id].group === 'training') { drawTraining(P, now); }
-                else if (t != null) { drawLive(P, t - win, t, now); }
+                else if (t != null) { drawLive(P, Math.max(0, t - win), Math.max(win, t), now); }   // never negative
                 drew++;
             } catch (e) { console.error('[AFO] ' + id + ' draw failed', e); }
         });
@@ -304,7 +310,8 @@
 
     // ------------------------------------------------------------ test / debug hook
     E.state = function () {
-        var out = {clock: E.clock, frames: E.frames, drawn: E.drawn, t_latest: B && B.t.length ? B.t[B.t.length - 1] : null, plots: {}};
+        var out = {clock: E.clock, frames: E.frames, drawn: E.drawn, t_latest: B && B.t.length ? B.t[B.t.length - 1] : null,
+                   buffer_len: B ? B.t.length : 0, created: Object.keys(E.plots).length, destroyed: E.destroyed || 0, plots: {}};
         Object.keys(E.plots).forEach(function (id) {
             var P = E.plots[id]; if (!P) { return; }
             out.plots[id] = {xmin: P.xmin, xmax: P.xmax, lastX: P.lastX, w: P.w, h: P.h,

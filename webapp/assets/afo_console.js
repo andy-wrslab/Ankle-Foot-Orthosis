@@ -426,7 +426,8 @@
                 mass.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'sending' ? 'Sending…' : '';
             }
             var mt = '', mc = '';
-            if (mst === 'pending') { mt = /after Start/.test(mmsg) ? 'after Start' : /disabled/.test(mmsg) ? 'not sent' : 'when connected'; mc = 'pending'; }
+            if (mst === 'pending') { mt = /Not set on device/.test(mmsg) ? 'not on device' : /after Start/.test(mmsg) ? 'after Start' :
+                /disabled/.test(mmsg) ? 'not sent' : 'when connected'; mc = 'pending'; }
             else if (mst === 'sending') { mt = 'sending…'; mc = 'pending'; }
             else if (mst === 'error') { mt = 'refused'; mc = 'err';
                 var rmsg = /App started elsewhere/.test(mmsg) ? 'Target refused: app started by another MATLAB, press Stop → Start' :

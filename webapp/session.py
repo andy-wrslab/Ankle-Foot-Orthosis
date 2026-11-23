@@ -105,6 +105,7 @@ SIDE_WARNING = ("Side mismatch: measured torque and ankle angle are sign-inverte
                 "the controller would push the wrong way.")
 SID_RE = re.compile(r"^S\d{1,4}$")
 ECHO_MODEL = "AFO_r1"        # the model that sends the training UDP echo
+NOT_ON_DEVICE = "Not set on device: press to send"
 ECHO_MAX_AGE_S = 0.5      # console packet every 10 ms; older than this -> rows grey
 SHORT = {"side": "Foot side", "weight": "Mass", "mode": "Mode", "k_percent": "K", "sv_target_min": "SV target",
          "sv_target_max": "SV target", "bif_mass": "Mass (Bi-LSTM)", "motor": "Motor command", "assist": "Assist command", "k": "K command"}
@@ -154,6 +155,9 @@ class SessionSetup:
         # Start (never stale values from session_profiles.json)
         self.entered: set = set()
         self.adopted_echo = False
+        self.device_state: Optional[Dict[str, float]] = None     # last adopted device state
+        self.start_owned_until = 0.0     # a page Start owns the settings until it has sent them
+        self._start_waited = False
         self.after_start = False      # SPEC: every Start ends in the Confirm state
         self.started_at: Optional[float] = None     # last Start in this app session (after-Start checklist)
         # set when setparam/getparam says "No application is loaded" while the target runs:
@@ -249,10 +253,15 @@ class SessionSetup:
             return "S-ID must be S followed by a number, e.g. S47."
         with self.lock:
             if sid != self.sid:
+                first = self.sid is None
                 self.sid = sid
                 self.values = dict(self.profiles.get(sid, {}))
                 self.side_confirmed = None     # a new participant always needs the side confirmed
                 self.side_verified = None
+                if first and self.device_state:
+                    # first S-ID after a start: the device state adopted before it stays the
+                    # page's state (Andy 14:01); a CHANGE of participant still asks again
+                    self._apply_device(self.device_state, confirm_side=True)
                 self.status = {}
                 self._save()
                 self.audit("participant", sid)
@@ -387,14 +396,61 @@ class SessionSetup:
         self.link_adopted({k: float(v) for k, v in st.items() if v is not None})
         return True
 
+    def _start_values(self) -> Dict[str, float]:
+        """What a page Start sends: mass, mode, K from the page; side only when confirmed in
+        this app session for this S-ID (unchanged safety rule)."""
+        v = {}
+        if self.values.get("weight") is not None:
+            v["mass"] = float(self.values["weight"])
+        if self.values.get("mode") is not None:
+            v["mode"] = float(self.values["mode"])
+        if self.values.get("k_percent") is not None:
+            v["k"] = float(self.values["k_percent"])
+        c = self.side_confirmed
+        if (self.values.get("side") is not None and c and c.get("sid") == self.sid
+                and c.get("side") == self.values.get("side")):
+            v["side"] = float(self.values["side"])
+        return v
+
+    def _after_page_start(self) -> None:
+        lk = getattr(self.ctx, "settings_link", None)
+        t_end = time.time() + 5.0
+        cols = None
+        while time.time() < t_end:
+            row, age, cols = self.echo_for_link()
+            if row and age is not None and age < 0.5 and cols:
+                break
+            time.sleep(0.05)
+        if lk is not None and lk.active():
+            vals = self._start_values()
+            pkt = lk.send_values(vals)
+            self.audit("udp send after page Start", f"{vals} -> {pkt}")
+        else:
+            # run <= 13 (15 / 12 floats) or no echo: setparam, side AND mass always
+            self._start_waited = True
+            try:
+                self.entered |= {"side", "weight", "bif_mass"}     # side still only if confirmed
+                self.after_connect_or_start("start")
+            finally:
+                self._start_waited = False
+        self.start_owned_until = time.time() + 1.0
+
     def link_adopted(self, st: Dict[str, float]) -> None:
         """The device state was adopted (page start, reconnect, link back after a stall):
-        show it as the page's values; nothing is sent."""
+        show it as the page's values; nothing is sent. Not right after a PAGE Start (the
+        page sends its values then)."""
+        if time.time() < getattr(self, "start_owned_until", 0.0):
+            return
+        self.device_state = dict(st)
+        self._apply_device(st, confirm_side=True)
+        self.audit("adopted device settings", json.dumps(st))
+
+    def _apply_device(self, st: Dict[str, float], confirm_side: bool) -> None:
         with self.lock:
             side = st.get("side")
             if side in (0.0, 1.0):
                 self.values["side"] = int(side)
-                if self.sid:
+                if self.sid and confirm_side:
                     self.side_confirmed = {"sid": self.sid, "side": int(side), "at": time.time(), "adopted": True}
             if (st.get("mass") or 0) > 0:
                 self.values["weight"] = float(st["mass"])
@@ -407,7 +463,11 @@ class SessionSetup:
                 self.status.pop(k, None)
             self.after_start = False
             self.entered.clear()
-        self.audit("adopted device settings", json.dumps(st))
+            # device unset (mass 0 / side -1) while the page has a value: say so, never silently
+            if not (st.get("mass") or 0) > 0 and self.values.get("weight") is not None:
+                self.status["weight"] = {"state": "pending", "msg": NOT_ON_DEVICE, "at": time.time()}
+            if st.get("side") not in (0.0, 1.0) and self.values.get("side") is not None:
+                self.status["side"] = {"state": "pending", "msg": NOT_ON_DEVICE, "at": time.time()}
 
     def _send(self, key: str, value: float) -> str:
         sp = self.spec(key)
@@ -612,14 +672,18 @@ class SessionSetup:
         """After Connect: send pending values. After Start: re-apply everything entered.
         Run 14 (UDP settings): Connect sends nothing (the device state is adopted from the
         echo); Start sends the page's values once over 5434."""
+        if event == "start" and getattr(self.ctx, "settings_link", None) is not None and not self._start_waited:
+            # PAGE-initiated Start: the device reloads (side -1, mass 0) and its echo may not be
+            # there yet. Do NOT adopt that; wait for the first echo (<= 5 s): 18 floats -> one
+            # 5434 packet with the page's values; 12 / 15 floats or none -> setparam (side AND mass)
+            self.start_owned_until = time.time() + 8.0
+            self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
+            self.side_verified = None
+            threading.Thread(target=self._after_page_start, name="after-start", daemon=True).start()
+            return
         lk = self.link()
         if lk is not None:
-            if event == "start":
-                self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
-                self.side_verified = None
-                pkt = lk.after_start()
-                self.audit("udp resend after Start", str(pkt))
-            return
+            return                              # Connect with run 14: adopt only, nothing sent
         self.clear_readback()               # Connect / Start: only values read from now on count
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})

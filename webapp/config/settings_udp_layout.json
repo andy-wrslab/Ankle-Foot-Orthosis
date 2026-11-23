@@ -1,0 +1,57 @@
+{
+  "port": 5434,
+  "to": "192.168.7.5",
+  "format": "<8f",
+  "bytes": 32,
+  "note": "Settings from the OMEN page to AFO_r1 (run 14). Packet accepted only with magic and version; each field taken only if valid, else the value in use is kept. Held forever, no timeout. Values in use are echoed on 5433 (cols 1-4 side, weight, assist_mode, fixed_k_pct; 15 gyro_cal_request; 16 settings_seq; 17 bif_mass_kg).",
+  "fields": [
+    {
+      "index": 0,
+      "name": "magic",
+      "unit": "",
+      "rule": "must be 4134"
+    },
+    {
+      "index": 1,
+      "name": "version",
+      "unit": "",
+      "rule": "must be 1"
+    },
+    {
+      "index": 2,
+      "name": "seq",
+      "unit": "",
+      "rule": "any finite; echoed as 5433 column 16 (settings_seq)"
+    },
+    {
+      "index": 3,
+      "name": "side",
+      "unit": "",
+      "rule": "0 left / 1 right; anything else (e.g. -1) keeps the value in use"
+    },
+    {
+      "index": 4,
+      "name": "body_mass_kg",
+      "unit": "kg",
+      "rule": "20..200 sets weight AND BIF_mass_kg; else keep"
+    },
+    {
+      "index": 5,
+      "name": "assist_mode",
+      "unit": "",
+      "rule": "1 RL / 3 fixed K; else keep"
+    },
+    {
+      "index": 6,
+      "name": "fixed_k_pct",
+      "unit": "%",
+      "rule": "0..10; else keep"
+    },
+    {
+      "index": 7,
+      "name": "gyro_cal_request",
+      "unit": "",
+      "rule": "counter, any finite; a CHANGE re-runs the 5 s gyro bias (send the echoed value to keep)"
+    }
+  ]
+}

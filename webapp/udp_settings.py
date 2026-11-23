@@ -54,15 +54,17 @@ _log = logging.getLogger("afo.udp_settings")
 
 
 def valid(field: str, v: Any) -> bool:
-    """What the model accepts per field (anything else keeps its last value)."""
+    """What the model accepts per field (round1/settings_udp_layout.json); anything else
+    keeps the value in use: side 0/1 (-1 = keep), body mass 20..200 (sets weight AND
+    BIF_mass_kg), assist_mode 1/3, fixed_k_pct 0..10, gyro_cal_request any finite."""
     try:
         f = float(v)
     except (TypeError, ValueError):
         return False
     if not math.isfinite(f):
         return False
-    return {"side": f in (-1.0, 0.0, 1.0), "mass": 0.0 <= f <= 300.0, "mode": f in (1.0, 3.0),
-            "k": 0.0 <= f <= 10.0, "gyro": f >= 0.0}[field]
+    return {"side": f in (0.0, 1.0), "mass": 20.0 <= f <= 200.0, "mode": f in (1.0, 3.0),
+            "k": 0.0 <= f <= 10.0, "gyro": True}[field]
 
 
 def same(field: str, a: Any, b: Any) -> bool:
@@ -113,6 +115,9 @@ class SettingsLink:
 
     def _adopt(self, row: Dict[str, Any]) -> None:
         st = {f: float(row[ECHO_COL[f]]) for f in FIELDS if row.get(ECHO_COL[f]) is not None}
+        for f in ("side", "mass"):
+            if f in st and not valid(f, st[f]):
+                st[f] = {"side": -1.0, "mass": 0.0}[f]          # unset on the device
         self.state = st
         try:
             self.seq = max(self.seq, int(float(row.get("settings_seq") or 0)))
@@ -139,12 +144,22 @@ class SettingsLink:
                 values["gyro"])
 
     def _values(self) -> Dict[str, float]:
-        """Adopted device values with every still-pending press applied."""
-        v = dict(self.state or {})
+        """The page's values (adopted from the device, then pressed) with every still-pending
+        press applied. A field without a valid value is sent as 'keep' (side -1, mass 0,
+        mode 0, K -1). gyro_cal_request is ALWAYS the value echoed right now (col 15): a
+        change re-runs the 5 s gyro bias, so a stale or remembered counter is never sent;
+        only a pending Calibrate IMU press sends echoed + 1."""
+        v = {f: x for f, x in (self.state or {}).items() if f != "gyro" and valid(f, x)}
         for f, p in self.pending.items():
-            v[f] = p["value"]
-        for f, dflt in (("side", -1.0), ("mass", 0.0), ("mode", 3.0), ("k", 0.0), ("gyro", 0.0)):
-            v.setdefault(f, dflt)
+            if f != "gyro":
+                v[f] = p["value"]
+        for f, keep in (("side", -1.0), ("mass", 0.0), ("mode", 0.0), ("k", -1.0)):
+            v.setdefault(f, keep)
+        row, age, cols = self._echo()
+        g = row.get(ECHO_COL["gyro"])
+        if g is None:
+            raise RuntimeError("no echoed gyro_cal_request: not sending")
+        v["gyro"] = float(g) + (1.0 if "gyro" in self.pending else 0.0)
         return v
 
     def press(self, field: str, value: Any) -> Dict[str, Any]:
@@ -158,14 +173,54 @@ class SettingsLink:
                 return {"ok": False, "state": "error", "msg": "Waiting for the device state (5433 echo)"}
             if not valid(field, value):
                 return {"ok": False, "state": "error", "msg": f"{field} {value!r} is not a valid value"}
-            v = self._values()
+            if field == "gyro":
+                row, age, cols = self._echo()
+                if row.get(ECHO_COL["gyro"]) is None:
+                    return {"ok": False, "state": "error", "msg": "No echoed gyro_cal_request yet"}
+                value = float(row[ECHO_COL["gyro"]]) + 1.0          # echoed + 1, never remembered
+            self.pending[field] = {"value": float(value), "seqs": [], "t0": time.time(), "last": time.time(), "tries": 0}
+            try:
+                v = self._values()
+            except RuntimeError as exc:
+                self.pending.pop(field, None)
+                return {"ok": False, "state": "error", "msg": str(exc)}
             v[field] = float(value)
             pkt = self._packet(v)
-            self.pending[field] = {"value": float(value), "seqs": [pkt[2]], "t0": time.time(), "last": time.time(), "tries": 0}
+            self.pending[field]["seqs"].append(pkt[2])
             self.result[field] = {"state": "sending", "msg": "", "at": time.time()}
             self._send(pkt)
         self.on_status(field, "sending", "")
         return {"ok": True, "state": "sending", "msg": ""}
+
+    def send_values(self, values: Dict[str, float]) -> Optional[tuple]:
+        """After a PAGE-initiated Start: one packet with the page's values (side only when
+        given), the ECHOED gyro counter; confirmed / retried like a press. No adopt callback:
+        the page's values are not replaced by the device's unset ones (side -1, mass 0)."""
+        row, age, cols = self._echo()
+        with self.lock:
+            if self.view_only or not row or age is None or age > STALE_S:
+                return None
+            if self.state is None or self.frozen:
+                self._adopt(row)                    # base for the fields not given (no on_adopt)
+                self.frozen = False
+            sending = {f: float(v) for f, v in values.items() if f in ("side", "mass", "mode", "k") and valid(f, v)}
+            for f, v in sending.items():
+                self.state[f] = v
+                self.pending[f] = {"value": v, "seqs": [], "t0": time.time(), "last": time.time(), "tries": 0}
+            try:
+                v = self._values()
+            except RuntimeError:
+                for f in sending:
+                    self.pending.pop(f, None)
+                return None
+            pkt = self._packet(v)
+            for f in sending:
+                self.pending[f]["seqs"].append(pkt[2])
+                self.result[f] = {"state": "sending", "msg": "", "at": time.time()}
+            self._send(pkt)
+        for f in sending:
+            self.on_status(f, "sending", "")
+        return pkt
 
     def after_start(self) -> Optional[tuple]:
         """Start reloads the app (side -1, mass 0 until the first valid packet): send the
@@ -173,9 +228,14 @@ class SettingsLink:
         with self.lock:
             if self.view_only or self.frozen or self.state is None:
                 return None
-            v = self._values()
+            try:
+                v = self._values()
+            except RuntimeError:
+                return None
             pkt = self._packet(v)
             for f in ("side", "mass", "mode", "k"):
+                if not valid(f, v[f]):
+                    continue
                 self.pending[f] = {"value": v[f], "seqs": [pkt[2]], "t0": time.time(), "last": time.time(), "tries": 0}
             self._send(pkt)
             return pkt
@@ -227,12 +287,19 @@ class SettingsLink:
                     changes.append((f, "error", NOT_CONFIRMED_MSG))
                     continue
                 if p["tries"] < MAX_RETRIES and now - p["last"] >= RETRY_EVERY_S:
-                    pkt = self._packet(self._values())
+                    try:
+                        vals = self._values()
+                    except RuntimeError:
+                        continue
+                    if f == "gyro":
+                        vals["gyro"] = p["value"]       # the retry repeats the same requested counter
+                    pkt = self._packet(vals)
                     p["seqs"].append(pkt[2]); p["last"] = now; p["tries"] += 1
                     self._send(pkt)
-            # keep the adopted copy current for fields nobody is changing
+            # keep the page's copy current for fields nobody is changing; an "unset" echo
+            # (side -1 / mass 0 after Start) keeps the page's value for the resend after Start
             for f in FIELDS:
-                if f not in self.pending and row.get(ECHO_COL[f]) is not None:
+                if f not in self.pending and row.get(ECHO_COL[f]) is not None and valid(f, row[ECHO_COL[f]]):
                     self.state[f] = float(row[ECHO_COL[f]])
         for f, s, m in changes:
             self.on_status(f, s, m)

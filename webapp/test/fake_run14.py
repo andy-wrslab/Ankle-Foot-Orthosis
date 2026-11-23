@@ -30,6 +30,7 @@ class FakeRun14:
         self.received = []        # (time, tuple) of every packet that arrived
         self.accepted = 0
         self.ignored = 0
+        self.gyro_changes = 0
         self._stall_until = 0.0
         self._stop = threading.Event()
         self.lock = threading.Lock()
@@ -60,15 +61,17 @@ class FakeRun14:
                     continue
                 self.accepted += 1
                 self.v["seq"] = p[2]
-                if p[3] in (-1.0, 0.0, 1.0):
+                if p[3] in (0.0, 1.0):                  # -1 or anything else: keep
                     self.v["side"] = p[3]
-                if 0.0 <= p[4] <= 300.0:
+                if 20.0 <= p[4] <= 200.0:               # sets weight AND BIF_mass_kg; else keep
                     self.v["mass"] = p[4]
                 if p[5] in (1.0, 3.0):
                     self.v["mode"] = p[5]
                 if 0.0 <= p[6] <= 10.0:
                     self.v["k"] = p[6]
-                if p[7] >= 0.0:
+                if p[7] == p[7] and abs(p[7]) != float("inf"):
+                    if p[7] != self.v["gyro"]:
+                        self.gyro_changes += 1          # a change re-runs the 5 s gyro bias
                     self.v["gyro"] = p[7]
 
     def _row(self):
@@ -97,7 +100,7 @@ class FakeRun14:
     def start(self):
         """Start reloads the app: side -1, mass 0 until the next valid packet."""
         with self.lock:
-            self.v["side"], self.v["mass"] = -1.0, 0.0
+            self.v["side"], self.v["mass"], self.v["gyro"], self.v["seq"] = -1.0, 0.0, 0.0, 0.0
 
     def stall(self, seconds):
         self._stall_until = time.time() + seconds
