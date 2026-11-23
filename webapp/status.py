@@ -25,13 +25,22 @@ seen in this app session, or the loaded model's profile expects it (AFO_r1).
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict, List
 
 IMU_NOT_READY_FAULT_S = 10.0     # bias_ready 0 this long = a fault (a normal recal takes ~5 s)
+# Speedgoat restarted into its startup app (15:24 power loss, 15:32 boot into the old AFO):
+# 5431 flows again, model time restarted near 0, and no console echo (12/15/18/31 floats)
+RESTART_T_MAX_S = 30.0          # model time this low after a jump back = a fresh start
+RESTART_ECHO_WAIT_S = 3.0       # no r1 echo this long after the restart (or while 5431 flows) -> flag
+R1_ECHO_COLS = (12, 15, 18, 31)   # any console echo (run 12 sends 12 floats) clears / prevents it
+STARTUP_APP_TEXT = "Speedgoat restarted: AFO_r1 not running (startup app)"
 
 import model_profile as mp
 from session import SHORT, _num
+
+_log = logging.getLogger("afo.status")
 
 NO_DATA_S = 0.5          # SPEC: no 5431 packet for > 0.5 s -> "No data"
 IMU_ROSE_S = 10.0        # imu_bad_count rising within this window -> "IMU fault"
@@ -90,6 +99,67 @@ def _imu_fault(ctx) -> str:
     return "; ".join(why)
 
 
+def _hm(t):
+    return time.strftime("%H:%M:%S", time.localtime(t)) if t else "–"
+
+
+def startup_app_issue(ctx, live_now: bool, tr_st: Dict[str, Any], tr_age) -> Dict[str, Any]:
+    """The Speedgoat came back with its startup app instead of AFO_r1: 5431 flows (model time
+    restarted near 0) but no r1 console echo arrives. {} when not the case. State lives on
+    ctx.session (sg_*); one WARNING line per detection; cleared by the next r1 echo."""
+    sess = ctx.session
+    now = time.time()
+    echo_cols = tr_st.get("columns")
+    if tr_age is not None and tr_age < 1.0 and echo_cols in R1_ECHO_COLS:
+        sess.sg_r1_echo_at = now                  # an AFO_r1 echo: the r1 app is running
+        if getattr(sess, "sg_flag", None):
+            _log.info("AFO_r1 console echo back (%s floats): 'Speedgoat restarted' cleared", echo_cols)
+        sess.sg_flag = None
+        sess.sg_restart_at = None
+    rb = {}
+    try:
+        rb = ctx.live.readback() or {} if hasattr(ctx.live, "readback") else {}
+    except Exception:
+        rb = {}
+    t = rb.get("t_model")
+    if isinstance(t, (int, float)) and t == t:
+        last = getattr(sess, "sg_last_t", None)
+        if last is not None and t < last - 1.0 and t < RESTART_T_MAX_S:
+            sess.sg_restart_at = now - float(t)       # model time t s ago it was 0
+            sess.sg_restart_from = last
+        sess.sg_last_t = float(t)
+    r1_echo_at = getattr(sess, "sg_r1_echo_at", None)
+    r1_known = r1_echo_at is not None or getattr(sess, "last_model", None) == "AFO_r1"
+    restart_at = getattr(sess, "sg_restart_at", None)
+    echo_absent = tr_age is None or tr_age >= RESTART_ECHO_WAIT_S or echo_cols not in R1_ECHO_COLS
+    if live_now and echo_absent:
+        if getattr(sess, "sg_absent_since", None) is None:
+            sess.sg_absent_since = now
+    else:
+        sess.sg_absent_since = None
+    absent_s = now - sess.sg_absent_since if getattr(sess, "sg_absent_since", None) is not None else 0.0
+    flag = None
+    if live_now and r1_known and echo_absent:
+        if restart_at is not None and now - restart_at > RESTART_ECHO_WAIT_S and (r1_echo_at or 0) < restart_at:
+            flag = "restart"
+        elif absent_s > RESTART_ECHO_WAIT_S or (r1_echo_at is not None and now - r1_echo_at > RESTART_ECHO_WAIT_S):
+            flag = "no-echo"
+    if not flag:
+        if getattr(sess, "sg_flag", None) and not live_now:
+            sess.sg_flag = None
+        return {}
+    detail = ("Model time on 5431 restarted near 0 at " + _hm(restart_at) if restart_at else
+              "5431 is flowing but the AFO_r1 console echo (5433) is absent") + \
+        "; last known app AFO_r1; console echo stopped at " + _hm(r1_echo_at)
+    if getattr(sess, "sg_flag", None) != flag:
+        _log.warning("Speedgoat restarted into its startup app? %s", detail)
+        sess.sg_flag = flag
+    return {"level": "amber", "key": "speedgoat-restarted", "text": STARTUP_APP_TEXT, "detail": detail,
+            "restart_at": restart_at, "echo_stopped_at": r1_echo_at,
+            "todo": "The Speedgoat booted its startup app (the old AFO model). Load and Start AFO_r1 "
+                    "(Trials: Connect, then Start); settings are frozen and nothing is sent until the AFO_r1 echo returns."}
+
+
 def top_status(ctx) -> Dict[str, Any]:
     rc = ctx.runctl.status or {}
     connected = bool(rc.get("connected"))
@@ -121,6 +191,9 @@ def top_status(ctx) -> Dict[str, Any]:
 
     issues: List[Dict[str, Any]] = []
     notes: List[str] = []
+    sg = startup_app_issue(ctx, live_now, tr_st, tr_age)
+    if sg:
+        issues.append(sg)
     off = getattr(ctx.runctl, "offline", None)
     if base["state"] == "not-connected" and off:
         # the last Connect failed: say why (amber) until Disconnect or a successful connect
@@ -143,6 +216,8 @@ def top_status(ctx) -> Dict[str, Any]:
     if base["state"] != "not-connected":
         if running:
             for name, age, needed in (("live", live_age, True), ("console", tr_age, need_training)):
+                if name == "console" and sg:
+                    continue                  # said as "Speedgoat restarted …", not a red "No data"
                 if needed and (age is None or age >= NO_DATA_S):
                     issues.append({"level": "red", "key": "no-data", "stream": name, "age_s": age,
                                    "text": "No data" if age is None else f"No data {age:.1f} s",
@@ -224,7 +299,7 @@ def top_status(ctx) -> Dict[str, Any]:
                            "todo": ("Press that button in the dock again to resend it." if row["name"] in ("motor", "assist", "k")
                                     else "Press Enter in that field to send it again.")})
     # the oldest silent stream first among the reds
-    prio = {"speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
+    prio = {"speedgoat-restarted": 0, "speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
             "bif-mass": 5, "imu-not-ready": 6, "calibrating": 7, "bif-unknown": 10}   # "... differs": 9
     issues.sort(key=lambda i: (0 if i["level"] == "red" else 1, prio.get(i["key"], 9), -(i.get("age_s") or 0)))
     out = dict(base)

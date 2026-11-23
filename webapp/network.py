@@ -691,6 +691,7 @@ def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = Tr
                     v = sample.get(key)
                     if isinstance(v, float) and math.isfinite(v):
                         _readback[key] = v
+                _readback["t_model"] = t_val          # 5431 model time: a restart shows as a jump back to ~0
                 _readback["_at"] = time.monotonic()
 
         now = time.monotonic()
