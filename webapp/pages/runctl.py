@@ -46,6 +46,13 @@ class RunControl:
         job.add(json.dumps(res))
         if "connected" in res:
             self.status, self.status_at = res, time.time()
+            # connected to an app that is already running (or started elsewhere): held side /
+            # mass / mode / K % go out now, not at a Start that may never come
+            if res.get("connected") and res.get("running") and action != "stop" and hasattr(self.ctx, "session"):
+                try:
+                    self.ctx.session.flush_pending(action)
+                except Exception as exc:
+                    job.add(f"send pending failed: {exc}")
         return res
 
     def run_action(self, action: str, *args, _meta=None):

@@ -13,6 +13,7 @@ with the pinned board settings; every attempt is logged.
 """
 from __future__ import annotations
 
+import atexit
 import csv
 import io
 import json
@@ -28,6 +29,53 @@ from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+
+_kill_job = None
+
+
+def die_with_this_process(proc) -> bool:
+    """Windows: put *proc* (and every process it starts) in a job object that is closed,
+    and so killed, when this Python process ends - also on taskkill / TerminateProcess,
+    where atexit does not run. Used for the long-lived `board list --watch`, which would
+    otherwise be left running after each app restart. False if not available."""
+    global _kill_job
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        if _kill_job is None:
+            class IO(ctypes.Structure):
+                _fields_ = [(n, ctypes.c_ulonglong) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+            class BASIC(ctypes.Structure):
+                _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                            ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                            ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                            ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                            ("SchedulingClass", wintypes.DWORD)]
+
+            class EXT(ctypes.Structure):
+                _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                            ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                            ("PeakJobMemoryUsed", ctypes.c_size_t)]
+            job = k32.CreateJobObjectW(None, None)
+            if not job:
+                return False
+            info = EXT()
+            info.Basic.LimitFlags = 0x2000          # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # Extended
+                return False
+            _kill_job = job                          # kept open for the life of this process
+        return bool(k32.AssignProcessToJobObject(_kill_job, wintypes.HANDLE(int(proc._handle))))
+    except Exception:
+        return False
 BOARD = "teensy:avr:teensy41"
 WORKTREE = "@worktree"          # pseudo-source: the repo's working copy (uncommitted edits)
 SERIAL_BAUD = 921600            # DAQ.ino: Serial.begin(921600)
@@ -137,20 +185,26 @@ def fetch(cfg) -> Dict[str, Any]:
         return dict(_fetch_state)
 
 
+_fetch_thread: Optional[threading.Thread] = None
+
+
 def fetch_state() -> Dict[str, Any]:
-    return dict(_fetch_state, running=_fetch_lock.locked())
+    running = _fetch_lock.locked() or (_fetch_thread is not None and _fetch_thread.is_alive())
+    return dict(_fetch_state, running=running)
 
 
 def fetch_in_background(cfg, min_age_s: float = 60.0) -> bool:
     """Start a fetch unless one ran in the last *min_age_s* seconds or is running."""
+    global _fetch_thread
     last = _fetch_state.get("time") or 0
-    if _fetch_lock.locked() or time.time() - last < min_age_s:
+    if fetch_state()["running"] or time.time() - last < min_age_s:
         return False
 
     def _go():
         fetch(cfg)
         _sources_cache.clear()
-    threading.Thread(target=_go, name="teensy-fetch", daemon=True).start()
+    _fetch_thread = threading.Thread(target=_go, name="teensy-fetch", daemon=True)
+    _fetch_thread.start()       # fetch_state() says running from here on, no gap
     return True
 
 
@@ -350,9 +404,38 @@ def parse_memory(text: str) -> Dict[str, str]:
     return out
 
 
+class _CompileLog:
+    """Job proxy for a --verbose compile: keeps short lines (stage markers, warnings,
+    errors, memory report), counts compiler calls instead of logging each long command
+    line, and keeps job.meta["stage"] current."""
+
+    def __init__(self, job):
+        self.job = job
+        self.lines = job.lines
+        job.meta.update(stage="Compiling", compiled=0, reused=0)
+
+    def add(self, line: str) -> None:
+        s, m = line.strip(), self.job.meta
+        low = s.lower()
+        if "arm-none-eabi-g" in s and " -c " in s:
+            m["compiled"] += 1
+            return
+        if low.startswith("using previously compiled file") or low.startswith("using precompiled"):
+            m["reused"] += 1
+            return
+        if low.startswith("linking everything"):
+            m["stage"] = "Linking"
+        elif low.startswith("memory usage"):
+            m["stage"] = "Memory report"
+        if len(s) > 240 and ("arm-none-eabi" in s or "\\tools\\" in s or "/tools/" in s) and "error" not in low:
+            return                      # other long tool command lines
+        self.job.add(line)
+
+
 def compile_job(cfg, job, run_process, source: Optional[str] = None) -> Dict[str, Any]:
     """Build *source* (a branch name or WORKTREE) with the pinned board settings.
     source=None keeps the old behaviour of building the newest firmware branch."""
+    job.meta["stage"] = "Preparing"
     if source is None:
         source = sources(cfg)["newest"] or WORKTREE
     src = resolve(cfg, source)
@@ -364,13 +447,14 @@ def compile_job(cfg, job, run_process, source: Optional[str] = None) -> Dict[str
     sketch = export_source(cfg, src)
     out_dir = build_dir(cfg, src, board["fqbn"])
     os.makedirs(out_dir, exist_ok=True)
-    rc = run_process(job, [cfg["paths"]["arduino_cli"], "compile", "--fqbn", board["fqbn"], "--warnings", "default",
-                           "--build-path", out_dir, sketch], timeout=900)
+    rc = run_process(_CompileLog(job), [cfg["paths"]["arduino_cli"], "compile", "--verbose", "--fqbn", board["fqbn"],
+                                        "--warnings", "default", "--build-path", out_dir, sketch], timeout=900)
     text = "\n".join(job.lines)
     res = {"ok": rc == 0, "source": source, "branch": src["name"], "commit": src["short"], "sha": src["sha"],
            "kind": src["kind"], "dirty": src["kind"] == "worktree", "fqbn": board["fqbn"],
            "build_dir": out_dir, "memory": parse_memory(text), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
     job.add("BUILD OK" if rc == 0 else f"BUILD FAILED (exit {rc})")
+    job.meta["stage"] = "Done" if rc == 0 else "Failed"
     return res
 
 
@@ -385,18 +469,148 @@ def flash_block_reason(build: Optional[Dict[str, Any]], src: Dict[str, Any], boa
     return ""
 
 
+# ---------------------------------------------------------------- "Reboot OK" from USB
+TEENSY_VID, PID_SERIAL, PID_BOOT = "16C0", "0483", "0478"
+BOOT_APPEAR_S = 8.0       # after the loader returns, the bootloader must have shown up by now
+REBOOT_TIMEOUT_S = 15.0   # ... and the board must be back on its serial port within this
+
+
+def usb_ids(vid: str = TEENSY_VID):
+    """Instance IDs of PRESENT USB devices with this VID (Windows cfgmgr32, ~2 ms), or None if
+    the query is not available (then flash_job falls back to watching the COM port list)."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        cm = ctypes.WinDLL("cfgmgr32")
+        flt, n, flags = ctypes.c_wchar_p("USB"), wintypes.ULONG(0), 0x1 | 0x100   # ENUMERATOR | PRESENT
+        if cm.CM_Get_Device_ID_List_SizeW(ctypes.byref(n), flt, flags) != 0:
+            return None
+        buf = ctypes.create_unicode_buffer(n.value)
+        if cm.CM_Get_Device_ID_ListW(flt, buf, n, flags) != 0:
+            return None
+        ids = ctypes.wstring_at(ctypes.addressof(buf), n.value).split("\x00")
+        v = "VID_" + vid.upper()
+        return {i for i in ids if v in i.upper()}
+    except Exception:
+        return None
+
+
+class UsbWatch(threading.Thread):
+    """Follows the Teensy through a flash the way the Teensy Loader does: the HalfKay
+    bootloader (PID 0478) appears = programming; after it, the serial device (PID 0483)
+    appears again = "Reboot OK". Polls every 0.1 s."""
+
+    def __init__(self, ids_fn=None, period: float = 0.1) -> None:
+        super().__init__(daemon=True, name="teensy-usb-watch")
+        self.ids_fn = ids_fn or usb_ids
+        self.period = period
+        self.t0 = time.time()
+        self.available = True
+        self.boot_at: Optional[float] = None
+        self.boot_gone_at: Optional[float] = None
+        self.back_at: Optional[float] = None
+        self._halt = threading.Event()
+
+    @staticmethod
+    def _has(ids, pid):
+        return any(f"PID_{pid}" in i.upper() and "&MI_" not in i.upper() for i in ids)
+
+    def run(self) -> None:
+        while not self._halt.is_set():
+            ids = self.ids_fn()
+            now = time.time()
+            if ids is None:
+                self.available = False
+                return
+            boot, ser = self._has(ids, PID_BOOT), self._has(ids, PID_SERIAL)
+            if boot and self.boot_at is None:
+                self.boot_at = now
+            if self.boot_at is not None and not boot and self.boot_gone_at is None:
+                self.boot_gone_at = now
+            if self.boot_at is not None and ser and not boot and self.back_at is None:
+                self.back_at = now
+                return
+            self._halt.wait(self.period)
+
+    def stop(self) -> None:
+        self._halt.set()
+
+
+FLASHING = threading.Event()   # set while flash_job runs: the port scanner starts nothing new then
+
+
 def flash_job(cfg, job, run_process, port: Dict[str, str], build: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+    FLASHING.set()
+    try:
+        return _flash_job(cfg, job, run_process, port, build, dry_run)
+    finally:
+        FLASHING.clear()
+
+
+def _flash_job(cfg, job, run_process, port: Dict[str, str], build: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
     addr, proto = port.get("upload_address") or port.get("port"), port.get("upload_protocol") or "serial"
     cmd = [cfg["paths"]["arduino_cli"], "upload", "--fqbn", build["fqbn"], "-p", addr, "-l", proto,
            "--input-dir", build["build_dir"]]
     result, rc = "dry-run", 0
-    job.add(f"Flash {build['branch']} @ {build['commit']} with {build['fqbn']} to {port.get('label') or addr}")
+    job.meta.update(stage="Uploading", port_back=None, back_after_s=None)
+    job.add(f"Flash {build['branch']} @ {build['commit']} with {build['fqbn']} to {port.get('label') or addr}"
+            f" (upload via {proto} {addr})")
     if dry_run:
         job.add("DRY RUN - the loader is NOT called. Would run:")
         job.add("  " + " ".join(f'"{c}"' if " " in c else c for c in cmd))
+        job.meta["stage"] = "Done (dry run)"
     else:
+        job.add("The Teensy Loader window may open in the background; no action is needed there.")
+        watch = UsbWatch()
+        watch.start()
+        n0 = len(job.lines)
         rc = run_process(job, cmd, timeout=180)
-        result = "ok" if rc == 0 else f"failed (exit {rc})"
+        out = "\n".join(list(job.lines)[n0:]).lower()
+        bad = [w for w in ("error", "failed", "not found", "unable", "timeout", "timed out") if w in out]
+        if rc != 0 or bad:
+            watch.stop()
+            job.meta["stage"] = "Failed"
+            reason = f"loader exit {rc}" + (f"; it said: {', '.join(bad)}" if bad else "")
+            job.add(f"FLASH FAILED ({reason})")
+            job.meta["reason"] = reason
+            result, rc = f"failed: {reason}", rc or 1
+        else:
+            t_exit = time.time()
+            while watch.is_alive():
+                now = time.time()
+                if watch.boot_at is None:
+                    job.meta["stage"] = "Waiting for bootloader"
+                    if now - t_exit > BOOT_APPEAR_S:
+                        break
+                else:
+                    job.meta["stage"] = "Programming" if watch.boot_gone_at is None else "Rebooting"
+                    if now - max(t_exit, watch.boot_at) > REBOOT_TIMEOUT_S:
+                        break
+                time.sleep(0.1)
+            watch.stop()
+            if not watch.available:
+                job.add("USB watch not available here: checking the COM port list instead.")
+                back = _port_back_fallback(cfg)
+                ok = back is not None
+                reason = "" if ok else "no reboot (serial port not back)"
+            elif watch.back_at is not None:
+                back = _port_back_fallback(cfg, wait_s=5) or "its USB serial port"
+                ok, reason = True, ""
+            else:
+                back, ok = None, False
+                reason = "board never entered bootloader" if watch.boot_at is None else "no reboot"
+            if ok:
+                secs = round((watch.back_at or time.time()) - (watch.boot_at or t_exit), 1) if watch.available else None
+                job.meta.update(stage="Reboot OK", port_back=back, back_after_s=secs)
+                job.add(f"Reboot OK - bootloader seen, board back on {back}" + (f" after {secs} s" if secs is not None else ""))
+                job.add("FLASH OK")
+                result = "ok"
+            else:
+                job.meta.update(stage="Failed", reason=reason)
+                job.add(f"FLASH FAILED - {reason}")
+                result, rc = f"failed: {reason}", 1
     log_path = os.path.join(_log_dir(cfg), "flash_log.csv")
     new = not os.path.exists(log_path)
     with open(log_path, "a", newline="", encoding="utf-8") as fp:
@@ -406,7 +620,36 @@ def flash_job(cfg, job, run_process, port: Dict[str, str], build: Dict[str, Any]
         w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), build["branch"], build["commit"], port.get("label") or addr,
                     dry_run, result, build["build_dir"], build["fqbn"]])
     job.add(f"logged to {log_path}")
-    return {"ok": rc == 0, "result": result, "dry_run": dry_run}
+    return {"ok": rc == 0, "result": result, "reason": job.meta.get("reason", ""), "dry_run": dry_run, "commit": build["commit"],
+            "branch": build["branch"], "port": job.meta.get("port_back") or addr,
+            "back_after_s": job.meta.get("back_after_s"), "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+
+
+def _port_back_fallback(cfg, wait_s: float = 25.0) -> Optional[str]:
+    """COM name of the Teensy once it is listed again (not in bootloader), or None."""
+    t0 = time.time()
+    sc = scanner(cfg)
+    while time.time() - t0 < wait_s:
+        sc.rescan()
+        time.sleep(1.0)
+        ports = [q for q in sc.get().get("ports", []) if q.get("teensy") and q.get("mode") != "Bootloader"
+                 and re.fullmatch(r"COM\d+|/dev/\S+", q.get("port") or "")]
+        if ports:
+            return ports[0]["port"]
+    return None
+
+
+def last_flash_any(cfg) -> Optional[Dict[str, str]]:
+    """Newest real (not dry-run) flash from logs/flash_log.csv, whatever its result."""
+    path = os.path.join(_log_dir(cfg), "flash_log.csv")
+    if not os.path.exists(path):
+        return None
+    last = None
+    with open(path, newline="", encoding="utf-8") as fp:
+        for row in csv.reader(fp):
+            if len(row) >= 6 and row[0] != "time" and row[4] == "False":
+                last = {"time": row[0], "branch": row[1], "commit": row[2], "port": row[3], "result": row[5]}
+    return last
 
 
 def last_flash(cfg) -> Optional[Dict[str, str]]:
@@ -444,11 +687,18 @@ def parse_board_list(text: str) -> List[Dict[str, Any]]:
         if not com and m:
             com = m.group(1)
         serial_no = props.get("serialNumber") or props.get("serial") or ""
-        key = serial_no or com or addr
+        # One row per board: key by COM port first, then serial number, then address. A Teensy
+        # shows up twice (COMx serial + teensy-protocol port) with different serial numbers
+        # (1608535 vs 16085350: Teensyduino appends a 0 on the USB side), and the serial entry
+        # may carry no VID / board, so COM alone decides; COM-less rows are merged below.
+        key = com or serial_no or addr
         d = devices.setdefault(key, {"port": "", "label": "", "board": "", "serial_number": serial_no,
                                      "teensy": False, "mode": "", "monitor_address": "", "monitor_protocol": "",
-                                     "upload_address": "", "upload_protocol": ""})
+                                     "upload_address": "", "upload_protocol": "", "_serials": set()})
         d["teensy"] |= is_teensy
+        if serial_no:
+            d["_serials"].add(serial_no)
+            d["serial_number"] = d["serial_number"] or serial_no
         if boards and not d["board"]:
             d["board"] = boards[0].get("name") or boards[0].get("fqbn") or ""
         if com:
@@ -465,8 +715,26 @@ def parse_board_list(text: str) -> List[Dict[str, Any]]:
             d["mode"] = "Bootloader" if ("bootloader" in low or "halfkay" in low) else (
                 label.split(")")[-1].strip() if ")" in label else "")
         d["label"] = d["label"] or label
+    # a row without COM (teensy-protocol entry whose label has no COMx) belongs to the COM row
+    # of the same board: serial numbers equal, or equal up to Teensyduino's trailing 0
+    def _same(a: set, b: set) -> bool:
+        return any(x == y or x == y + "0" or y == x + "0" for x in a for y in b)
+    for k in [k for k, d in devices.items() if not re.fullmatch(r"COM\d+|/dev/\S+", k)]:
+        d = devices[k]
+        host = next((h for hk, h in devices.items() if hk != k and re.fullmatch(r"COM\d+|/dev/\S+", hk)
+                     and d["_serials"] and _same(d["_serials"], h["_serials"])), None)
+        if host is None:
+            continue
+        host["teensy"] |= d["teensy"]
+        host["board"] = host["board"] or d["board"]
+        if d["upload_protocol"] == "teensy":
+            host["upload_address"], host["upload_protocol"] = d["upload_address"], "teensy"
+            host["mode"] = host["mode"] or d["mode"]
+        host["_serials"] |= d["_serials"]
+        del devices[k]
     out = list(devices.values())
     for d in out:
+        d.pop("_serials", None)
         if not d["port"]:
             d["port"] = d["upload_address"] or d["monitor_address"]
         name = d["board"] or ("Teensy" if d["teensy"] else "Serial device")
@@ -498,36 +766,154 @@ def _pnp_ports() -> List[Dict[str, Any]]:
 
 
 class PortScanner:
-    """Background USB scan with `arduino-cli board list`: every 3 s while the Teensy page
-    is open (touched in the last 20 s), otherwise every 15 s. Reads never block."""
+    """USB port list for the Teensy page; get() never blocks.
+
+    Preferred (2026-11-23): one long-lived `arduino-cli board list --watch --format jsonmini`,
+    the same discovery the Arduino IDE uses. It reports every plug/unplug within about
+    a second, so no new arduino-cli process (1-5 s each on Windows) starts per scan.
+    Fallback when the watcher cannot run (older arduino-cli, crash 3x in a row): one
+    `board list` every 3 s while the Teensy page is open (touched in the last 20 s),
+    otherwise every 15 s. Rescan restarts the watcher (fresh list) or scans now.
+    status() tells the page whether a (re)scan is still running and when it finished.
+    """
 
     FAST_S, SLOW_S, ACTIVE_S = 3.0, 15.0, 20.0
+    SETTLE_S = 3.0          # watcher (re)started: list is complete after this long without news ...
+    QUIET_S = 0.6           # ... or this long after the last add/remove event
+    WATCH_FAILS = 3
 
     def __init__(self, cfg) -> None:
         self.cfg = cfg
         self._lock = threading.Lock()
+        self._raw: Dict[Tuple[str, str], Dict[str, Any]] = {}
         self._ports: List[Dict[str, Any]] = []
         self._error: Optional[str] = None
         self._scanned: Optional[float] = None
         self._touched = 0.0
         self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._proc: Optional[subprocess.Popen] = None
+        self.mode = "watch"                 # "watch" | "poll"
+        self._scan_started: Optional[float] = time.time()   # first list pending
+        self._last_event = 0.0
+        self._rescan_at: Optional[float] = None     # last Rescan press (for "Rescanned hh:mm:ss")
+        self._restarting = False
+        self._closed = False                # close(): the threads end, no new arduino-cli starts
+        atexit.register(self.close)
 
+    # ---- thread management
     def _ensure(self) -> None:
         if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(target=self._loop, name="teensy-ports", daemon=True)
+            self._thread = threading.Thread(target=self._run, name="teensy-ports", daemon=True)
             self._thread.start()
 
-    def touch(self) -> None:
-        self._touched = time.monotonic()
-        self._ensure()
+    def _cli(self) -> str:
+        return self.cfg["paths"].get("arduino_cli") or ""
 
-    def rescan(self) -> None:
-        self.touch()
+    def _run(self) -> None:
+        if self.mode == "watch" and self._cli() and os.path.exists(self._cli()):
+            self._watch_loop()
+        if self._closed:
+            return
+        self.mode = "poll"
+        self._poll_loop()
+
+    def close(self) -> None:
+        self._closed = True
         self._wake.set()
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+    # ---- watch mode
+    def _watch_loop(self) -> None:
+        fails = 0
+        while fails < self.WATCH_FAILS and not self._closed:
+            t0 = time.time()
+            with self._lock:
+                self._raw.clear()
+                self._scan_started = t0
+                self._restarting = False
+            try:
+                proc = subprocess.Popen(
+                    [self._cli(), "board", "list", "--watch", "--format", "jsonmini"],
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
+                    encoding="utf-8", errors="replace", creationflags=CREATE_NO_WINDOW)
+            except Exception as exc:
+                with self._lock:
+                    self._error = f"arduino-cli board list --watch failed ({exc})"
+                return
+            self._proc = proc
+            die_with_this_process(proc)       # no orphan watcher after an app restart
+            junk: List[str] = []
+            for line in proc.stdout:
+                line = line.strip()
+                try:
+                    ev = json.loads(line) if line.startswith("{") else None
+                except ValueError:
+                    ev = None
+                if not isinstance(ev, dict):
+                    if line:
+                        junk.append(line)
+                    continue
+                self._on_event(ev)
+            proc.wait()
+            if self._closed:
+                return
+            with self._lock:
+                restarting = self._restarting
+            if restarting:
+                fails = 0
+                continue
+            fails = fails + 1 if time.time() - t0 < 30 else 1
+            with self._lock:
+                self._error = ("USB watch stopped (arduino-cli exit %s%s); restarting"
+                               % (proc.returncode, (": " + junk[-1][:120]) if junk else ""))
+            time.sleep(1.0)
+        with self._lock:
+            self._error = None      # poll mode explains itself if it fails too
+
+    def _on_event(self, ev: Dict[str, Any]) -> None:
+        typ = ev.get("eventType") or ev.get("type") or ""
+        if typ == "error" or ev.get("error"):
+            with self._lock:
+                self._error = f"USB watch: {ev.get('error') or 'error'}"
+            return
+        port = ev.get("port") or {}
+        key = (port.get("address", ""), port.get("protocol", ""))
+        with self._lock:
+            if typ == "add":
+                self._raw[key] = {"port": port, "matching_boards": ev.get("matching_boards") or []}
+            elif typ == "remove":
+                self._raw.pop(key, None)
+            else:
+                return
+            self._ports = parse_board_list(json.dumps(list(self._raw.values())))
+            self._last_event = time.time()
+            self._error = None
+
+    # ---- poll mode (fallback)
+    def _poll_loop(self) -> None:
+        while not self._closed:
+            if FLASHING.is_set():               # the loader owns the USB port: start nothing new
+                self._wake.wait(0.5)
+                self._wake.clear()
+                continue
+            try:
+                self.scan_once()
+            except Exception as exc:  # never let the scanner die
+                with self._lock:
+                    self._error = str(exc)
+                    self._scan_started = None
+            active = time.monotonic() - self._touched < self.ACTIVE_S
+            self._wake.wait(self.FAST_S if active else self.SLOW_S)
+            self._wake.clear()
 
     def scan_once(self) -> List[Dict[str, Any]]:
-        cli = self.cfg["paths"].get("arduino_cli")
+        cli = self._cli()
         try:
             if not cli or not os.path.exists(cli):
                 raise FileNotFoundError(f"arduino-cli not found at {cli}")
@@ -538,23 +924,62 @@ class PortScanner:
         except Exception as exc:
             ports, err = _pnp_ports(), f"arduino-cli board list failed ({exc}); used Windows device list"
         with self._lock:
-            self._ports, self._error, self._scanned = ports, err, time.time()
+            self._ports, self._error, self._scanned, self._scan_started = ports, err, time.time(), None
         return ports
 
-    def _loop(self) -> None:
-        while True:
+    # ---- page API
+    def touch(self) -> None:
+        self._touched = time.monotonic()
+        self._ensure()
+
+    def rescan(self) -> None:
+        """Fresh list now. Ignored while a (re)scan is still running (no double scans) or
+        while a flash runs (the loader owns the USB port then)."""
+        self.touch()
+        if FLASHING.is_set():
+            return
+        with self._lock:
+            if self._busy_locked():
+                return
+            self._rescan_at = time.time()
+            self._scan_started = time.time()
+            proc = self._proc if self.mode == "watch" else None
+            if proc is not None and proc.poll() is None:
+                self._restarting = True
+        if proc is not None and proc.poll() is None:
             try:
-                self.scan_once()
-            except Exception as exc:  # never let the scanner die
-                with self._lock:
-                    self._error = str(exc)
-            active = time.monotonic() - self._touched < self.ACTIVE_S
-            self._wake.wait(self.FAST_S if active else self.SLOW_S)
-            self._wake.clear()
+                proc.terminate()
+            except Exception:
+                pass
+        else:
+            self._wake.set()
+
+    def _busy_locked(self) -> bool:
+        if self._scan_started is None:
+            return False
+        if self.mode == "watch":
+            now = time.time()
+            settled = (now - self._scan_started > self.SETTLE_S or
+                       (self._last_event > self._scan_started and now - self._last_event > self.QUIET_S))
+            if settled:
+                self._scanned = max(self._last_event, self._scan_started) if self._last_event > self._scan_started \
+                    else self._scan_started + self.SETTLE_S
+                self._scan_started = None
+                return False
+        return True
+
+    def status(self) -> Dict[str, Any]:
+        """{'scanning', 'scanned' (epoch of the last finished list), 'rescan_at', 'mode', 'error'}."""
+        self._ensure()
+        with self._lock:
+            busy = self._busy_locked()
+            return {"scanning": busy, "scanned": self._scanned, "rescan_at": self._rescan_at,
+                    "mode": self.mode, "error": self._error}
 
     def get(self) -> Dict[str, Any]:
         self._ensure()
         with self._lock:
+            self._busy_locked()
             return {"ports": [dict(p) for p in self._ports], "error": self._error, "scanned": self._scanned}
 
 

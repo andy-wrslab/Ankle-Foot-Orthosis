@@ -366,10 +366,12 @@
         var c = $('tConnect'), s = $('tStart'), p = $('tStop');
         if (!c) { return; }
         var busy = st.busy, T = st.target, tablet = !st.local;
-        [c, s, p].forEach(function (b) { b.classList.remove('busy'); });
-        if (!b_conf(s)) { s.textContent = 'Start'; }
-        if (!b_conf(p)) { p.textContent = 'Stop'; }
-        c.textContent = T.connected ? 'Disconnect' : 'Connect';
+        // a button pressed less than its hold time ago keeps the busy text the click handler
+        // gave it (until the server's busy state takes over); the others show their label
+        [c, s, p].forEach(function (b) { if (!busyHeld(b)) { b.classList.remove('busy'); } });
+        if (!b_conf(s) && !busyHeld(s)) { s.textContent = 'Start'; }
+        if (!b_conf(p) && !busyHeld(p)) { p.textContent = 'Stop'; }
+        if (!busyHeld(c)) { c.textContent = T.connected ? 'Disconnect' : 'Connect'; }
         c.title = T.connected ? 'Connected to ' + T.address : 'Connect to ' + T.address;
         if (tablet) {
             [c, s, p].forEach(function (b) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); b.title = 'Start and stop from the OMEN'; });
@@ -397,7 +399,7 @@
         s.title = !T.connected ? 'Connect first' : T.running ? 'Running' :
             'Reload the app and start; the confirmed foot side and mass are sent right after Start';
         p.disabled = !T.running || !T.connected;
-        p.title = !T.connected ? 'Connect first' : !T.running ? 'Stopped' : 'Stop the app (about 1.5 min: the target imports its file log)';
+        p.title = !T.connected ? 'Connect first' : !T.running ? 'Stopped' : 'Stop the app (the file log stays on the target; export it from Trials)';
     }
     function b_conf(b) { return b.classList.contains('confirming'); }
 
@@ -412,7 +414,7 @@
         if (ms) {
             var mst = sv.status.weight, mmsg = sv.status_msg.weight || '', rbw = sv.readback ? sv.readback.weight : null;
             var mt = '', mc = '';
-            if (mst === 'pending') { mt = /after Start/.test(mmsg) ? 'after Start' : /disabled/.test(mmsg) ? 'not sent' : 'on Connect'; mc = 'pending'; }
+            if (mst === 'pending') { mt = /after Start/.test(mmsg) ? 'after Start' : /disabled/.test(mmsg) ? 'not sent' : 'when connected'; mc = 'pending'; }
             else if (mst === 'sending') { mt = 'sending…'; mc = 'pending'; }
             else if (mst === 'error') { mt = 'not set'; mc = 'err'; }
             else if (sv.values.weight != null && rbw != null && Math.abs(+rbw - +sv.values.weight) < 1e-3) { mt = '✓'; mc = 'ok'; }
@@ -427,7 +429,9 @@
             var g = sv.values.bif_mass; var gt = g == null ? '' : String(+g); if (gear.value !== gt) { gear.value = gt; }
             var gs = sv.status.bif_mass, rb = sv.readback ? sv.readback.bif_mass : null;
             var low = rb != null && +rb <= 20;
-            gear.classList.toggle('send-error', gs === 'pending' || gs === 'error' || low);
+            // pending (held, not sent yet) is amber; send error / too low for the Bi-LSTM is red
+            gear.classList.toggle('send-error', gs === 'error' || low);
+            gear.classList.toggle('send-pending', gs === 'pending' && !low);
             gear.title = (gs === 'pending' || gs === 'error') ? (sv.status_msg.bif_mass || 'Not sent') :
                 low ? 'Target has ' + (+rb) + ' kg: the Bi-LSTM gives no assist until this is more than 20 kg' : '';
         }
@@ -437,8 +441,10 @@
             if (v == null && sv.readback && sv.readback[k] != null) { v = sv.readback[k]; }
             var t = v == null ? '' : String(+v); if (inp.value !== t) { inp.value = t; }
             var stt = sv.status[k];
-            if (stt === 'pending' || stt === 'error') { inp.classList.add('send-error'); inp.title = sv.status_msg[k] || 'Not sent'; }
-            else if (inp.classList.contains('send-error') && stt !== undefined) { inp.classList.remove('send-error'); inp.title = ''; }
+            inp.classList.toggle('send-error', stt === 'error');
+            inp.classList.toggle('send-pending', stt === 'pending' || stt === 'sending');
+            inp.title = stt === 'error' ? (sv.status_msg[k] || 'Not sent') :
+                stt === 'pending' ? (sv.status_msg[k] || 'pending').replace(/^pending: /, 'Saved; ') : stt === 'sending' ? 'Sending…' : '';
         });
     }
 
@@ -466,7 +472,7 @@
             html = '<span><b>' + esc((sd.app || '').charAt(0) + (sd.app || '').slice(1).toLowerCase()) + ' foot saved for ' + sid + '.</b> ' +
                 (/disabled/.test(sd.msg || '') ? 'Target writes are off, so it is not sent.' :
                  /after Start/.test(sd.msg || '') ? 'The app is stopped: it is sent right after Start and then read back.' :
-                 'Not connected: it is sent to the target on Connect and then read back.') +
+                 'Not connected: it is sent when connected (at once if the app is running, else right after Start) and then read back.') +
                 '</span><span class="spacer"></span><span class="lock-note">Motor and Assist stay locked until the target reports this side.</span>';
         } else if (sd.state === 'confirm') {
             cls = 'caution';
@@ -550,6 +556,7 @@
         setPill(mb, T.motor.value, T.motor.pending, T.motor.mismatch);
         setPill(ab, T.assist.value, T.assist.pending, T.assist.mismatch);
         setPill(kb, T.k.value, T.k.pending, T.k.mismatch);
+        S.lastT = T;
         var fault = S.drive === 'fault';
         var sw = mb.getAttribute('data-sw');
         // AFO_r1: the statusword cannot tell "STO engaged" from "fault latched after STO was
@@ -561,10 +568,23 @@
         mb.disabled = (fault && T.motor.value !== 1 && !faultReset) || (!sideOk && T.motor.value !== 1);
         // stays RED (fault colour from data-drive) but clickable; after a press that did not clear
         // the fault within 2 s, say so (STO is probably still engaged)
-        var notCleared = faultReset && S.motorFaultPressAt && Date.now() - S.motorFaultPressAt > 2000;
-        if (!fault) { S.motorFaultPressAt = null; }
-        if (notCleared && !S.motorFaultNoted) { S.motorFaultNoted = true; dockMsg('Fault not cleared: is STO released?', true);
-            if (typeof toast === 'function') { toast('Fault not cleared: is STO released?', true); } }
+        // Independent of the Motor value: with STO engaged the model still echoes cmd_motor = 1
+        // after the press (run 12), so this must not depend on faultReset. Kept until the fault
+        // clears or Motor goes OFF again (1 -> 0 after the press).
+        if (!fault) { S.motorFaultPressAt = null; S.motorFaultOnSeen = false; }
+        if (S.motorFaultPressAt) {
+            if (T.motor.value === 1) { S.motorFaultOnSeen = true; }
+            else if (S.motorFaultOnSeen && T.motor.value === 0) { S.motorFaultPressAt = null; S.motorFaultOnSeen = false; }
+        }
+        var NC_MSG = 'Fault not cleared: is STO released?';
+        var notCleared = !!(fault && S.motorFaultPressAt && Date.now() - S.motorFaultPressAt > 2000);
+        if (notCleared && !S.motorFaultNoted) { S.motorFaultNoted = true;
+            if (typeof toast === 'function') { toast(NC_MSG, true); } }
+        var dmEl = $('dockMsg');
+        if (dmEl) {
+            if (notCleared && dmEl.textContent !== NC_MSG) { clearTimeout(S.msgT); dmEl.textContent = NC_MSG; dmEl.style.color = 'var(--alarm)'; }
+            else if (!notCleared && dmEl.textContent === NC_MSG) { dmEl.textContent = ''; dmEl.style.color = ''; }
+        }
         mb.title = notCleared ? 'Fault not cleared: is STO released? Release STO, then press Motor again' + (sw ? ' (' + sw + ')' : '') :
             faultReset ? 'Drive fault' + (sw ? ' (' + sw + ')' : '') + ': release STO, then press Motor to clear it' :
             (fault && isR1 && T.assist.value === 1 && T.motor.value !== 1) ? 'Drive fault: switch Assist off, then press Motor to clear it' :
@@ -628,7 +648,7 @@
             closeSidePop();
             var err = !r.ok || r._status >= 400;
             var t = err ? (r.msg || 'Foot side not accepted') :
-                r.state === 'pending' ? name + ' foot saved for ' + ((S.state || {}).session || {}).sid + ': ' + (r.msg || 'sent on Connect') :
+                r.state === 'pending' ? name + ' foot saved for ' + ((S.state || {}).session || {}).sid + ': ' + (r.msg || 'sent when connected') :
                 (r.msg || name + ' foot sent');
             toast(t, err); dockMsg(r.msg, err); poll();
         }).catch(function () { toast('App not reachable: foot side not sent', true); });
@@ -712,7 +732,12 @@
     function bindDock() {
         [['bMotor', 'motor'], ['bAssist', 'assist'], ['bK', 'k']].forEach(function (x) {
             $(x[0]).addEventListener('click', function () {
-                if (x[1] === 'motor' && S.drive === 'fault') { S.motorFaultPressAt = Date.now(); S.motorFaultNoted = false; }
+                if (x[1] === 'motor') {
+                    // an ON press with the fault bit set is a fault-reset attempt; an OFF press ends it
+                    var on = S.lastT && S.lastT.motor && S.lastT.motor.value === 1;
+                    if (on) { S.motorFaultPressAt = null; S.motorFaultOnSeen = false; }
+                    else if (S.drive === 'fault') { S.motorFaultPressAt = Date.now(); S.motorFaultNoted = false; S.motorFaultOnSeen = false; }
+                }
                 post('/api/console/toggle', {name: x[1]}).then(function (r) {
                     dockMsg(r.ok ? '' : r.msg, !r.ok);
                     if (!r.ok && /unknown/i.test(r.msg || '')) { $('unknownOff').hidden = false; }

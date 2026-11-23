@@ -5,7 +5,11 @@ App on 127.0.0.1:18050 (config target.model AFO_r1, target writes disabled), mai
 packet to :15433 with side 0. Checks: before the side is confirmed Motor is disabled
 ("Confirm the foot side first"); after confirming LEFT (side reads back 0 from the
 console echo) Motor is clickable, neutral grey, with the fault-reset hint; with
-Assist ON the hint says to switch Assist off. Nothing is pressed except the side.
+Assist ON the hint says to switch Assist off. Then (run 12) Motor is pressed with the
+fault bit set and the console echo reports cmd_motor = 1 with statusword 0x0628: after
+2 s "Fault not cleared: is STO released?" shows in the dock, a toast and the button
+title, and stays until Motor goes OFF (echo 0) or the fault clears. Those presses
+send control UDP only to the test listener on :15990.
 
     python test/test_motor_fault.py
 """
@@ -81,7 +85,8 @@ def main():
                            stderr=subprocess.STDOUT, env=dict(os.environ, AFO_GUI_CONFIG=cfgp))
     stop = threading.Event()
     threading.Thread(target=bus, args=(stop,), daemon=True).start()
-    con = replay_senders.start(0, 15433, side=0.0)          # console only (side 0 echo), no bus
+    echo = {"cmd_motor": 0.0}                                 # mutable: the sender reads it every packet
+    con = replay_senders.start(0, 15433, side=0.0, cmds=echo)  # console only (side 0 echo), no bus
     b = None
     rd = ("JSON.stringify((function(){var m=document.getElementById('bMotor');"
           "return {dis:m.disabled, drive:m.getAttribute('data-drive'), bg:m.style.background, title:m.title};})())")
@@ -114,6 +119,43 @@ def main():
             got = json.loads(c.js(rd))["drive"]
             check(f"statusword {sw:#06x} -> {want}", got == want, got)
         check("no UDP sent", not ctl.pkts and not prm.pkts)
+        # run 12: Motor pressed with STO engaged; the model echoes cmd_motor = 1, fault stays
+        rd2 = ("JSON.stringify((function(){var m=document.getElementById('bMotor'),d=document.getElementById('dockMsg'),"
+               "t=document.getElementById('afoToast');return {title:m.title, dis:m.disabled, dock:d?d.textContent:'',"
+               "toast:t?t.textContent:'', toastShown:!!(t&&!t.hidden)};})())")
+        NC = "Fault not cleared: is STO released?"
+        SW[0] = 0x0628
+        c.pump(1.0)
+        c.js("document.getElementById('bMotor').click(); 1")
+        c.pump(0.4)
+        echo["cmd_motor"] = 1.0
+        c.pump(1.0)
+        p0 = json.loads(c.js(rd2))
+        check("press + echo motor 1, < 2 s: not yet 'not cleared'", NC not in p0["title"] and p0["dock"] != NC, p0)
+        c.pump(2.0)
+        p1 = json.loads(c.js(rd2))
+        check("echo motor 1 + 0x0628 for 3 s: dock says not cleared", p1["dock"] == NC, p1)
+        check("echo motor 1 + 0x0628 for 3 s: toast shown", NC in p1["toast"] and p1["toastShown"], p1)
+        check("echo motor 1 + 0x0628 for 3 s: button title", p1["title"].startswith(NC), p1)
+        c.pump(5.0)
+        p2 = json.loads(c.js(rd2))
+        check("message kept while the fault stays (8 s after the press)", p2["dock"] == NC and p2["title"].startswith(NC), p2)
+        echo["cmd_motor"] = 0.0                              # Motor OFF
+        c.pump(1.5)
+        p3 = json.loads(c.js(rd2))
+        check("Motor OFF: message cleared", p3["dock"] != NC and not p3["title"].startswith(NC), p3)
+        # second attempt, then the fault clears (STO released)
+        c.js("document.getElementById('bMotor').click(); 1")
+        c.pump(0.4)
+        echo["cmd_motor"] = 1.0
+        c.pump(3.0)
+        p4 = json.loads(c.js(rd2))
+        check("second press: not cleared again after 2 s", p4["dock"] == NC, p4)
+        SW[0] = 0x0237
+        c.pump(1.5)
+        p5 = json.loads(c.js(rd2))
+        check("fault clears: message gone", p5["dock"] != NC and not p5["title"].startswith(NC), p5)
+        check("presses: UDP only to the test listener", not prm.pkts and 0 < len(ctl.pkts) <= 20, (len(ctl.pkts), len(prm.pkts)))
         check("no browser errors", not c.console, c.console[:4])
     finally:
         stop.set(); con.set()

@@ -7,7 +7,8 @@
   (fresh: side, weight, mode, K %, commands) or getparam
   (right after each setparam, then every ~5 s while connected; all values
   until AFO_r1 is loaded). target_table() lists entered vs target values.
-  Not connected -> pending, sent on Connect.
+  Not connected -> pending, sent when connected (at once if the app is running,
+  else right after Start).
 * Every Start reloads the app (compiled defaults), so after a successful Start
   the entered values are re-applied automatically (logged). The foot SIDE is
   safety-critical: set only after an explicit confirmation (S-ID typed + LEFT/
@@ -149,6 +150,7 @@ class SessionSetup:
         # set when setparam/getparam says "No application is loaded" while the target runs:
         # the app was loaded by another MATLAB session, so this page cannot tune it
         self.app_elsewhere: Optional[float] = None
+        self._flushing = False       # flush_pending thread running
         self.configured_model = mp.configured_model(ctx.cfg)
         self.profiles: Dict[str, Dict[str, Any]] = {}
         self.events: list = []        # start/stop times of this app session (for exports)
@@ -316,8 +318,8 @@ class SessionSetup:
                                 "at": time.time()}
             return f"{sp['label']} saved; not sent (target writes disabled)"
         if not self._connected():
-            self.status[key] = {"state": "pending", "msg": "pending: sent on Connect", "at": time.time()}
-            return f"{sp['label']} saved; will be sent on Connect"
+            self.status[key] = {"state": "pending", "msg": "pending: sent when connected", "at": time.time()}
+            return f"{sp['label']} saved; will be sent when connected"
         rc = self.ctx.runctl.status or {}
         if not rc.get("running"):
             # app stopped (unloaded, or still loaded with ReloadOnStop): Start resets every
@@ -443,6 +445,44 @@ class SessionSetup:
                          "match": values_match(p, sent_p.get(p), tgt)})
         return rows
 
+    def flush_pending(self, why: str = "running") -> None:
+        """Send held (pending) values once the target is connected and the app RUNNING.
+
+        Called on every run-control status (Connect to an app that is already running,
+        an app started elsewhere, a status refresh), so nothing waits for a Start that may
+        never come. Each value goes through _send (setparam, then read back). Values held
+        because target writes are disabled stay held; an unconfirmed side is never sent."""
+        rc = self.ctx.runctl.status or {}
+        if not (rc.get("connected") and rc.get("running")) or not self.writes_enabled:
+            return
+        with self.lock:
+            if self._flushing:
+                return
+            keys = [k for k, st in self.status.items()
+                    if (st or {}).get("state") == "pending" and self.values.get(k) is not None]
+            if not keys:
+                return
+            self._flushing = True
+
+        def run():
+            try:
+                order = sorted(keys, key=lambda k: (k != "side", k))
+                for k in order:
+                    if k == "side":
+                        c = self.side_confirmed
+                        if not c or c["sid"] != self.sid or c["side"] != self.values.get("side"):
+                            continue
+                    t_end = time.time() + 40
+                    while self.ctx.jobs.running("session") and time.time() < t_end:
+                        time.sleep(0.2)
+                    if (self.status.get(k) or {}).get("state") != "pending":
+                        continue
+                    self.audit(f"send pending ({why})", f"{k}={self.values[k]}")
+                    self._send(k, float(self.values[k]))
+            finally:
+                self._flushing = False
+        threading.Thread(target=run, name="send-pending", daemon=True).start()
+
     def after_connect_or_start(self, event: str) -> None:
         """After Connect: send pending values. After Start: re-apply everything entered."""
         self.clear_readback()               # Connect / Start: only values read from now on count
@@ -470,6 +510,8 @@ class SessionSetup:
                     self.status["side"] = {"state": "needs-confirm", "msg": "confirm the foot side", "at": time.time()}
                     self.audit(f"side not re-applied after {event}", "not confirmed in this app session for this S-ID")
                     continue
+            if event != "start" and self._flushing:
+                continue                     # flush_pending (Connect to a running app) sends these
             if event == "start" or self.status.get(k, {}).get("state") == "pending":
                 self.audit(f"re-apply after {event}", f"{k}={self.values[k]}")
                 self._send(k, float(self.values[k]))
@@ -513,7 +555,7 @@ class SessionSetup:
         except (TypeError, ValueError):
             rbi = None
         # confirmed for this S-ID but not on the target yet (no connection, or being sent):
-        # a pending side, sent by setparam on Connect and then read back
+        # a pending side, sent by setparam once connected to a running app, then read back
         c = self.side_confirmed
         sst = self.status.get("side") or {}
         if (want is not None and c and c.get("sid") == self.sid and c.get("side") == int(want)
@@ -523,7 +565,7 @@ class SessionSetup:
                 return {"text": f"{name} · sending…", "state": "pending"}
             m = sst.get("msg") or ""
             tail = ("target writes off" if "disabled" in m else "sent after Start" if "after Start" in m
-                    else "sent on Connect")
+                    else "sent when connected")
             return {"text": f"{name} · pending, {tail}", "state": "pending"}
         if rbi == -1:
             return {"text": "Foot side unset, motor locked until set", "state": "unset"}

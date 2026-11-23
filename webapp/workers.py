@@ -326,13 +326,14 @@ class Job:
         self.result: Any = None
         self.started = time.time()
         self.finished: Optional[float] = None
+        self.meta: Dict[str, Any] = {}       # stage / counters shown while it runs (Teensy build, flash)
 
     def add(self, line: str) -> None:
         self.lines.append(line.rstrip("\r\n"))
 
     def view(self) -> Dict[str, Any]:
         return {"id": self.id, "kind": self.kind, "title": self.title, "state": self.state,
-                "started": self.started, "finished": self.finished, "result": self.result,
+                "started": self.started, "finished": self.finished, "result": self.result, "meta": dict(self.meta),
                 "log": "\n".join(self.lines)}
 
 
@@ -341,6 +342,7 @@ class JobManager:
         self.jobs: Dict[str, Job] = {}
         self.latest: Dict[str, str] = {}
         self._lock = threading.Lock()
+        self._excl = threading.Lock()
 
     def running(self, kind: str) -> Optional[Job]:
         with self._lock:
@@ -371,6 +373,15 @@ class JobManager:
 
         threading.Thread(target=run, name=f"job-{kind}", daemon=True).start()
         return job
+
+    def start_exclusive(self, kind: str, title: str, fn: Callable[[Job], Any]):
+        """Start *fn* unless a job of this kind is running. Atomic: of two near-simultaneous
+        calls (a double click) exactly one starts. Returns (job, True) or (running job, False)."""
+        with self._excl:
+            cur = self.running(kind)
+            if cur is not None:
+                return cur, False
+            return self.start(kind, title, fn), True
 
     def get(self, kind: str) -> Optional[Job]:
         with self._lock:

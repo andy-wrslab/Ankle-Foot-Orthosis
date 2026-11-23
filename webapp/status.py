@@ -141,7 +141,7 @@ def top_status(ctx) -> Dict[str, Any]:
                            "todo": "Pick the correct foot in the side chip (top bar); Motor and Assist stay off."})
         elif chip["state"] == "pending":
             issues.append({"level": "amber", "key": "side-pending", "text": "Foot side pending",
-                           "detail": chip["text"], "todo": "It is sent and read back on Connect / right after Start."})
+                           "detail": chip["text"], "todo": "It is sent and read back once connected to a running app / right after Start."})
         elif chip["state"] in ("warn", "unset"):
             issues.append({"level": "amber", "key": "confirm-side", "text": "Confirm foot side",
                            "detail": ctx.session.side_problem() or chip["text"],

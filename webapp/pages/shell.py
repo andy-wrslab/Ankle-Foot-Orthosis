@@ -124,10 +124,11 @@ def build_app(ctx) -> dash.Dash:
             return jsonify({"ok": False, "err": "OMEN only"}), 403
         import teensy_tools
         from workers import run_process
-        if ctx.jobs.running("teensy"):
-            return jsonify({"ok": False, "err": "busy"}), 409
         source = (request.get_json(silent=True) or {}).get("source")  # branch name; default newest firmware
-        job = ctx.jobs.start("teensy", "build", lambda j: teensy_tools.compile_job(ctx.cfg, j, run_process, source))
+        job, started = ctx.jobs.start_exclusive("teensy", "build",
+                                                lambda j: teensy_tools.compile_job(ctx.cfg, j, run_process, source))
+        if not started:
+            return jsonify({"ok": False, "err": "busy", "job": job.id}), 409
         return jsonify({"ok": True, "job": job.id})
 
     @server.route("/api/trials/open", methods=["POST"])

@@ -276,6 +276,8 @@ button.drive-badge:hover { filter: brightness(.96); }
 .tb-field #sMass, .tb-field #sGear { width: 44px; text-align: right; }
 .input.sent-flash { border-color: var(--accent); transition: border-color 600ms var(--ease); }
 .input.send-error { border-color: var(--alarm); }
+/* held value, not sent yet (not an error): amber, distinct from the red send error */
+.input.send-pending { border-color: var(--caution); box-shadow: inset 0 0 0 1px var(--caution-weak); }
 .adv-pop.top { position: fixed; top: calc(var(--topbar-real, var(--topbar-h)) + 4px); left: auto; right: var(--gutter); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
@@ -571,3 +573,10 @@ ul.pop-checklist li.done { color: var(--text-2); }
 .status-btn .sb-txt { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 @media (max-width: 1400px) { .status-btn .sb-txt { max-width: 220px; } }
 @media (max-width: 640px)  { .status-btn .sb-txt { max-width: 150px; } }
+
+/* Teensy: job stage line under Build / Flash */
+.ty-stage { min-height: 20px; padding: 6px var(--sp-4, 16px) 0; font-size: var(--fs-12, 12px); color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+.ty-stage .ty-spin { width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent;
+                     display: inline-block; animation: spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ty-stage .ty-spin { animation: none; } }
+.btn.danger.confirming { font-variant-numeric: tabular-nums; }
