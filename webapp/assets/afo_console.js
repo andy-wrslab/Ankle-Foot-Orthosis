@@ -699,30 +699,10 @@
             var kv = sv.values.k_percent != null ? sv.values.k_percent : rb.k_percent;
             var t = kv == null ? '' : (+kv).toFixed(1); if (kp.value !== t) { kp.value = t; }
         }
-        // one-shot actions
-        var cal = $('bCal'), left = st.commands.calibrate_busy_s || 0;
-        if (left > 0) { cal.classList.add('busy'); cal.disabled = true; cal.textContent = 'Calibrating… ' + Math.ceil(left) + ' s';
-            cal.title = 'Walk normally until the 30 s calibration finishes'; }
-        else if (cal.classList.contains('busy') && !busyHeld(cal)) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate FSR';
-            cal.title = '30 s FSR (insole pressure) calibration: walk normally until it finishes'; }
-        var zb = $('bZero');
-        if (zb && !busyHeld(zb)) {
-            var zOff = T.assist.value === 0;
-            zb.classList.remove('busy'); if (zb.textContent !== 'Zero') { zb.textContent = 'Zero'; }
-            zb.setAttribute('aria-disabled', zOff ? 'false' : 'true');
-            zb.title = zOff ? 'Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)' :
-                'Zero: switch Assist off first (hold the ankle still in neutral)';
-        }
-        // Calibrate IMU (AFO_r1): enabled only when the loaded app has Gyro_Cal_Request and Assist or Motor is off
-        var ib = $('bImuCal'), ic = st.imu_cal || {};
-        if (ib && !(busyHeld(ib) && ic.state === 'idle')) {
-            ib.hidden = !ic.visible;
-            var busy = ic.state === 'busy';
-            ib.classList.toggle('busy', busy);
-            ib.disabled = busy || !ic.enabled;
-            ib.textContent = ic.state === 'idle' ? 'Calibrate IMU' : ic.text;
-            ib.title = busy ? 'Hold still until the IMU is ready' : (ic.enabled ? 'Resets the IMU front end; the wearer holds still for 5 s' :
-                (ic.reason || ''));
+        // one-shot actions (assets/afo_dock_actions.js): fixed labels, lit / greyed / pressed by colour,
+        // `disabled` always cleared (Zero stayed grey after one press, 15:05)
+        if (window.AFODockActions) {
+            AFODockActions.render({zero: $('bZero'), imu: $('bImuCal'), cal: $('bCal'), reset: $('bResetSV')}, st, Date.now());
         }
     }
 
@@ -918,39 +898,24 @@
             });
         }
         kp.addEventListener('blur', function () { if (kp.value !== start && kp.value.trim() !== '') { sendK(kp.value.trim(), false); } });
-        $('bCal').addEventListener('click', function () {
-            busyNow($('bCal'), 'Calibrating… 30 s', 2500);
-            post('/api/console/pulse', {name: 'calibrate'}).then(function (r) {
-                dockMsg(r.ok ? '' : r.msg, !r.ok);
-                if (!r.ok) { $('bCal')._busyUntil = 0; }
-                poll();
-            });
-        });
-        $('bImuCal').addEventListener('click', function () {
-            busyNow($('bImuCal'), 'Calibrate IMU: sending…', 2500);
-            post('/api/console/imucal', {}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); if (!r.ok) { $('bImuCal')._busyUntil = 0; } poll(); });
-        });
-        $('bZero').addEventListener('click', function () {
-            var b = $('bZero');
+        // Zero / Calibrate FSR: toggles; Reset SV: 200 ms pulse; Calibrate IMU: counter + 1.
+        // No text change and no toast on success, only a message on an error or refusal.
+        function dockAct(id, url, body) {
+            var b = $(id);
+            if (!b || b.disabled) { return; }
             if (b.getAttribute('aria-disabled') === 'true') { dockMsg(b.title, true); return; }
-            busyNow(b, 'Zeroing…', 600);
-            post('/api/console/pulse', {name: 'zero'}).then(function (r) {
-                if (r.ok) { toast('Zeroed', false); clearTimeout(S.toastT);
-                    S.toastT = setTimeout(function () { var el = $('afoToast'); if (el) { el.hidden = true; } }, 1500); }
-                else { dockMsg(r.msg, true); b._busyUntil = 0; }
+            if (id === 'bImuCal' && b.classList.contains('lit')) { return; }    // running: wait for IMU ready
+            if (window.AFODockActions) { AFODockActions.press(b, Date.now()); }
+            post(url, body).then(function (r) {
+                if (!r.ok) { dockMsg(r.msg, true); }
+                else if (r.state === 0 || r.state === 1) { b.classList.toggle('lit', r.state === 1); }
                 poll();
             });
-        });
-        $('bResetSV').addEventListener('click', function () {
-            var b = $('bResetSV');
-            b.textContent = 'Resetting…'; b.classList.add('busy');
-            post('/api/console/pulse', {name: 'reset'}).then(function (r) {
-                b.classList.remove('busy');
-                if (r.ok) { b.textContent = 'Reset sent'; setTimeout(function () { b.textContent = 'Reset SV'; }, 1500); }
-                else { b.textContent = 'Reset SV'; dockMsg(r.msg, true); }
-                poll();
-            });
-        });
+        }
+        $('bZero').addEventListener('click', function () { dockAct('bZero', '/api/console/pulse', {name: 'zero'}); });
+        $('bCal').addEventListener('click', function () { dockAct('bCal', '/api/console/pulse', {name: 'calibrate'}); });
+        $('bResetSV').addEventListener('click', function () { dockAct('bResetSV', '/api/console/pulse', {name: 'reset'}); });
+        $('bImuCal').addEventListener('click', function () { dockAct('bImuCal', '/api/console/imucal', {}); });
     }
 
     // ---------------------------------------------------------- Trials

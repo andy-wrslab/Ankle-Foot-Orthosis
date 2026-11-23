@@ -100,18 +100,20 @@ def zero():
                       lambda cfg, *v, force=False: sent.append((time.time(), v)), lambda *a, **k: None, lambda: dict(rb))
     r = cs.pulse("zero")
     time.sleep(0.4)
-    check("Zero: accepted with Assist off", r["ok"] and r["msg"] == "Zeroed", r)
-    check("Zero: exactly two packets, field 0 = 1 then 0", len(sent) == 2 and sent[0][1][0] == 1.0 and sent[1][1][0] == 0.0, sent)
-    check("Zero: ~200 ms pulse", len(sent) == 2 and 0.15 <= sent[1][0] - sent[0][0] <= 0.35, [round(x[0] - sent[0][0], 3) for x in sent])
-    check("Zero: motor / assist / k unchanged (1, 0, 1) in both packets", all(p[1][1:4] == (1.0, 0.0, 1.0) for p in sent), sent)
+    # Andy 15:06 "they should all just be toggle": Zero is a latched toggle (test_dock_buttons.py)
+    check("Zero: accepted with Assist off (toggle ON, no success text)", r["ok"] and r.get("state") == 1 and r["msg"] == "", r)
+    check("Zero: one packet, field 0 = 1 (latched)", len(sent) == 1 and sent[0][1][0] == 1.0, sent)
+    check("Zero: motor / assist / k unchanged (1, 0, 1)", all(p[1][1:4] == (1.0, 0.0, 1.0) for p in sent), sent)
+    cs.pulse("zero")          # back off
     rb["cmd_assist"] = 1.0
     sent.clear()
     r = cs.pulse("zero")
     check("Zero: refused with Assist on, nothing sent", not r["ok"] and "Assist off" in r["msg"] and not sent, (r, sent))
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
-    check("dock: Zero button with the tooltip, aria-disabled when Assist is on",
+    da = open(os.path.join(APP, "assets", "afo_dock_actions.js"), encoding="utf-8").read()
+    check("dock: Zero button with the tooltip, aria-disabled when Assist is on (afo_dock_actions.js)",
           'id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)"' in js
-          and "zb.setAttribute('aria-disabled', zOff ? 'false' : 'true');" in js)
+          and "var zLock = !zLit && assist !== 0;" in da and "b.setAttribute('aria-disabled', s.locked ? 'true' : 'false');" in da)
 
 
 def page_static():

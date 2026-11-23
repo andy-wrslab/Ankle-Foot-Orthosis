@@ -219,15 +219,17 @@ def main():
             c.pump(2.5)
             ms3, txt, info = real_click(c, "#bCal")
             print(f"[{view}] Calibrate FSR -> {txt!r} {ms3} ms", flush=True)
-            check(f"{view}: Calibrate FSR -> 'Calibrating…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Calibrating")
-                  and ms3 is not None and ms3 < LIMIT_MS, (txt, ms3))
+            # Andy 15:06: the label never changes; the click shows a pressed style, then lit (toggle)
+            label = c.js("document.getElementById('bCal').textContent")
+            check(f"{view}: Calibrate FSR keeps its label (no busy text)", label == "Calibrate FSR", (label, txt, ms3))
+            ms3 = None              # no text change to time any more (the pressed style is CSS)
             c.pump(1.0)
-            held = c.js("document.getElementById('bCal').textContent")
-            check(f"{view}: Calibrating… kept (1.6 s)", str(held).startswith("Calibrating"), held)
+            lit = c.js("document.getElementById('bCal').className")
+            check(f"{view}: Calibrate FSR lit after the press (toggle ON)", "lit" in str(lit), lit)
+            real_click(c, "#bCal")      # toggle back off before the next view
+            c.pump(1.0)
             out[view] = dict(tr, click_ms=[ms1, ms2, ms3], click_max_ms=max(x for x in (ms1, ms2, ms3) if x is not None)
                              if any(x is not None for x in (ms1, ms2, ms3)) else None)
-            if view != views[-1][0]:
-                c.pump(28.0)      # let the 30 s calibration end before the next view
         print("LATENCY " + json.dumps(out), flush=True)
         check("UDP only to the test listener (FSR pulses), no param writes", not prm.pkts and len(ctl.pkts) <= 20,
               (len(ctl.pkts), len(prm.pkts)))

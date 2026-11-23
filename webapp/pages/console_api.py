@@ -153,6 +153,7 @@ def commands_view(ctx) -> Dict[str, Any]:
         pending = bool(recent and r.get("source") == "model" and sent.get(t) is not None and sent.get(t) != r.get("value"))
         out[t] = {"value": r.get("value"), "source": r.get("source"), "pending": pending, "mismatch": t in mism}
     return {"toggles": out, "calibrate_busy_s": v["calibrate_busy_s"], "last_pulse": v["last_pulse"],
+            "latched": v.get("latched") or {},
             "params_used_by_model": v["params_used_by_model"]}
 
 

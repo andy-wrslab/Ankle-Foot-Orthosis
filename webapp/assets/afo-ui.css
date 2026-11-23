@@ -466,6 +466,11 @@ button.drive-badge:hover { filter: brightness(.96); }
    height as the toggles, no pill (they are momentary, not states). */
 .dock .actions { display: flex; gap: var(--sp-3); }
 .btn.act { height: var(--btn-lg); padding: 0 16px; }
+/* Andy 15:06: fixed labels, state by colour only. Lit = Zero / Calibrate FSR toggle on, or
+   Calibrate IMU running (same fill as an ON pill); a brief pressed tint on click. */
+.btn.act.lit, .btn.act.lit:hover { background: var(--text); border-color: var(--text); color: #fff; }
+.btn.act.pressed { background: var(--surface-2); transform: translateY(1px); }
+.btn.act.lit.pressed { opacity: .85; }
 
 /* ---------- Tables (Trials, Signals list) ------------------------------ */
 .table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
