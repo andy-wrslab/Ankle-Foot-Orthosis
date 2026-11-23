@@ -374,7 +374,8 @@ ADV_FIELD = {"sv_target_min": "sv_target_min", "sv_target_max": "sv_target_max",
              "target_step_up": "target_step_up", "target_step_down": "target_step_down",
              "window_up": "step_up_window", "window_down": "step_down_window",
              "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
-             "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff"}
+             "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff",
+             "fade_ms": "standstill_fade_ms"}      # run 16c (5435 [15], echo col 44)
 _RANGE = re.compile(r"(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)")
 
 
@@ -417,14 +418,18 @@ class AdvLink(SettingsLink):
     PORT_KEY, PORT_DEFAULT = "adv_port", 5435
     COUNTER = None
     KEEP: Dict[str, float] = {}                # NaN = keep (any invalid value keeps the one in use)
-    TAIL = (0.0, 0.0)                          # [14] reserved_spring, [15] reserved: ignored
+    TAIL = ()                                  # slots come from the layout (SLOTS): reserved = 0
     UNSET: Dict[str, float] = {}
 
     LAYOUT = ADV_LAYOUT
 
     def __init__(self, cfg, echo_fn, layout_path: Optional[str] = None, **kw):
         fields, rules, lay = load_adv_layout(layout_path or self.LAYOUT)
-        assert struct.calcsize(lay["format"]) == self.PACKET.size == 4 * (3 + len(fields) + len(self.TAIL)), lay["format"]
+        # every packet slot by index, as in the layout (run 16c: [14] reserved_spring, [15]
+        # standstill_fade_ms; run 15/16b: [14] reserved_spring, [15] reserved)
+        self.SLOTS = [f["name"] for f in sorted(lay["fields"], key=lambda x: x["index"])]
+        assert struct.calcsize(lay["format"]) == self.PACKET.size == 4 * len(self.SLOTS), lay["format"]
+        assert self.SLOTS[:3] == ["magic", "version", "seq"], self.SLOTS[:3]
         self.FIELDS = tuple(fields)
         self.ECHO_COL = {f: f for f in fields}           # 5433 cols 18-28 carry the same names
         self.RULES = rules
@@ -477,14 +482,29 @@ class AdvLink(SettingsLink):
 
     def _packet(self, values: Dict[str, float]):
         """seq = echoed adv_seq + 1 for a fresh press (nothing pending); retries and a press
-        while another is pending count on from the last seq sent."""
+        while another is pending count on from the last seq sent. Slots by the layout:
+        reserved ones 0, a value the echo does not carry (e.g. the fade on a 44-float run-16b
+        build) NaN = keep."""
         if not self.pending or all(not p["seqs"] for p in self.pending.values()):
             row, age, cols = self._echo()
             try:
                 self.seq = int(float(row.get(self.SEQ_COL)))
             except (TypeError, ValueError):
                 pass
-        return super()._packet(values)
+        self.seq += 1
+        out = []
+        for name in self.SLOTS:
+            if name == "magic":
+                out.append(self.MAGIC)
+            elif name == "version":
+                out.append(self.VERSION)
+            elif name == "seq":
+                out.append(float(self.seq))
+            elif name.startswith("reserved"):
+                out.append(0.0)
+            else:
+                out.append(float(values.get(name, float("nan"))))
+        return tuple(out)
 
     def rules_for_page(self) -> Dict[str, Dict[str, Any]]:
         """{session key: {min, max, int}} for the page's own check before sending."""
@@ -505,8 +525,7 @@ class GuardLink(AdvLink):
     SEQ_COL = "guard_seq"
     ECHO_N = 44
     PORT_KEY, PORT_DEFAULT = "guard_port", 5436
-    TAIL = (0.0,)                              # [11] reserved: ignored
-    LAYOUT = GUARD_LAYOUT
+    LAYOUT = GUARD_LAYOUT                      # [11] reserved -> 0 (SLOTS)
 
     def check(self, field: str, value: Any) -> Optional[str]:
         r = self.RULES.get(field)

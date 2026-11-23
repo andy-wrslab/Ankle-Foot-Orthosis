@@ -24,7 +24,8 @@ Run 15 (Advanced over UDP 5435, '<31f'): 13 more, cols 18-28 = the 11 Advanced v
 use (order of round1/settings_adv_udp_layout.json), 29 adv_seq, 30 spring_stiffness
 (read-only; the page ignores it) (RUN15_TAIL). Run 16 ('<44f'): cols 31-43 slack_flag,
 jam_flag (latched until Motor OFF -> ON), slack_count, slack_last_stride, the 8 torque-guard
-settings in use, guard_seq (RUN16_TAIL). Any layout parses 12, 15, 18, 31 and 44 floats.
+settings in use, guard_seq (RUN16_TAIL). Run 16c ('<45f'): col 44 standstill_fade_ms
+(RUN16C_TAIL). Any layout parses 12, 15, 18, 31, 44 and 45 floats.
 
 Sends ("hb", status) 20 times a second: rates, counters, the latest valid row as
 {name: value} and its age. Answers ("data", names, window_s) requests with the
@@ -63,6 +64,8 @@ RUN15_TAIL = ["sv_target_min", "sv_target_max", "target_step_up", "target_step_d
 # run 16 (torque guard over UDP 5436): 13 more floats, cols 31-43 -> '<44f'
 RUN16_TAIL = ["slack_flag", "jam_flag", "slack_count", "slack_last_stride", "slack_floor_on", "slack_thr_nm", "slack_ms",
               "slack_floor_nm", "jam_cut_on", "jam_apnm", "jam_ms", "fb_filter", "guard_seq"]
+# run 16c: 1 more float, col 44 = standstill_fade_ms in use -> '<45f' (run 16b stays '<44f')
+RUN16C_TAIL = ["standstill_fade_ms"]
 
 
 def load_layout(path):
@@ -103,7 +106,7 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     # those last columns are an optional tail, so 12-float packets of older builds
     # still parse (base = the first 12 columns).
     opt = list(lay.get("optional_columns") or DEFAULT_TAIL)
-    tails = [opt, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL]
+    tails = [opt, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL]
     # a longer layout (15 / 18 / 31 columns) = base 12 + the known tails: strip them from the
     # end (outermost first), so every shorter packet of an older build still parses
     if fmt.format.startswith("<") and fmt.format.endswith("f"):

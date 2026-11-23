@@ -1,6 +1,6 @@
 {
   "port": 5433,
-  "format": "<44f",
+  "format": "<45f",
   "period_ms": 10,
   "note": "console values not on the main bus; 5431 and 5432 unchanged",
   "columns": [
@@ -311,6 +311,13 @@
       "unit": "",
       "description": "seq of the last accepted 5436 guard packet (0 = none yet)",
       "column": 43
+    },
+    {
+      "name": "standstill_fade_ms",
+      "tag": "ADV_FadeMs",
+      "unit": "ms",
+      "description": "standing-still fade time in use (5435 field 15; 0 = hard cut)",
+      "column": 44
     }
   ]
 }

@@ -51,7 +51,8 @@ def names_of(lay):
 
 
 def layouts():
-    con = json.load(open(os.path.join(ROUND1, "console_udp_layout.json"), encoding="utf-8"))
+    # the run-16b console layout, pinned (round1 moved on to run 16c, '<45f')
+    con = json.load(open(os.path.join(FIX, "run16b_console_udp_layout.json"), encoding="utf-8"))
     r15 = json.load(open(os.path.join(FIX, "run15_console_udp_layout.json"), encoding="utf-8"))
     g = json.load(open(os.path.join(ROUND1, "settings_guard_udp_layout.json"), encoding="utf-8"))
     n = names_of(con)
@@ -69,14 +70,9 @@ def layouts():
         a = json.load(open(os.path.join(APP, "config", f), encoding="utf-8"))
         b = json.load(open(os.path.join(ROUND1, f), encoding="utf-8"))
         if f == "settings_adv_udp_layout.json":
-            # Andy 16:31: the standing-still cutoff may be 0 (0..5000); round1 matches once the
-            # Simulink thread's rebuilt layout lands, until then only that rule may differ
+            # Andy 16:31: the standing-still cutoff may be 0 (round1 run 16b+: 0..5000)
             cut = [x["rule"] for x in a["fields"] if x["name"] == "standing_still_cutoff"]
-            check("config: standing-still cutoff 0..5000", cut == ["0..5000 (threshold_pressure); else keep"], cut)
-            for lay in (a, b):
-                for x in lay["fields"]:
-                    if x["name"] == "standing_still_cutoff":
-                        x["rule"] = "0..5000 (threshold_pressure); else keep"
+            check("config: standing-still cutoff 0..5000", len(cut) == 1 and cut[0].startswith("0..5000"), cut)
         check(f"config/{f} = round1 copy", a == b)
     import udp_settings as U
     fields, rules, _ = U.load_adv_layout(os.path.join(ROUND1, "settings_guard_udp_layout.json"))

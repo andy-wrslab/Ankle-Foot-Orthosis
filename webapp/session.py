@@ -79,6 +79,9 @@ SPECS = [
     # Advanced: Safety
     {"key": "threshold_pressure", "label": "Standing-still cutoff", "kind": "number", "min": 0, "max": 5000,
      "adv": True, "block": "threshold_pressure|Value", "default": 200, "unit": "counts"},
+    # run 16c: standing-still torque fade (5435 [15], echo col 44); 0 = hard cut. UDP only (no block)
+    {"key": "fade_ms", "label": "Fade", "kind": "number", "min": 0, "max": 1000, "adv": True, "models": ["AFO_r1"],
+     "block": None, "default": 200, "unit": "ms", "udp_only": True},
 ]
 
 
@@ -92,6 +95,8 @@ def _model_paths(model: str) -> Dict[str, str]:
         if not spec_in(sp, model):
             continue
         blk = sp.get("block_r1") if model == "AFO_r1" and sp.get("block_r1") else sp["block"]
+        if not blk:
+            continue                      # UDP only (run 16c fade): no MATLAB block
         name, prm = blk.rsplit("|", 1)
         out[sp["key"]] = f"{mp.block_path(model, name)}|{prm}"
     return out
@@ -671,13 +676,17 @@ class SessionSetup:
                     "target_step_up": "target_step_up", "target_step_down": "target_step_down",
                     "window_up": "step_up_window", "window_down": "step_down_window",
                     "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
-                    "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff"}
+                    "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff",
+                    "fade_ms": "standstill_fade_ms"}
+    # in the echo only from run 16c (45 floats): not required for the run-15 Advanced profile
+    ADV_OPTIONAL = ("fade_ms",)
     ADV_READONLY_MSG = "Advanced is read-only on this build (sending over UDP 5435 comes next)"
 
     def adv_echo(self, echo: Optional[Dict[str, Any]] = None) -> bool:
         """Run 15: the fresh 5433 echo carries the Advanced values (31 floats, adv_seq)."""
         e = self.echo() if echo is None else echo
-        return e.get("adv_seq") is not None and all(e.get(c) is not None for c in self.ADV_ECHO_COL.values())
+        return e.get("adv_seq") is not None and all(e.get(c) is not None for k, c in self.ADV_ECHO_COL.items()
+                                                    if k not in self.ADV_OPTIONAL)
 
     def adv_link_status(self, field: str, state: str, msg: str) -> None:
         for k, f in self.ADV_ECHO_COL.items():
@@ -767,8 +776,8 @@ class SessionSetup:
         if self.link() is not None:
             if self.adv_profile():
                 return []                     # run 15 (sticky): the Advanced values come from the echo
-            return [k for k in self.advanced_keys() if k not in self.ECHO_ONLY_KEYS]
-        return [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
+            return [k for k in self.advanced_keys() if k not in self.ECHO_ONLY_KEYS and not (self.spec(k) or {}).get("udp_only")]
+        return [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo" and not sp.get("udp_only")]
 
     def read_after(self, why: str, wait_s: float = 15.0) -> None:
         """One getparam read once the current run-control / session job has finished (after

@@ -176,7 +176,7 @@ def advanced_run14():
     dev.on = True
     time.sleep(0.3)
     keys = s.getparam_keys()
-    adv = s.advanced_keys()
+    adv = [k for k in s.advanced_keys() if not (s.spec(k) or {}).get("udp_only")]     # the run-16c fade has no block
     check("run 14: getparam read = the 11 Advanced constants", sorted(keys) == sorted(adv) and len(adv) == 11, (keys, adv))
     check("Spring stiffness removed (Andy 15:03): not read, not counted", "spring" not in adv and "spring" not in keys, adv)
     check("run 14: no side / mass / BIF mass / mode / K in the getparam read",

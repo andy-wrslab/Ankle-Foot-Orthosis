@@ -1,0 +1,316 @@
+{
+  "port": 5433,
+  "format": "<44f",
+  "period_ms": 10,
+  "note": "console values not on the main bus; 5431 and 5432 unchanged",
+  "columns": [
+    {
+      "name": "t_model",
+      "tag": "",
+      "unit": "s",
+      "description": "model time, same clock as main bus 5431 column 0",
+      "column": 0
+    },
+    {
+      "name": "side",
+      "tag": "TX_Side",
+      "unit": "",
+      "description": "side in use (Left 0/Right 1); -1 = unset at start, drive held disabled until 0 or 1",
+      "column": 1
+    },
+    {
+      "name": "weight_kg",
+      "tag": "TX_Weight",
+      "unit": "kg",
+      "description": "body weight in use (moment x weight); build default until a valid 5434 mass",
+      "column": 2
+    },
+    {
+      "name": "assist_mode",
+      "tag": "TX_Assist_Mode",
+      "unit": "",
+      "description": "assist mode in use into the Multiport Switch: 1 = RL, 2 = ILC, 3 = fixed K",
+      "column": 3
+    },
+    {
+      "name": "fixed_k_pct",
+      "tag": "TX_Fixed_K",
+      "unit": "%",
+      "description": "fixed-K assistance level in use",
+      "column": 4
+    },
+    {
+      "name": "cmd_motor",
+      "tag": "START_STOP",
+      "unit": "",
+      "description": "control in [1] motor, as latched by the model",
+      "column": 5
+    },
+    {
+      "name": "cmd_assist",
+      "tag": "Assistance_Signal",
+      "unit": "",
+      "description": "control in [2] assist",
+      "column": 6
+    },
+    {
+      "name": "cmd_k",
+      "tag": "K_Signal",
+      "unit": "",
+      "description": "control in [3] k",
+      "column": 7
+    },
+    {
+      "name": "cmd_calibrate_pressure",
+      "tag": "Pressure_Calibration_Trigger",
+      "unit": "",
+      "description": "control in [4] calibrate pressure",
+      "column": 8
+    },
+    {
+      "name": "cmd_reset_sv",
+      "tag": "Reset_SV_Estimator",
+      "unit": "",
+      "description": "control in [5] reset SV estimator",
+      "column": 9
+    },
+    {
+      "name": "imu_ok",
+      "tag": "IMU_OK",
+      "unit": "",
+      "description": "1 = IMU sample good and good for 20 ms",
+      "column": 10
+    },
+    {
+      "name": "imu_bad_count",
+      "tag": "IMU_Bad_Count",
+      "unit": "",
+      "description": "rejected IMU samples since app start",
+      "column": 11
+    },
+    {
+      "name": "bif_valid",
+      "tag": "BIF_Valid",
+      "unit": "",
+      "description": "1 = Bi-LSTM estimate valid (calibrated, side and BIF_mass_kg set); 10 ms",
+      "column": 12
+    },
+    {
+      "name": "bif_cal_progress",
+      "tag": "BIF_Dbg",
+      "unit": "",
+      "description": "Bi-LSTM 30 s calibration walk progress 0..1 (dbg element 8); 10 ms",
+      "column": 13
+    },
+    {
+      "name": "bif_bias_ready",
+      "tag": "BIF_Bias_Ready",
+      "unit": "",
+      "description": "1 = gyro bias measured (5 s standing after app start or Calibrate IMU); 1 ms",
+      "column": 14
+    },
+    {
+      "name": "gyro_cal_request",
+      "tag": "SET_Gyro",
+      "unit": "",
+      "description": "gyro_cal_request counter in use; a change re-runs the 5 s gyro bias",
+      "column": 15
+    },
+    {
+      "name": "settings_seq",
+      "tag": "SET_Seq",
+      "unit": "",
+      "description": "seq of the last accepted 5434 settings packet (0 = none yet)",
+      "column": 16
+    },
+    {
+      "name": "bif_mass_kg",
+      "tag": "SET_BIFMass",
+      "unit": "kg",
+      "description": "body mass in use by the Bi-LSTM (0 = not set yet)",
+      "column": 17
+    },
+    {
+      "name": "sv_target_min",
+      "tag": "ADV_SVMin",
+      "unit": "m/s",
+      "description": "min walking-speed target in use (SV_Target_min)",
+      "column": 18
+    },
+    {
+      "name": "sv_target_max",
+      "tag": "ADV_SVMax",
+      "unit": "m/s",
+      "description": "max walking-speed target in use (SV_Target_max)",
+      "column": 19
+    },
+    {
+      "name": "target_step_up",
+      "tag": "ADV_StepUp",
+      "unit": "m/s",
+      "description": "target step up in use (target_speed3)",
+      "column": 20
+    },
+    {
+      "name": "target_step_down",
+      "tag": "ADV_StepDown",
+      "unit": "m/s",
+      "description": "target step down in use (target_speed4)",
+      "column": 21
+    },
+    {
+      "name": "step_up_window",
+      "tag": "ADV_WinUp",
+      "unit": "strides",
+      "description": "step-up window in use (window_length)",
+      "column": 22
+    },
+    {
+      "name": "step_down_window",
+      "tag": "ADV_WinDown",
+      "unit": "strides",
+      "description": "step-down window in use (window_length1)",
+      "column": 23
+    },
+    {
+      "name": "high_assist_level",
+      "tag": "ADV_AssistThr",
+      "unit": "",
+      "description": "high-assist level in use (assist_threshold, 0-10)",
+      "column": 24
+    },
+    {
+      "name": "high_assist_strides",
+      "tag": "ADV_MinCycles",
+      "unit": "strides",
+      "description": "high-assist strides in use (min_cycles)",
+      "column": 25
+    },
+    {
+      "name": "torque_p_gain",
+      "tag": "ADV_P",
+      "unit": "",
+      "description": "torque PI P gain in use",
+      "column": 26
+    },
+    {
+      "name": "torque_i_gain",
+      "tag": "ADV_I",
+      "unit": "",
+      "description": "torque PI I gain in use (a change resets the PI integrator)",
+      "column": 27
+    },
+    {
+      "name": "standing_still_cutoff",
+      "tag": "ADV_PThresh",
+      "unit": "counts",
+      "description": "standing-still cutoff in use (threshold_pressure, pSum range over 0.7 s)",
+      "column": 28
+    },
+    {
+      "name": "adv_seq",
+      "tag": "ADV_Seq",
+      "unit": "",
+      "description": "seq of the last accepted 5435 Advanced packet (0 = none yet)",
+      "column": 29
+    },
+    {
+      "name": "spring_stiffness",
+      "tag": "ADV_Spring",
+      "unit": "N*m/deg",
+      "description": "spring stiffness (Spring Constant Nm/deg), read-only",
+      "column": 30
+    },
+    {
+      "name": "slack_flag",
+      "tag": "GRD_Slack",
+      "unit": "",
+      "description": "1 = slack detected (torque < slack_thr for > slack_ms, drive enabled) until torque > 0",
+      "column": 31
+    },
+    {
+      "name": "jam_flag",
+      "tag": "GRD_Jam",
+      "unit": "",
+      "description": "1 = jam detected, latched until Motor OFF -> ON",
+      "column": 32
+    },
+    {
+      "name": "slack_count",
+      "tag": "GRD_SlackCount",
+      "unit": "",
+      "description": "slack events since app start",
+      "column": 33
+    },
+    {
+      "name": "slack_last_stride",
+      "tag": "GRD_SlackStride",
+      "unit": "",
+      "description": "slack events in the last completed stride (heel strike to heel strike)",
+      "column": 34
+    },
+    {
+      "name": "slack_floor_on",
+      "tag": "GRD_FloorOn",
+      "unit": "",
+      "description": "slack floor on (1) / off (0) in use",
+      "column": 35
+    },
+    {
+      "name": "slack_thr_nm",
+      "tag": "GRD_SlackThr",
+      "unit": "N*m",
+      "description": "slack threshold in use",
+      "column": 36
+    },
+    {
+      "name": "slack_ms",
+      "tag": "GRD_SlackMs",
+      "unit": "ms",
+      "description": "slack time in use",
+      "column": 37
+    },
+    {
+      "name": "slack_floor_nm",
+      "tag": "GRD_FloorNm",
+      "unit": "N*m",
+      "description": "slack torque floor in use",
+      "column": 38
+    },
+    {
+      "name": "jam_cut_on",
+      "tag": "GRD_CutOn",
+      "unit": "",
+      "description": "jam cut on (1) / off (0) in use",
+      "column": 39
+    },
+    {
+      "name": "jam_apnm",
+      "tag": "GRD_JamApNm",
+      "unit": "A/(N*m)",
+      "description": "jam current-per-torque threshold in use",
+      "column": 40
+    },
+    {
+      "name": "jam_ms",
+      "tag": "GRD_JamMs",
+      "unit": "ms",
+      "description": "jam time in use",
+      "column": 41
+    },
+    {
+      "name": "fb_filter",
+      "tag": "GRD_FbFilter",
+      "unit": "",
+      "description": "PI feedback in use: 0 = 12 Hz torque (as before), 1 = 45 Hz",
+      "column": 42
+    },
+    {
+      "name": "guard_seq",
+      "tag": "GRD_Seq",
+      "unit": "",
+      "description": "seq of the last accepted 5436 guard packet (0 = none yet)",
+      "column": 43
+    }
+  ]
+}

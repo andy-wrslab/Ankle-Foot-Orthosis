@@ -28,7 +28,8 @@ PENDING_S = 1.0
 
 # Advanced display decimals (speeds / gains 2, step sizes 3, windows / strides / level / cutoff whole)
 ADV_DEC = {"sv_target_min": 2, "sv_target_max": 2, "target_step_up": 3, "target_step_down": 3, "window_up": 0,
-           "window_down": 0, "assist_threshold": 0, "min_cycles": 0, "p_gain": 2, "i_gain": 2, "threshold_pressure": 0}
+           "window_down": 0, "assist_threshold": 0, "min_cycles": 0, "p_gain": 2, "i_gain": 2, "threshold_pressure": 0,
+           "fade_ms": 0}
 
 
 def _fmt(key: str, v) -> str:
@@ -90,7 +91,8 @@ def settings_rows(ctx) -> Dict[str, Any]:
                 if bt is not None:
                     row["target"] = f"{row['target']} / {_fmt('bif_mass', bt)}"
         rows.append(row)
-    adv = [sp["key"] for sp in SPECS if sp.get("adv")]
+    # a UDP-only Advanced value (run 16c fade) counts only on a build that echoes it
+    adv = [sp["key"] for sp in SPECS if sp.get("adv") and (not sp.get("udp_only") or (table.get(sp["key"]) or {}).get("target") is not None)]
     known = [table[k] for k in adv if k in table and table[k].get("target") is not None]
     n_match = sum(1 for r in known if r.get("match") is True or (r.get("entered") is None))
     differs = [r for r in known if r.get("match") is False]

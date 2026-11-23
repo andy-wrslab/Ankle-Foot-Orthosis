@@ -49,7 +49,8 @@ def names_of(lay):
 def layouts():
     # the run-15 console layout, pinned (round1 moved on to run 16, '<44f')
     con = json.load(open(os.path.join(FIX, "run15_console_udp_layout.json"), encoding="utf-8"))
-    adv = json.load(open(os.path.join(ROUND1, "settings_adv_udp_layout.json"), encoding="utf-8"))
+    # the run-15 Advanced layout, pinned (round1 moved on: 16b cutoff 0..5000, 16c fade at [15])
+    adv = json.load(open(os.path.join(FIX, "run15_settings_adv_udp_layout.json"), encoding="utf-8"))
     r14 = json.load(open(os.path.join(FIX, "run14_console_udp_layout.json"), encoding="utf-8"))
     n = names_of(con)
     check("round1 console layout: '<31f', 31 columns, port 5433", con["format"] == "<31f" and len(n) == 31 and con["port"] == 5433,
@@ -66,20 +67,16 @@ def layouts():
     check("receiver: RUN15_TAIL = cols 18-30", TW.RUN15_TAIL == n[18:], TW.RUN15_TAIL)
     import session as S
     check("session: Advanced key -> echo column covers cols 18-28 exactly (spring not among them)",
-          sorted(S.SessionSetup.ADV_ECHO_COL.values()) == sorted(n[18:29]) and "spring_stiffness" not in S.SessionSetup.ADV_ECHO_COL.values()
+          sorted(c for k, c in S.SessionSetup.ADV_ECHO_COL.items() if k not in S.SessionSetup.ADV_OPTIONAL) == sorted(n[18:29])
+          and "spring_stiffness" not in S.SessionSetup.ADV_ECHO_COL.values()
           and set(S.SessionSetup.ADV_ECHO_COL) == {sp["key"] for sp in S.SPECS if sp.get("adv")}, S.SessionSetup.ADV_ECHO_COL)
     for f in ("settings_adv_udp_layout.json", "settings_udp_layout.json"):
         a = json.load(open(os.path.join(APP, "config", f), encoding="utf-8"))
         b = json.load(open(os.path.join(ROUND1, f), encoding="utf-8"))
         if f == "settings_adv_udp_layout.json":
-            # Andy 16:31: the standing-still cutoff may be 0 (0..5000); round1 matches once the
-            # Simulink thread's rebuilt layout lands, until then only that rule may differ
+            # Andy 16:31: the standing-still cutoff may be 0 (round1 run 16b+: 0..5000)
             cut = [x["rule"] for x in a["fields"] if x["name"] == "standing_still_cutoff"]
-            check("config: standing-still cutoff 0..5000", cut == ["0..5000 (threshold_pressure); else keep"], cut)
-            for lay in (a, b):
-                for x in lay["fields"]:
-                    if x["name"] == "standing_still_cutoff":
-                        x["rule"] = "0..5000 (threshold_pressure); else keep"
+            check("config: standing-still cutoff 0..5000", len(cut) == 1 and cut[0].startswith("0..5000"), cut)
         check(f"config/{f} = round1 copy", a == b)
     cfg = names_of(json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8")))
     check("config/console_udp_layout.json keeps the run-15 columns 0-30", cfg[:31] == n, cfg[:31])
@@ -176,7 +173,7 @@ def session_31():
     check("31 floats: adv_echo on", s.adv_echo(), s.echo())
     check("31 floats: Advanced readbacks from the echo (P gain 0.7, cutoff 200), source echo",
           s.readback.get("p_gain") == 0.7 and s.readback.get("threshold_pressure") == 200.0
-          and all(s.readback_src.get(k) == "echo" for k in s.ADV_ECHO_COL), (s.readback, s.readback_src))
+          and all(s.readback_src.get(k) == "echo" for k in s.ADV_ECHO_COL if k not in s.ADV_OPTIONAL), (s.readback, s.readback_src))
     check("31 floats: the page adopts them (values = echo), nothing sent",
           s.values.get("p_gain") == 0.7 and s.src.get("p_gain") == "adopted31" and not [c for c in calls if c[0] == "matlab"], (s.values, calls))
     check("31 floats: a value held for 'after Start' is dropped (never setparam'd)", "i_gain" not in s.status, s.status.get("i_gain"))
@@ -207,7 +204,7 @@ def session_31():
     dev18.on = True
     time.sleep(0.3)
     check("18 floats: adv_echo off, getparam for the 11 Advanced", not s18.adv_echo() and sorted(s18.getparam_keys())
-          == sorted(s18.ADV_ECHO_COL), s18.getparam_keys())
+          == sorted(k for k in s18.ADV_ECHO_COL if k not in s18.ADV_OPTIONAL), s18.getparam_keys())
 
 
 def f32(x):
@@ -224,7 +221,8 @@ def adv_link():
                    lambda: (dict(echo["row"]), echo["age"], echo["cols"]),
                    sender=lambda data, addr: sent.append((data, addr)), start_thread=False,
                    layout_path=os.path.join(APP, "config", "settings_adv_udp_layout.json"))   # the page copy (cutoff 0..5000)
-    check("5435 link: fields in the round1 layout order", list(lk.FIELDS) == ADV_FIELDS, lk.FIELDS)
+    check("5435 link: fields in the layout order (the 11 run-15 values, then the run-16c fade)",
+          list(lk.FIELDS) == ADV_FIELDS + ["standstill_fade_ms"], lk.FIELDS)
     lk.tick()
     check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.6, (sent, lk.state))
     r = lk.press("torque_p_gain", 0.9)
@@ -236,7 +234,9 @@ def adv_link():
     want = [f32(v) for v in ADV_DEFAULTS]
     want[ADV_FIELDS.index("torque_p_gain")] = f32(0.9)
     check("5435 packet: all 11 in-use values, only P gain changed", list(p[3:14]) == want, (p[3:14], want))
-    check("5435 packet: [14] reserved_spring and [15] reserved = 0", p[14:] == (0.0, 0.0), p[14:])
+    # layout from run 16c on: [15] = standstill_fade_ms; a 31-float echo has no fade -> NaN (keep)
+    check("5435 packet: [14] reserved_spring = 0, [15] fade unknown on a 31-float echo = NaN (keep)",
+          p[14] == 0.0 and p[15] != p[15], p[14:])
     row.update(torque_p_gain=f32(0.9), adv_seq=8.0)
     lk.tick()
     check("5435: confirmed from the echo (value + adv_seq >= seq), no resend",

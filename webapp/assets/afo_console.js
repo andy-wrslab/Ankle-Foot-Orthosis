@@ -76,7 +76,8 @@
         ['Torque controller', '', [
             ['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', '']]],
         ['Safety', '', [
-            ['threshold_pressure', 'Standing-still cutoff', 'counts', 'Torque is cut to 0 when the insole pressure sum varies by less than this over the last 0.7 s (standing still)']]]
+            ['threshold_pressure', 'Standing-still cutoff', 'counts', 'Torque is cut to 0 when the insole pressure sum varies by less than this over the last 0.7 s (standing still); 0 = cutoff off'],
+            ['fade_ms', 'Fade', 'ms', 'Run 16c: the torque fades to 0 over this time when standing still is detected; 0 = hard cut']]]
     ];
 
     // field, label, unit, decimals, tip (round1/settings_guard_udp_layout.json)
@@ -517,6 +518,12 @@
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (document.activeElement === inp || S.editing['adv-' + inp.getAttribute('data-k')]) { return; }
             var k = inp.getAttribute('data-k'), v = sv.values[k];
+            if (k === 'fade_ms') {
+                // run 16c only: shown when the device echoes it (45 floats); unknown on run 16b / older
+                var row = inp.closest('label'), has = advUdp && (sv.readback || {}).fade_ms != null;
+                if (row && row.hidden !== !has) { row.hidden = !has; }
+                if (!has) { return; }
+            }
             if (advUdp) {
                 var sending = sv.status[k] === 'sending' && v != null;
                 v = sending ? v : (sv.readback || {})[k];
@@ -824,7 +831,7 @@
     }
     // Advanced display: per-field decimals, never float32 noise (0.800000011920929 -> 0.8)
     var ADV_DEC = {sv_target_min: 2, sv_target_max: 2, target_step_up: 3, target_step_down: 3, window_up: 0,
-                   window_down: 0, assist_threshold: 0, min_cycles: 0, p_gain: 2, i_gain: 2, threshold_pressure: 0};
+                   window_down: 0, assist_threshold: 0, min_cycles: 0, p_gain: 2, i_gain: 2, threshold_pressure: 0, fade_ms: 0};
     function advFmt(k, v) {
         if (v == null || v === '' || !isFinite(+v)) { return v == null ? '' : String(v); }
         var d = ADV_DEC.hasOwnProperty(k) ? ADV_DEC[k] : 3;
