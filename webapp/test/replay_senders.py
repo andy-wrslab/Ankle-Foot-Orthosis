@@ -79,8 +79,19 @@ def bus(port, dur, stop):
         k += 1
 
 
-def console(port, dur, stop, side, stop_after, cmds=None):
-    lay = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
+# every column of the newest layout (run 16, '<44f') has a value: a device that is set up
+# (Bi-LSTM ready, mass set, Advanced / guard at their build values, no slack / jam)
+CONSOLE_DEFAULTS = dict(bif_valid=1.0, bif_cal_progress=1.0, bif_bias_ready=1.0, gyro_cal_request=0.0, settings_seq=1.0,
+                        bif_mass_kg=55.0, sv_target_min=0.8, sv_target_max=1.5, target_step_up=0.04,
+                        target_step_down=0.08, step_up_window=20.0, step_down_window=10.0, high_assist_level=9.0,
+                        high_assist_strides=10.0, torque_p_gain=0.6, torque_i_gain=0.8, standing_still_cutoff=200.0,
+                        adv_seq=1.0, spring_stiffness=1.25, slack_flag=0.0, jam_flag=0.0, slack_count=0.0,
+                        slack_last_stride=0.0, slack_floor_on=1.0, slack_thr_nm=-0.5, slack_ms=20.0, slack_floor_nm=0.5,
+                        jam_cut_on=1.0, jam_apnm=5.0, jam_ms=100.0, fb_filter=0.0, guard_seq=1.0)
+
+
+def console(port, dur, stop, side, stop_after, cmds=None, layout=None):
+    lay = json.load(open(layout or os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
     names = [c.get("name", c.get("n")) for c in sorted(lay["columns"], key=lambda c: c.get("column", c.get("i")))]
     fmt = struct.Struct(lay["format"])
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -95,15 +106,15 @@ def console(port, dur, stop, side, stop_after, cmds=None):
                  cmd_motor=0.0, cmd_assist=0.0, cmd_k=1.0, cmd_calibrate_pressure=0.0, cmd_reset_sv=0.0,
                  imu_ok=1.0, imu_bad_count=0.0)
         v.update(cmds or {})
-        s.sendto(fmt.pack(*[v[n] for n in names]), ("127.0.0.1", port))
+        s.sendto(fmt.pack(*[v.get(n, CONSOLE_DEFAULTS.get(n, 0.0)) for n in names]), ("127.0.0.1", port))
         k += 1
 
 
-def start(bus_port=15432, console_port=15433, dur=0.0, side=0.0, stop_console_after=0.0, cmds=None):
+def start(bus_port=15432, console_port=15433, dur=0.0, side=0.0, stop_console_after=0.0, cmds=None, layout=None):
     stop = threading.Event()
     threading.Thread(target=bus, args=(int(bus_port), dur, stop), daemon=True).start()
     if console_port:
-        threading.Thread(target=console, args=(int(console_port), dur, stop, side, stop_console_after, cmds),
+        threading.Thread(target=console, args=(int(console_port), dur, stop, side, stop_console_after, cmds, layout),
                          daemon=True).start()
     return stop
 

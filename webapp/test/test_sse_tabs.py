@@ -1,6 +1,6 @@
 """SSE with 4 tabs (localhost only: app 127.0.0.1:18050, bus :15432, console :15433).
 
-Four headless Chrome tabs (Live, Live/Training, Trials, Signals) each keep ONE
+Four headless Chrome tabs (Live, Live/Training, Trials, DAQ) each keep ONE
 /events connection: after the initial connects, /events requests per minute
 must be ~0, no 503, the server's open-slot count is 4, every tab keeps
 receiving snapshots and the Live tab keeps drawing. Closing a tab frees its
@@ -24,17 +24,10 @@ sys.path.insert(0, HERE)
 import replay_senders  # noqa: E402
 from test_ui_v18 import BASE, Browser, Listener  # noqa: E402
 
-DRAW_HOOK = r"""
-(function hook(){
-  window._draws = window._draws || 0;
-  var P = window.Plotly;
-  if (!P || !P.react) { setTimeout(hook, 200); return; }
-  if (P._drawHooked) return; P._drawHooked = true;
-  var r = P.react; P.react = function(){ window._draws++; return r.apply(this, arguments); };
-  var e = P.extendTraces; P.extendTraces = function(){ window._draws++; return e.apply(this, arguments); };
-})();
-"""
-SAMPLE = "JSON.stringify({sse: window._afoSse || null, draws: window._draws || 0, page: location.pathname})"
+# uPlot: frames that drew at least one plot (window._afoPlots.state().drawn)
+DRAW_HOOK = "1"
+SAMPLE = ("JSON.stringify({sse: window._afoSse || null, draws: (window._afoPlots && window._afoPlots.state ? "
+          "window._afoPlots.state().drawn : 0) || 0, page: location.pathname})")
 
 
 def get(path):
@@ -114,7 +107,7 @@ def main():
             fail.append("slot count")
         if any(t["msgs_per_min"] < 300 for t in res["tabs"]):
             fail.append("a tab stopped receiving")
-        if res["tabs"][0]["draws_per_min"] < 600:      # ~30 fps x 2 graphs, capped by the 20 Hz messages
+        if res["tabs"][0]["draws_per_min"] < 600:      # uPlot frames with a drawn plot (~60 fps while visible)
             fail.append("live tab not drawing")
         # closing a tab frees its slot
         tabs[3].close()

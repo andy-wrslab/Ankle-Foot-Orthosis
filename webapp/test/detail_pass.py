@@ -41,12 +41,12 @@ JSON.stringify((function(){
   document.querySelectorAll('body *').forEach(function(e){
     if (e.offsetParent === null && getComputedStyle(e).position !== 'fixed') return;
     var r = e.getBoundingClientRect(); if (r.width === 0 || r.height === 0) return;
-    if (r.right > vw + 1 && !e.closest('.js-plotly-plot')) {
+    if (r.right > vw + 1 && !e.closest('.uplot')) {
       if (!e.parentElement || e.parentElement.getBoundingClientRect().right <= vw + 1) out.past_edge.push((e.id || e.className || e.tagName) + ' ' + Math.round(r.right));
     }
     var cs = getComputedStyle(e);
     if ((cs.overflow === 'hidden' || cs.textOverflow === 'ellipsis' || cs.whiteSpace === 'nowrap') && e.children.length === 0 &&
-        e.textContent.trim() && e.scrollWidth > e.clientWidth + 1 && !e.closest('.js-plotly-plot') && !e.closest('pre') &&
+        e.textContent.trim() && e.scrollWidth > e.clientWidth + 1 && !e.closest('.uplot') && !e.closest('pre') &&
         !(e.classList && e.classList.contains('sb-txt')))      /* status text: ellipsis on purpose, full text in title */
       out.clipped.push((e.id || e.className || e.tagName) + ': ' + e.textContent.trim().slice(0, 40));
   });

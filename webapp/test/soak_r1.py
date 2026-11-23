@@ -15,7 +15,7 @@ UDP listeners stand in for the target's control (:15992) and parameter
 
 Four headless Chrome windows: Live/Gait, Live/Training, Trials, Signals. Each minute:
 app RSS/CPU (app + its worker processes), packets/s and dropped/bad packet
-deltas (main bus + console), UI update count per page (Plotly datarevision),
+deltas (main bus + console), UI update count per page (uPlot redraws, window._afoPlots.state()),
 max fetch latency per page (Dash callbacks and API polls), new browser console
 errors, new server errors (log lines and HTTP 5xx), UDP packets sent, new
 /events connections (server log) and 503s, open SSE slots (/api/sse/clients).
@@ -60,21 +60,18 @@ LAT_JS = r"""
 (function(){
   if (window._soak) return;
   window._soak = {n: 0, max: 0, maxUrl: '', errs: 0, draws: {}, es_open: 0, es_msg: 0};
-  // UI updates: count Plotly draws per graph (dcc.Graph and clientside both end in Plotly.react / extendTraces)
+  // UI updates (uPlot): per plot, the number of data redraws, sampled from window._afoPlots.state()
   (function hook(){
-    var P = window.Plotly;
-    if (!P || !P.react) { setTimeout(hook, 200); return; }
-    if (P._soakHooked) return; P._soakHooked = true;
-    ['react', 'newPlot', 'extendTraces'].forEach(function(fn){
-      var orig = P[fn]; if (!orig) return;
-      P[fn] = function(gd){
-        try { var el = (typeof gd === 'string') ? document.getElementById(gd) : gd;
-              var host = el && el.parentElement && el.parentElement.closest('[id]');
-              var id = (el && el.id) || (host && host.id) || '?';
-              window._soak.draws[id] = (window._soak.draws[id] || 0) + 1; } catch (e) {}
-        return orig.apply(this, arguments);
-      };
-    });
+    var E = window._afoPlots;
+    if (!E || !E.state) { setTimeout(hook, 200); return; }
+    if (E._soakHooked) return; E._soakHooked = true;
+    var last = {};
+    setInterval(function(){
+      try { var st = E.state(); Object.keys(st.plots).forEach(function(id){
+              var p = st.plots[id]; if (!p.visible) return;
+              if (last[id] !== p.lastX) { last[id] = p.lastX; window._soak.draws[id] = (window._soak.draws[id] || 0) + 1; }
+            }); } catch (e) {}
+    }, 50);
   })();
   // live stream: count EventSource connections and messages
   var ES = window.EventSource;
@@ -301,7 +298,7 @@ def main():
                 time.sleep(0.5)
         time.sleep(4)
         pages = [("live_gait", "/live", None), ("live_training", "/live", "training"), ("trials", "/trials", None),
-                 ("signals", "/signals", None)]
+                 ("daq", "/daq", None)]       # Signals removed, Teensy = DAQ (Andy 14:36)
         for i, (name, path, sub) in enumerate(pages):
             b = Browser(19331 + i)
             b.name = name

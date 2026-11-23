@@ -4,18 +4,17 @@ App on 127.0.0.1:18050 with the replay senders (main bus -> :15432, console
 packet -> :15433) and UDP listeners standing in for the target's control
 (:15990) and parameter (:15991) ports. Target writes stay disabled.
 
-1. States: no participant -> Confirm (banner); S47 + LEFT confirmed + console
-   side 0 -> OK; console side 1 -> Mismatch. Screenshots of each.
+1. States (44-float device, run 16): S47 + LEFT -> OK; the device side changes to 1 -> the
+   page shows the device's RIGHT (adopted, no mismatch). Screenshots of each.
 2. Screenshots at 1920x1080 and 1280x800: Live Gait / Sensors / Training,
-   Trials, Signals, Teensy, status popover, Advanced popover.
+   Trials, DAQ, status popover, Advanced popover.
 3. Layout: every plot tick label inside its card (all Live sub-pages, both
    sizes), top bar not wider than the window, status button inside the gutter,
    no horizontal scroll.
-4. Hover hold on Torque: card gets "holding", Torque frozen, Stride velocity keeps
-   drawing; released on leave.
+4. (uPlot) no hover hold: pointer on Torque, both plots keep scrolling on one clock.
 5. Commands: 0 control packets from page loads; Assist OFF->ON press = exactly
-   one packet with only assist changed; Motor ON blocked during a side mismatch
-   (0 packets) while Motor OFF stays possible.
+   one packet with only assist changed; after a device side change a Motor press is one
+   UDP packet (no MATLAB, no mismatch lock).
 """
 import json
 import os
@@ -218,44 +217,34 @@ def main():
             nav(c, "daq", 3.0); res["shots"][f"{tag}_daq"] = shot(c, f"{tag}_daq")
             nav(c, "live", 3.0)
             if w == 1920:
-                # ---- hover hold on Torque
-                box = c.js("(function(){var r=document.querySelector('#torque .nsewdrag').getBoundingClientRect();return [r.left+r.width*0.6, r.top+r.height*0.5];})()")
-                rev = "(function(){var o={};['torque','gait'].forEach(function(id){var g=document.getElementById(id);g=g&&(g.querySelector('.js-plotly-plot')||g);o[id]=g&&g.layout?g.layout.datarevision:null;});o.holding=!!document.querySelector('.plot-card.holding');return o;})()"
+                # ---- no hover hold any more (uPlot, Andy 14:55): pointer on Torque, both plots keep
+                # scrolling on the one shared model-time clock (window._afoPlots.state())
+                box = c.js("(function(){var r=document.getElementById('torque').getBoundingClientRect();return [r.left+r.width*0.6, r.top+r.height*0.5];})()")
+                rev = "(function(){var s=window._afoPlots.state();return {clock:s.clock, held:s.held, tq:(s.plots.torque||{}).xmax, gt:(s.plots.gait||{}).xmax};})()"
                 c.call("Input.dispatchMouseEvent", type="mouseMoved", x=box[0], y=box[1]); c.pump(0.6)
                 h0 = c.js(rev); c.call("Input.dispatchMouseEvent", type="mouseMoved", x=box[0] + 3, y=box[1]); c.pump(2.0)
                 h1 = c.js(rev)
-                res["shots"]["hover_hold"] = shot(c, f"{tag}_hover_hold")
-                c.call("Input.dispatchMouseEvent", type="mouseMoved", x=5, y=b.h - 5); c.pump(2.0)
-                h2 = c.js(rev)
-                res["hover"] = {"held": h1, "after": h2, "frozen": h0["torque"] == h1["torque"],
-                                "gait_moving": (h1["gait"] or 0) > (h0["gait"] or 0),
-                                "resumed": (h2["torque"] or 0) > (h1["torque"] or 0), "holding_class": h1["holding"],
-                                "released": not h2["holding"]}
+                res["shots"]["hover_no_hold"] = shot(c, f"{tag}_hover_no_hold")
+                res["hover"] = {"before": h0, "after": h1, "not_held": h1["held"] is False,
+                                "torque_moving": (h1["tq"] or 0) > (h0["tq"] or 0),
+                                "same_window": h1["tq"] is not None and abs((h1["tq"] or 0) - (h1["gt"] or 0)) < 1e-6}
                 # ---- commands: page loads sent nothing; Assist press = 1 packet
                 n0 = len(ctl.pkts)
                 res["toggle_state_before"] = api("/api/console/state")["commands"]["toggles"]
                 c.js("document.getElementById('bAssist').click(); 1"); c.pump(1.5)
                 res["assist_press_packets"] = [struct.unpack("<6f", p) for _, p in ctl.pkts[n0:]]
-                # ---- mismatch: console side becomes RIGHT
+                # ---- the device's side changes to RIGHT (another console): the page shows the device's
+                # value (Andy 16:15, run 14+ adopts it), no mismatch; Motor stays usable over UDP
                 senders.set()
                 senders = replay_senders.start(15432, 15433, side=1.0)
                 c.pump(3.0)
                 st = api("/api/console/state")
-                res["state_mismatch"] = {"status": st["status"]["text"], "side": st["side"]["state"], "chip": st["side"]["chip"]}
-                res["shots"]["state_mismatch"] = shot(c, f"{tag}_state_mismatch")
+                res["state_device_side"] = {"status": st["status"]["text"], "side": st["side"]["state"], "chip": st["side"]["chip"]}
+                res["shots"]["state_device_side"] = shot(c, f"{tag}_state_device_side")
                 n2 = len(ctl.pkts)
-                r2 = api("/api/console/toggle", {"name": "motor"})         # model echo motor OFF: press = ON -> blocked
+                r2 = api("/api/console/toggle", {"name": "motor"})
                 time.sleep(0.5)
-                res["mismatch_motor_on"] = {"ok": r2.get("ok"), "msg": r2.get("msg"), "packets": len(ctl.pkts) - n2}
-                # model reports Motor ON during the mismatch: switching it OFF must still work
-                senders.set()
-                senders = replay_senders.start(15432, 15433, side=1.0, cmds={"cmd_motor": 1.0})
-                c.pump(2.0)
-                n1 = len(ctl.pkts)
-                r_off = api("/api/console/toggle", {"name": "motor"})
-                time.sleep(0.5)
-                res["mismatch_motor_off"] = {"ok": r_off.get("ok"), "msg": r_off.get("msg"),
-                                             "packets": [struct.unpack("<6f", p) for _, p in ctl.pkts[n1:]]}
+                res["device_side_motor"] = {"ok": r2.get("ok"), "msg": r2.get("msg"), "packets": len(ctl.pkts) - n2}
                 senders.set()
                 senders = replay_senders.start(15432, 15433, side=0.0)
                 c.pump(2.0)
@@ -283,18 +272,19 @@ def main():
     if res.get("pkts_after_load"):
         res["fail"].append("packets sent on page load")
     hv = res.get("hover") or {}
-    if not (hv.get("frozen") and hv.get("gait_moving") and hv.get("resumed") and hv.get("holding_class") and hv.get("released")):
-        res["fail"].append("hover hold")
+    if not (hv.get("not_held") and hv.get("torque_moving") and hv.get("same_window")):
+        res["fail"].append("no hold / shared window")
     ap = res.get("assist_press_packets") or []
     if len(ap) != 1:
         res["fail"].append(f"assist press sent {len(ap)} packets")
-    if (res.get("state_confirm") or {}).get("side") != "confirm" or (res.get("state_ok") or {}).get("side") != "ok" \
-            or (res.get("state_mismatch") or {}).get("side") != "mismatch":
-        res["fail"].append("side states")
-    if (res.get("mismatch_motor_on") or {}).get("packets") != 0:
-        res["fail"].append("motor ON not blocked during mismatch")
-    if len((res.get("mismatch_motor_off") or {}).get("packets") or []) != 1:
-        res["fail"].append("motor OFF not possible during mismatch")
+    # run 14+ (44-float device): the side is the device's (adopted from the echo), never 'differs'
+    if (res.get("state_ok") or {}).get("side") != "ok" or (res.get("state_device_side") or {}).get("side") != "ok" \
+            or "RIGHT" not in str((res.get("state_device_side") or {}).get("chip", "")).upper():
+        res["fail"].append("side states (device side adopted)")
+    if (res.get("device_side_motor") or {}).get("packets") != 1:
+        res["fail"].append("motor press after a device side change: not exactly one UDP packet")
+    if any("differs" in str(r[3]) for r in (res.get("state_ok") or {}).get("rows") or []):
+        res["fail"].append("a 'differs' row in the popover")
     if res.get("param_packets"):
         res["fail"].append("parameter packets sent")
     json.dump(res, open(os.path.join(OUT, "results.json"), "w"), indent=1, default=str)

@@ -232,8 +232,8 @@ def main():
         results["live_rate_after_restart"] = sse.rate(time.time() - 4, time.time())
 
         # --- screenshots (local) and the locked view (remote)
-        results["shots_local"] = shots(LOCAL, ["home", "live", "signals", "trials", "teensy"], "local")
-        results["shots_remote"] = shots(REMOTE, ["home", "teensy"], "remote", port=19252)
+        results["shots_local"] = shots(LOCAL, ["home", "live", "trials", "daq"], "local")   # Signals removed, Teensy = DAQ (Andy 14:36)
+        results["shots_remote"] = shots(REMOTE, ["home", "daq"], "remote", port=19252)
 
         # --- stop the stream; dry-run flash allowed
         rep.stop.set()

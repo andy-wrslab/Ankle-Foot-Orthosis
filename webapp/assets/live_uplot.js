@@ -340,7 +340,9 @@
                              area_h: P.u.bbox ? Math.round(P.u.bbox.height / (window.devicePixelRatio || 1)) : null,
                              area_w: P.u.bbox ? Math.round(P.u.bbox.width / (window.devicePixelRatio || 1)) : null,
                              visible: P.host.offsetParent !== null, held: HOLD.on,
-                             shown: P.u.series.slice(1).map(function (s) { return s.show; })};
+                             shown: P.u.series.slice(1).map(function (s) { return s.show; }),
+                             labels: P.u.series.slice(1).map(function (s) { return s.label; }),
+                             n: P.u.data && P.u.data[0] ? P.u.data[0].length : 0};
         });
         return out;
     };

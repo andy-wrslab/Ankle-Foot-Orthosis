@@ -127,7 +127,7 @@ def e2e():
         check("details: commit has the short sha, vs main and board text", len(last["commit"]) > 8
               and ("main" in last["vs"]) and ("USB" in last["board"] or "CPU" in last["board"]), last)
 
-        # Live first, then the Teensy tab
+        # Live first, then the DAQ tab
         c.call("Page.navigate", url=BASE + "/live")
         c.pump(6)
         c.js("document.querySelector('a[data-nav=\"daq\"]').click(); 1")
@@ -138,7 +138,7 @@ def e2e():
             if v["commit"] not in ("", "–") and v["board"] not in ("", "–"):
                 filled_at = time.time() - t0
                 break
-        check("Live -> Teensy tab: details within 1.5 s", filled_at is not None and filled_at < 1.5, (filled_at, v))
+        check("Live -> DAQ tab: details within 1.5 s", filled_at is not None and filled_at < 1.5, (filled_at, v))
         check("no browser errors", not c.console, c.console[:4])
     finally:
         if b:

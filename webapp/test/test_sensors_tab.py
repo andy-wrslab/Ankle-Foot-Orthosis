@@ -2,15 +2,15 @@
 bus :15432, console :15433, listeners :15990/:15991). No target, nothing pressed except
 the sub-page buttons and one legend chip.
 
-Checks at 1920x1080 and 1280x800:
-* x axis = absolute model time: range [t_latest - 10, t_latest], moving between two reads.
-* Sensors: every card of plot_style.SENSOR_CARDS has a graph with the named traces
-  (FSR by position, raw accel, gyro, linear accel, orientation, ankle angle/velocity);
+Checks at 1920x1080 and 1280x800 (uPlot: window._afoPlots.state()):
+* x axis = model time: [max(0, t - 10), max(10, t)] on ONE shared clock, moving between reads;
+  Gait, Sensors and Training use the same 2 s / 10 s window.
+* Sensors: 'Pressure' (FSR1..8) and 'Acceleration' (x, y, z) with the spec's series labels;
   legend chips show numbers that change over time.
-* Half width: on the first animation frame after switching to Sensors (fresh page load),
-  every plot's svg is as wide as its card body (+-2 px); same for Gait after switching back.
-* A legend click hides that trace (visible == 'legendonly') and shows it again.
-* All cards and tick labels inside the viewport/card bounds; no browser errors; no UDP sent.
+* Full width: right after switching to Sensors (fresh page load), every plot is as wide as
+  its card body (+-2 px); same for Gait after switching back.
+* A legend click hides that series (show == false) and shows it again.
+* All canvases inside their cards, no h-scroll; no browser errors; no UDP sent.
 
     python test/test_sensors_tab.py
 """
@@ -32,6 +32,9 @@ sys.path.insert(0, APP)
 import replay_senders  # noqa: E402
 from plot_style import SENSOR_CARDS  # noqa: E402
 from test_ui_v18 import BASE, Browser, Listener  # noqa: E402
+from pages.live import live_spec  # noqa: E402
+
+LIVE_SPEC = live_spec()
 
 FAILS = []
 OUT = os.path.join(HERE, "e2e", "sensors")
@@ -43,47 +46,44 @@ def check(name, cond, got=None):
         FAILS.append(name)
 
 
+# uPlot (assets/live_uplot.js): plot state from window._afoPlots.state(); canvas, no DOM ticks
 WIDTHS_JS = r"""
 (function(sub){
   window._w = null;
   document.getElementById(sub === 'sensors' ? 'pgSensors' : 'pgGait').click();
-  requestAnimationFrame(function(){
+  requestAnimationFrame(function(){ requestAnimationFrame(function(){
     var out = [];
     document.querySelectorAll('#page-live .plot-card').forEach(function(card){
       if (card.offsetParent === null) return;
-      var body = card.querySelector('.plot-body'), gd = card.querySelector('.js-plotly-plot');
-      if (!body || !gd) return;
+      var body = card.querySelector('.plot-body'), up = card.querySelector('.uplot');
+      if (!body || !up) return;
       var cs = getComputedStyle(body), inner = body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      var svg = gd.querySelector('svg.main-svg');
-      out.push({id: (card.querySelector('.dash-graph') || {}).id, body: Math.round(inner), svg: svg ? Math.round(svg.getBoundingClientRect().width) : null});
+      out.push({id: up.parentElement.id, body: Math.round(inner), svg: Math.round(up.getBoundingClientRect().width)});
     });
     window._w = out;
-  });
+  }); });
   return 1;
 })('%s')
 """
 
 STATE_JS = r"""
 JSON.stringify((function(){
-  var o = {cards: {}, legend: {}};
-  document.querySelectorAll('#sensorGrid .plot-card').forEach(function(card){
-    var gd = card.querySelector('.js-plotly-plot'); if (!gd || !gd.data) return;
-    var id = card.querySelector('.dash-graph').id;
-    o.cards[id] = {names: gd.data.map(function(t){ return t.name; }), n: (gd.data[0].x || []).length,
-                   vis: gd.data.map(function(t){ return t.visible; }), xr: gd.layout.xaxis.range};
+  var st = window._afoPlots.state(), o = {cards: {}, legend: {}};
+  Object.keys(st.plots).forEach(function(id){
+    var p = st.plots[id];
+    o.cards[id] = {names: p.labels, n: p.n, vis: p.shown, xr: [p.xmin, p.xmax], visible: p.visible};
   });
   document.querySelectorAll('.lg[data-g]').forEach(function(b){
     o.legend[b.getAttribute('data-g') + ':' + b.getAttribute('data-k')] = b.querySelector('.lg-v').textContent;
   });
-  var g = document.querySelector('#torque .js-plotly-plot');
-  o.torque_xr = g && g.layout ? g.layout.xaxis.range : null;
-  var vw = window.innerWidth, vh = window.innerHeight, bad = [];
+  o.torque_xr = st.plots.torque ? [st.plots.torque.xmin, st.plots.torque.xmax] : null;
+  var vw = window.innerWidth, bad = [];
   document.querySelectorAll('#page-live .card').forEach(function(card){
     if (card.offsetParent === null) return;
     var cb = card.getBoundingClientRect();
-    card.querySelectorAll('.xtick text, .ytick text').forEach(function(t){
-      var b = t.getBoundingClientRect(); if (b.width === 0) return;
-      if (b.left < cb.left - 0.5 || b.right > cb.right + 0.5 || b.top < cb.top - 0.5 || b.bottom > cb.bottom + 0.5) bad.push(t.textContent);
+    card.querySelectorAll('.uplot canvas').forEach(function(cv){
+      var b = cv.getBoundingClientRect(); if (b.width === 0) return;
+      if (b.left < cb.left - 0.5 || b.right > cb.right + 0.5 || b.top < cb.top - 0.5 || b.bottom > cb.bottom + 0.5) bad.push('canvas outside its card');
     });
     if (cb.right > vw + 0.5) bad.push('card beyond viewport');
   });
@@ -96,15 +96,12 @@ JSON.stringify((function(){
 
 ENDS_JS = r"""
 JSON.stringify((function(){
-  var plots = [], ticks = [];
-  document.querySelectorAll('#page-live .plot-card').forEach(function(card){
-    if (card.offsetParent === null) return;
-    var gd = card.querySelector('.js-plotly-plot'); if (!gd || !gd.layout) return;
-    var r = gd.layout.xaxis.range; plots.push([card.querySelector('.dash-graph').id, r[1], r[0]]);
-    card.querySelectorAll('.xtick text').forEach(function(t){ ticks.push(t.textContent); });
+  var st = window._afoPlots.state(), plots = [];
+  Object.keys(st.plots).forEach(function(id){
+    var p = st.plots[id]; if (!p.visible) return;
+    plots.push([id, p.xmax, p.xmin]);
   });
-  var p = window._afoLastSnapshot || {};
-  return {plots: plots, ticks: ticks, t_latest: p.t_latest, split: !!(window._afoLive && window._afoLive.splitPending)};
+  return {plots: plots, t_latest: st.t_latest, clock: st.clock};
 })())
 """
 
@@ -161,10 +158,12 @@ def main():
             s2 = json.loads(c.js(STATE_JS))
             for card in SENSOR_CARDS:
                 got = (s1["cards"].get(card["id"]) or {})
-                check(f"{tag} {card['id']}: named traces", got.get("names") == card["names"], got.get("names"))
+                want_names = [x["label"] for x in LIVE_SPEC["plots"][card["id"]]["series"]]
+                check(f"{tag} {card['id']}: named series (Pressure / Acceleration spec)", got.get("names") == want_names,
+                      (got.get("names"), want_names))
                 check(f"{tag} {card['id']}: has data", (got.get("n") or 0) > 50, got.get("n"))
             xr1, xr2 = s1["cards"]["press"]["xr"], s2["cards"]["press"]["xr"]
-            check(f"{tag} x axis absolute (10 s window, > 15 s model time)", abs((xr1[1] - xr1[0]) - 10) < 0.01 and xr1[1] > 15, xr1)
+            check(f"{tag} x axis: model time, 10 s window (> 15 s model time)", abs((xr1[1] - xr1[0]) - 10) < 0.01 and xr1[1] > 15, xr1)
             check(f"{tag} x axis scrolls", xr2[1] > xr1[1], (xr1, xr2))
             vals = {k: v for k, v in s2["legend"].items()}
             check(f"{tag} legend values shown", all(v not in ("", "–") for k, v in vals.items() if not k.startswith("ankvel")), vals)
@@ -186,7 +185,7 @@ def main():
             c.js("document.querySelector('.lg[data-g=\"press\"][data-k=\"1\"]').click(); 1")
             c.pump(1.0)
             v = json.loads(c.js(STATE_JS))["cards"]["press"]["vis"]
-            check(f"{tag} legend click hides Heel medial", v[1] == "legendonly" and v[0] is True, v)
+            check(f"{tag} legend click hides that series", v[1] is False and v[0] is True, v)
             c.js("document.querySelector('.lg[data-g=\"press\"][data-k=\"1\"]').click(); 1")
             c.pump(1.0)
             v = json.loads(c.js(STATE_JS))["cards"]["press"]["vis"]
@@ -201,41 +200,23 @@ def main():
             check(f"{tag} gait: full width at the first frame", len(wid) == 2 and not off, wid)
             c.pump(1.0)
             txr = json.loads(c.js(STATE_JS))["torque_xr"]
-            check(f"{tag} gait x axis absolute", txr and abs((txr[1] - txr[0]) - 10) < 0.01 and txr[1] > 15, txr)
+            check(f"{tag} gait x axis: model time, 10 s window", txr and abs((txr[1] - txr[0]) - 10) < 0.01 and txr[1] > 15, txr)
             c.shot(os.path.join(OUT, f"{tag}_gait.png"))
             # same model time on every visible plot of each sub-tab (+-0.1 s), ticks in model seconds
             for sub, btn in (("gait", "pgGait"), ("sensors", "pgSensors"), ("training", "pgTraining")):
                 c.js("document.getElementById('%s').click(); 1" % btn)
                 c.pump(2.5 if sub == "training" else 1.2)
                 r = json.loads(c.js(ENDS_JS))
-                for _ in range(20):            # Sensors draws a tick over two frames: read a settled one
-                    if not r.get("split"):
-                        break
-                    time.sleep(0.01)
-                    r = json.loads(c.js(ENDS_JS))
                 ends = [e for _, e, _ in r["plots"]]
                 tl = r["t_latest"]
-                check(f"{tag} {sub}: all plots end at one model time", ends and max(ends) - min(ends) <= 0.1,
-                      r["plots"])
-                # training refreshes once a second; Sensors draws its 7 plots 5x / s (main thread
-                # budget, test_click_latency), so it may trail the newest sample by one tick
-                lag = 1.2 if sub == "training" else 0.3 if sub == "sensors" else 0.1
-                # training: never below 0, [max(0, t - 2 min), max(2 min, t)] (round 2)
-                want_end = max(120.0, tl) if sub == "training" else tl
-                check(f"{tag} {sub}: ends at {'max(2 min, t)' if sub == 'training' else 't_latest'} (+-{lag} s)",
-                      ends and abs(max(ends) - want_end) <= lag, (tl, ends))
-                if sub == "training":
-                    starts = [s0 for _, _, s0 in r["plots"]]
-                    check(f"{tag} training: starts at max(0, t - 2 min), never negative",
-                          starts and min(starts) >= 0 and abs(max(starts) - max(0.0, tl - 120)) <= lag, (tl, starts))
-                ticks = r["ticks"]
-                check(f"{tag} {sub}: ticks in model seconds", ticks and all(x.endswith(" s") for x in ticks)
-                      and max(float(x[:-2].replace("−", "-")) for x in ticks) > 15, ticks[:6])
+                # one shared model-time clock for every plot of every sub-tab (Andy 14:34: Training
+                # uses the same 2 s / 10 s window as Gait and Sensors)
+                check(f"{tag} {sub}: all plots end at one model time", ends and max(ends) - min(ends) <= 1e-6, r["plots"])
+                check(f"{tag} {sub}: ends at the shared clock, near t_latest (+-0.3 s)", ends and tl is not None
+                      and abs(max(ends) - max(10.0, tl)) <= 0.3, (tl, ends))
                 wins = {round(e - s0, 2) for _, e, s0 in r["plots"]}
-                if sub != "training":
-                    check(f"{tag} {sub}: 10 s window", wins == {10.0}, wins)
-                else:
-                    check(f"{tag} training: own window (2 min)", wins == {120.0}, wins)
+                check(f"{tag} {sub}: 10 s window, never negative", wins == {10.0}
+                      and min(s0 for _, _, s0 in r["plots"]) >= 0, (wins, r["plots"]))
             c.js("document.getElementById('pgGait').click(); 1")
             c.pump(0.5)
             check(f"{tag} no browser errors", not c.console, c.console[:4])

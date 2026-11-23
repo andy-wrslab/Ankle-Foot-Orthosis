@@ -62,7 +62,10 @@ def main():
     cfg["dash"] = {"host": "127.0.0.1", "port": 18050}
     cfg["paths"]["log_dir"] = os.path.join(tmp, "logs")
     cfg["target"] = {"model": "AFO_r1"}
-    lay = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
+    # run-12 behaviour (mass / side by setparam, held while target writes are off): the pinned
+    # 12-float layout; run 14+ (UDP settings, device values) is covered by test_ui_v18 / the unit tests
+    R12 = os.path.join(HERE, "fixtures", "run12_console_udp_layout.json")
+    lay = json.load(open(R12, encoding="utf-8"))
     lay["port"] = 15433
     json.dump(lay, open(os.path.join(tmp, "lay.json"), "w"))
     cfg["training"] = {"enabled": True, "listen_host": "127.0.0.1", "layout": os.path.join(tmp, "lay.json")}
@@ -79,7 +82,7 @@ def main():
     log = open(os.path.join(tmp, "server.log"), "w")
     srv = subprocess.Popen([sys.executable, "-u", "app.py"], cwd=APP, stdout=log, stderr=subprocess.STDOUT,
                            env=dict(os.environ, AFO_GUI_CONFIG=cfgp))
-    senders = replay_senders.start(15432, 15433, side=-1.0)
+    senders = replay_senders.start(15432, 15433, side=-1.0, layout=R12)
     res, fail = {}, []
     try:
         for _ in range(90):

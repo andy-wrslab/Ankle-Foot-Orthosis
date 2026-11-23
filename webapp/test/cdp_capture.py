@@ -101,7 +101,7 @@ def capture(url, out_prefix, debug_port=19222, settle_s=6.0, width=1600, height=
         cdp.pump(settle_s)
         p1 = out_prefix + "_page1.png"
         cdp.shot(p1)
-        cdp.js("var s=document.querySelector('.swipe-container'); if(s){s.scrollLeft=s.clientWidth;} 1")
+        cdp.js("var b=document.getElementById('pgSensors'); if(b){b.click();} 1")      # Live sub-tab Sensors
         cdp.pump(1.5)
         p2 = out_prefix + "_page2.png"
         cdp.shot(p2)
@@ -111,8 +111,8 @@ def capture(url, out_prefix, debug_port=19222, settle_s=6.0, width=1600, height=
         )
         result["parse_failures"] = cdp.js("window._afoParseFailures === undefined ? null : window._afoParseFailures")
         result["imu_trace_points"] = cdp.js(
-            "(function(){var g=document.getElementById('imu'); if(!g||!g.querySelector('.js-plotly-plot')) return null;"
-            "var d=g.querySelector('.js-plotly-plot').data; return d ? d.map(t=>t.y?t.y.length:0) : null;})()"
+            "(function(){var E=window._afoPlots; if(!E||!E.state) return null; var p=E.state().plots.imu;"
+            "return p ? p.shown.map(function(){return p.n;}) : null;})()"
         )
         result["console_errors"] = cdp.console[:20]
         result["console_error_count"] = len(cdp.console)

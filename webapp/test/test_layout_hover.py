@@ -1,12 +1,10 @@
-"""Live page layout bounds + hover hold + top status (localhost only, port 18050).
+"""Live page layout bounds + no hover hold + top status (localhost only, port 18050).
 
-1. Layout bounds (as GUI_robust/test/test_layout_bounds.py, now with the v17
-   plot style): every tick label inside its card, no readout overflow, at
-   1920x1080 and 1280x800, 2 s and 10 s windows, both swipe pages, with
-   extreme / NaN / sign-flipping values. Fails on any overflow.
-2. Hover hold: the pointer on the Torque plot shows the unified hover label,
-   hold-torque turns true and Torque stops redrawing while Stride velocity
-   keeps redrawing; pointer out -> hold false and Torque redraws again.
+1. Layout bounds (uPlot page): every plot canvas inside its card, no legend readout
+   overflow, equal drawing areas, at 1920x1080 and 1280x800, 2 s and 10 s windows, Gait and
+   Sensors, with extreme / NaN / sign-flipping values. Fails on any overflow.
+2. No hover hold (Andy 14:55): the pointer on the Torque plot holds nothing, Torque and
+   Stride velocity keep scrolling on one shared clock (window._afoPlots.state()).
 3. /api/status/top and /api/session/target answer (no MATLAB, no target).
 Nothing is sent anywhere but 127.0.0.1 test ports.
 """
@@ -83,59 +81,36 @@ def sender(stop):
         k += 1
 
 
+# uPlot page (canvas): bounds of every plot canvas and legend readout inside its card, the
+# equal drawing areas from window._afoPlots.state(), plus whether the plots draw at all
 CHECK_JS = """
 (function(){
-  var bad = [];
-  document.querySelectorAll('.card').forEach(function(card){
+  var bad = [], ro = [];
+  document.querySelectorAll('#page-live .card').forEach(function(card){
     var cb = card.getBoundingClientRect();
     if (cb.width === 0 || card.offsetParent === null) return;
-    card.querySelectorAll('.xtick text, .ytick text, .g-xtitle text, .g-ytitle text').forEach(function(t){
+    card.querySelectorAll('.uplot canvas').forEach(function(t){
       var b = t.getBoundingClientRect();
       if (b.width === 0) return;
       if (b.left < cb.left - 0.5 || b.right > cb.right + 0.5 || b.top < cb.top - 0.5 || b.bottom > cb.bottom + 0.5)
-        bad.push({card: (card.querySelector('h3')||{}).textContent, label: t.textContent,
+        bad.push({card: (card.querySelector('.uplot') || {parentElement: {}}).parentElement.id,
                   over: [Math.round(cb.left-b.left), Math.round(b.right-cb.right), Math.round(cb.top-b.top), Math.round(b.bottom-cb.bottom)]});
     });
   });
-  var ro = [];
-  document.querySelectorAll('.chip-value').forEach(function(e){
+  document.querySelectorAll('.lg-v').forEach(function(e){
     if (e.offsetParent === null) return;
-    if (e.scrollWidth > e.clientWidth + 0.5) ro.push({id: e.id, text: e.textContent, sw: e.scrollWidth, cw: e.clientWidth});
+    if (e.scrollWidth > e.clientWidth + 0.5) ro.push({text: e.textContent, sw: e.scrollWidth, cw: e.clientWidth});
   });
-  return {tick_overflow: bad, readout_overflow: ro,
-          n_ticks: document.querySelectorAll('.xtick text, .ytick text').length,
-          n_readouts: document.querySelectorAll('.chip-value').length};
+  var st = window._afoPlots.state(), vis = Object.keys(st.plots).filter(function(id){ return st.plots[id].visible; });
+  var areas = vis.map(function(id){ return st.plots[id].area_h; });
+  return {tick_overflow: bad, readout_overflow: ro, n_ticks: vis.length,
+          n_readouts: document.querySelectorAll('.lg-v').length,
+          equal_areas: areas.length ? Math.max.apply(null, areas) - Math.min.apply(null, areas) <= 1 : false, areas: areas};
 })()
 """
 
-REV_JS = """(function(){var o={};['torque','gait'].forEach(function(id){var g=document.getElementById(id);
-g=g&&(g.querySelector('.js-plotly-plot')||g);o[id]=g&&g.layout?g.layout.datarevision:null;});
-o.hold=JSON.stringify(window._afoHold||{});
-o.hover=document.querySelectorAll('#torque .hoverlayer .legend, #torque .hoverlayer .hovertext').length;
-return o;})()"""
-
-
-HOVER_TARGET_JS = """(function(){
-  var g = document.querySelector('#torque .js-plotly-plot') || document.getElementById('torque');
-  var r = g.querySelector('.nsewdrag').getBoundingClientRect();
-  var xa = g._fullLayout.xaxis, ya = g._fullLayout.yaxis;
-  var x0 = Math.min(xa.range[0], xa.range[1]), x1 = Math.max(xa.range[0], xa.range[1]);
-  var y0 = Math.min(ya.range[0], ya.range[1]), y1 = Math.max(ya.range[0], ya.range[1]);
-  var lo = x0 + 0.1 * (x1 - x0), hi = x1 - 0.1 * (x1 - x0);
-  var tr = (g.data || [])[0] || {}, xs = tr.x || [], ys = tr.y || [];
-  function ok(i) { var y = ys[i]; return y !== null && y !== undefined && isFinite(y) && y >= y0 && y <= y1; }
-  // the middle of a finite, on-scale run (>= 40 samples each side), so a small
-  // pointer move still has a point under it
-  var K = 40;
-  for (var i = xs.length - 1 - K; i >= K; i--) {
-    var x = +xs[i];
-    if (x < lo || x > hi || !ok(i)) continue;
-    var good = true;
-    for (var j = i - K; j <= i + K && good; j++) { good = ok(j); }
-    if (good) { return [r.left + xa.l2p(x), r.top + ya.l2p(ys[i])]; }
-  }
-  return [r.left + r.width * 0.6, r.top + r.height * 0.5];
-})()"""
+REV_JS = """(function(){var s=window._afoPlots.state();
+return {held: s.held, tq: (s.plots.torque||{}).xmax, gt: (s.plots.gait||{}).xmax, drawn: s.drawn};})()"""
 
 
 def mouse(c, x, y):
@@ -177,57 +152,49 @@ def main():
             c = b.c
             c.call("Page.navigate", url=BASE + "/live")
             c.pump(6)
-            for win_btn in ("window-10-btn", "window-2-btn"):
+            for win_btn in ("w10", "w2"):
                 c.js(f"document.getElementById('{win_btn}').click(); 1")
                 for page in (0, 1):
-                    c.js("var s=document.querySelector('.swipe-container'); s.scrollTo({left: %d * s.clientWidth, behavior: 'instant'}); 1" % page)
-                    worst = {"tick_overflow": [], "readout_overflow": []}
+                    c.js("document.getElementById('%s').click(); 1" % ("pgGait", "pgSensors")[page])
+                    worst = {"tick_overflow": [], "readout_overflow": [], "equal_areas": True}
                     for _ in range(16):
                         c.pump(0.5)
                         r = c.js(CHECK_JS)
                         worst["tick_overflow"] += r["tick_overflow"]
                         worst["readout_overflow"] += r["readout_overflow"]
                         worst["n_ticks"], worst["n_readouts"] = r["n_ticks"], r["n_readouts"]
-                    name = f"{w}x{h}_{win_btn.split('-')[1]}s_page{page + 1}"
+                        worst["equal_areas"] = worst["equal_areas"] and r["equal_areas"]
+                    name = f"{w}x{h}_{win_btn[1:]}s_page{page + 1}"
                     shot = os.path.join(OUT, f"r5_bounds_{name}.png")
                     c.shot(shot)
                     case = {"case": name, "tick_overflows": len(worst["tick_overflow"]),
                             "readout_overflows": len(worst["readout_overflow"]),
                             "examples": (worst["tick_overflow"] + worst["readout_overflow"])[:4],
-                            "ticks_checked": worst.get("n_ticks"), "readouts_checked": worst.get("n_readouts")}
+                            "ticks_checked": worst.get("n_ticks"), "readouts_checked": worst.get("n_readouts"),
+                            "equal_areas": worst["equal_areas"]}
                     res["cases"].append(case)
-                    if case["tick_overflows"] or case["readout_overflows"] or not worst.get("n_ticks"):
+                    if case["tick_overflows"] or case["readout_overflows"] or not worst.get("n_ticks") or not worst["equal_areas"]:
                         res["fail"] = True
             if (w, h) == (1280, 800):
-                # ---- 2 hover hold on Torque (page 1, 10 s window)
-                c.js("document.getElementById('window-10-btn').click(); var s=document.querySelector('.swipe-container'); s.scrollTo({left: 0, behavior: 'instant'}); 1")
+                # ---- 2 no hover hold any more (uPlot, Andy 14:55): pointer on Torque, both plots
+                # keep scrolling on ONE shared clock, nothing is held
+                c.js("document.getElementById('w10').click(); document.getElementById('pgGait').click(); 1")
                 c.pump(2)
-                # hover over a real point: the sender cycles torque through NaN and off-scale
-                # phases, and "x unified" (correctly) shows no label over a gap
-                box = c.js(HOVER_TARGET_JS)
+                box = c.js("(function(){var r=document.getElementById('torque').getBoundingClientRect();return [r.left+r.width*0.6, r.top+r.height*0.5];})()")
                 before = c.js(REV_JS)
                 mouse(c, box[0], box[1])
                 c.pump(0.8)
-                held0 = c.js(REV_JS)
+                h0 = c.js(REV_JS)
                 mouse(c, box[0] + 2, box[1])
                 c.pump(2.0)
-                held1 = c.js(REV_JS)
-                c.shot(os.path.join(OUT, "r5_hover_hold.png"))
-                mouse(c, 5, 5)
-                c.pump(2.0)
-                after = c.js(REV_JS)
-                hv = {"before": before, "held_start": held0, "held_2s": held1, "after_leave": after}
-                hv["torque_frozen_while_held"] = held0["torque"] == held1["torque"]
-                hv["gait_kept_updating"] = (held1["gait"] or 0) > (held0["gait"] or 0)
-                hv["hover_label_shown"] = (held1["hover"] or 0) > 0
-                hv["hold_true_while_hovering"] = '"torque":true' in held1["hold"]
-                hv["torque_resumed_after_leave"] = (after["torque"] or 0) > (held1["torque"] or 0)
-                hv["hold_false_after_leave"] = '"torque":false' in after["hold"]
+                h1 = c.js(REV_JS)
+                c.shot(os.path.join(OUT, "r5_no_hold.png"))
+                hv = {"before": before, "start": h0, "after_2s": h1}
+                hv["not_held"] = h1["held"] is False
+                hv["torque_kept_scrolling"] = (h1["tq"] or 0) > (h0["tq"] or 0)
+                hv["one_clock"] = h1["tq"] is not None and h1["tq"] == h1["gt"]
                 res["hover"] = hv
-                ok = all(hv[k] for k in ("torque_frozen_while_held", "gait_kept_updating", "hover_label_shown",
-                                         "hold_true_while_hovering", "torque_resumed_after_leave",
-                                         "hold_false_after_leave"))
-                if not ok:
+                if not all(hv[k] for k in ("not_held", "torque_kept_scrolling", "one_clock")):
                     res["fail"] = True
                 res["console_errors"] = c.console[:6]
             b.close()

@@ -9,10 +9,11 @@ reaches the app (nothing is started, stopped or sent to MATLAB / the target).
 Per Live sub-tab (Gait, Sensors, Training), in the installed Chrome (headless):
 - main-thread busy % over 10 s from a Chrome trace (top-level tasks on the renderer
   main thread), the longest task and the number of tasks > 50 ms;
-- clicks as CDP Input.dispatchMouseEvent (queued like a user's click): wall time from the
-  mouse-DOWN dispatch (so input delivery is included) to the first text change of the
-  button (MutationObserver): Stop -> "Confirm stop?", confirm -> "Stopping…" (kept
-  through later renders), Calibrate FSR -> "Calibrating…".
+- Calibrate FSR (momentary pulse): label unchanged, never lit;
+- on Trials (Start / Stop moved there, Andy 15:23): clicks as CDP Input.dispatchMouseEvent
+  (queued like a user's click), wall time from the mouse-DOWN dispatch to the first text
+  change of the button (MutationObserver): Stop -> "Confirm stop?", confirm -> "Stopping…"
+  (kept through later renders).
 Limits: every click < 150 ms, main thread busy < 40 %. Calibrate FSR sends pulses to
 the test listener on :15990 only. A line "LATENCY {json}" carries the numbers.
 
@@ -203,33 +204,33 @@ def main():
             print(f"[{view}] main thread busy {tr['busy_pct']} % over 10 s, longest task {tr['longest_ms']} ms, "
                   f"{tr['n_over_50ms']} tasks > 50 ms", flush=True)
             check(f"{view}: main thread busy < {BUSY_MAX:.0f} %", tr["busy_pct"] is not None and tr["busy_pct"] < BUSY_MAX, tr)
-            ms1, txt, info = real_click(c, "#tStop")
-            print(f"[{view}] Stop -> {txt!r} {ms1} ms", flush=True)
-            check(f"{view}: Stop -> 'Confirm stop?' < {LIMIT_MS} ms", txt == "Confirm stop?" and ms1 is not None and ms1 < LIMIT_MS,
-                  (txt, ms1, info))
-            ms2, txt, info = real_click(c, "#tStop")
-            print(f"[{view}] confirm -> {txt!r} {ms2} ms", flush=True)
-            check(f"{view}: confirm -> 'Stopping…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Stopping")
-                  and ms2 is not None and ms2 < LIMIT_MS, (txt, ms2))
-            c.pump(1.0)
-            held = c.js("document.getElementById('tStop').textContent")
-            check(f"{view}: 'Stopping…' kept through renders (1.6 s)", str(held).startswith("Stopping"), held)
-            posts = json.loads(c.js("JSON.stringify(window._runPosts)"))
-            check(f"{view}: stop POST stayed in the page stub", posts and all(p.endswith("/api/run/stop") for p in posts), posts)
-            c.pump(2.5)
+            # Calibrate FSR is a momentary pulse (Andy 16:15): label unchanged, never lit
             ms3, txt, info = real_click(c, "#bCal")
-            print(f"[{view}] Calibrate FSR -> {txt!r} {ms3} ms", flush=True)
-            # Andy 15:06: the label never changes; the click shows a pressed style, then lit (toggle)
             label = c.js("document.getElementById('bCal').textContent")
             check(f"{view}: Calibrate FSR keeps its label (no busy text)", label == "Calibrate FSR", (label, txt, ms3))
-            ms3 = None              # no text change to time any more (the pressed style is CSS)
             c.pump(1.0)
             lit = c.js("document.getElementById('bCal').className")
-            check(f"{view}: Calibrate FSR lit after the press (toggle ON)", "lit" in str(lit), lit)
-            real_click(c, "#bCal")      # toggle back off before the next view
-            c.pump(1.0)
-            out[view] = dict(tr, click_ms=[ms1, ms2, ms3], click_max_ms=max(x for x in (ms1, ms2, ms3) if x is not None)
-                             if any(x is not None for x in (ms1, ms2, ms3)) else None)
+            check(f"{view}: Calibrate FSR not lit after the press (momentary)", "lit" not in str(lit).split(), lit)
+            out[view] = dict(tr)
+        # Start / Stop live on Trials now (Andy 15:23), next to Connect: the two-step Stop there
+        c.js("(document.querySelector('[data-page=\"trials\"]') || {click: function(){}}).click(); window._afoGo && window._afoGo('trials'); 1")
+        c.call("Page.navigate", url=BASE + "/trials")
+        c.pump(4)
+        ms1, txt, info = real_click(c, "#tStop")
+        print(f"[Trials] Stop -> {txt!r} {ms1} ms", flush=True)
+        check(f"Trials: Stop -> 'Confirm stop?' < {LIMIT_MS} ms", txt == "Confirm stop?" and ms1 is not None and ms1 < LIMIT_MS,
+              (txt, ms1, info))
+        ms2, txt, info = real_click(c, "#tStop")
+        print(f"[Trials] confirm -> {txt!r} {ms2} ms", flush=True)
+        check(f"Trials: confirm -> 'Stopping…' < {LIMIT_MS} ms", txt is not None and txt.startswith("Stopping")
+              and ms2 is not None and ms2 < LIMIT_MS, (txt, ms2))
+        c.pump(1.0)
+        held = c.js("document.getElementById('tStop').textContent")
+        check("Trials: 'Stopping…' kept through renders (1.6 s)", str(held).startswith("Stopping"), held)
+        posts = json.loads(c.js("JSON.stringify(window._runPosts)"))
+        check("Trials: stop POST stayed in the page stub", posts and all(p.endswith("/api/run/stop") for p in posts), posts)
+        out["Trials"] = {"click_ms": [ms1, ms2], "click_max_ms": max(x for x in (ms1, ms2) if x is not None)
+                         if any(x is not None for x in (ms1, ms2)) else None}
         print("LATENCY " + json.dumps(out), flush=True)
         check("UDP only to the test listener (FSR pulses), no param writes", not prm.pkts and len(ctl.pkts) <= 20,
               (len(ctl.pkts), len(prm.pkts)))

@@ -225,7 +225,7 @@ def e2e():
             print("cannot read the firmware repo:", exc)
         b = Browser(19381, 1600, 1000)
         c = b.c
-        c.call("Page.navigate", url=BASE + "/teensy")
+        c.call("Page.navigate", url=BASE + "/daq")          # Teensy page renamed DAQ (Andy 14:36)
         c.pump(8)
         rd = ("JSON.stringify((function(){function t(i){var e=document.getElementById(i);return e?(e.innerText||'').trim():null;}"
               "var bb=document.getElementById('ty-build-btn'),fb=document.getElementById('ty-flash-btn');"

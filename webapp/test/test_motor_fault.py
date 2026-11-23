@@ -1,4 +1,6 @@
 """Motor button with a latched drive fault (statusword 0x0628) on AFO_r1 (localhost test ports only).
+Run-12 behaviour: the console runs the pinned 12-float layout (test/fixtures), so the foot
+side is confirmed on the page (run 14+ adopts it from the echo instead).
 
 App on 127.0.0.1:18050 (config target.model AFO_r1, target writes disabled), main bus
 '<31f' at 1 kHz to :15432 with statusword 0x0628 (fault bit set) and the console
@@ -67,7 +69,9 @@ def main():
     cfg["dash"] = {"host": "127.0.0.1", "port": 18050}
     cfg["paths"]["log_dir"] = os.path.join(tmp, "logs")
     cfg["target"] = {"model": "AFO_r1"}
-    lay = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
+    # run-12 behaviour (side confirmed on the page, no UDP settings): the pinned 12-float layout
+    R12 = os.path.join(HERE, "fixtures", "run12_console_udp_layout.json")
+    lay = json.load(open(R12, encoding="utf-8"))
     lay["port"] = 15433
     json.dump(lay, open(os.path.join(tmp, "lay.json"), "w"))
     cfg["training"] = {"enabled": True, "listen_host": "127.0.0.1", "layout": os.path.join(tmp, "lay.json")}
@@ -86,7 +90,7 @@ def main():
     stop = threading.Event()
     threading.Thread(target=bus, args=(stop,), daemon=True).start()
     echo = {"cmd_motor": 0.0}                                 # mutable: the sender reads it every packet
-    con = replay_senders.start(0, 15433, side=0.0, cmds=echo)  # console only (side 0 echo), no bus
+    con = replay_senders.start(0, 15433, side=0.0, cmds=echo, layout=R12)  # console only (side 0 echo), no bus
     b = None
     rd = ("JSON.stringify((function(){var m=document.getElementById('bMotor');"
           "return {dis:m.disabled || m.getAttribute('aria-disabled')==='true', drive:m.getAttribute('data-drive'),"
