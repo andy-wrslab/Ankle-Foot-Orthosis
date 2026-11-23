@@ -23,19 +23,17 @@ const int   FILTER_TIMER_INTERVAL = 1000; // [1kHz]
 const int  EASYCAT_TIMER_INTERVAL = 500; // [2kHz]
 
 
-const int             NUM_SENSORS = 6;
+// Only the potentiometer and encoder are averaged/filtered: the FSRs go out
+// raw (Force12..19) and the AFO/AFO_r1 models do their own heel/toe grouping.
+const int             NUM_SENSORS = 2;
 const int             PNTS_TO_AVG = 5;
-unsigned int           ADC_cycles = 0; 
-unsigned long             t_blink = 0;
-bool                   led_status = 0;
+unsigned int           ADC_cycles = 0;
 bool          infrared_led_status = 0;
 int        infrared_led_wait_time = 1;
 unsigned long               t_LED = 0;   // last IR-LED toggle time [ms]
 
-volatile int          raw_encoder = 0;
 volatile float    encoder_reading = 0;
 volatile float        pot_reading = 0;
-volatile float      heel_pressure = 0;
 
 volatile bool imu_poll_due = false;
 volatile bool easycat_poll_due = false;
@@ -43,7 +41,7 @@ volatile bool sensors_poll_due = false;
 volatile bool filter_poll_due = false;
 
 EasyCAT                   EASYCAT(10);
-SensorData       sensors[NUM_SENSORS];   // {potentiometer, encoder, pressure, velocity}
+SensorData       sensors[NUM_SENSORS];   // {potentiometer, encoder}
 IntervalTimer        readSensorsTimer;
 IntervalTimer        readIMUTimer; 
 IntervalTimer      filterSensorsTimer;
@@ -56,14 +54,11 @@ IntervalTimer      easyCatTimer;
 //
 // EasyCAT::MainTask() should not be called from an interrupt, because the SPI
 // transaction temporarily disables interrupts which will block other
-// peripherals such as Serial4.  We therefore call sendEasyCatData() from the
-// main loop at a fixed interval.  This variable holds the last time (in
-// microseconds) that sendEasyCatData() was executed.
-static unsigned long lastEasyCatTime = 0;
+// peripherals such as Serial4.  We therefore call application() + MainTask()
+// from the main loop, paced by easyCatTimer (easycat_poll_due).
 
 uint8_t nPacketStreamingData = sizeof(structStreamingData);
 boolean reset_imu;
-boolean sig;
 
 // IMU watchdog: time (us) of the last valid IMU packet, plus the silence
 // timeout after which loop() requests a fast re-init.  This lets the IMU be
@@ -81,20 +76,12 @@ unsigned long imu_reinit_t0 = 0;                           // time of the previo
 const unsigned long IMU_REINIT_DRAIN_DELAY_US  = 20000UL;  // STOP -> drain: let the in-flight reply land
 const unsigned long IMU_REINIT_SETTLE_DELAY_US = 100000UL; // slot -> timing settle (was the blocking delay(100))
 
-unsigned long nowTime = 0;
-unsigned long startTime;
 float yaw1, pitch1, roll1;
 bool easycat_enabled = true; // enable EasyCAT for timing verification
 bool sensors_enabled = true; // enable sensors timing for interval verification
 bool filter_enabled = true;  // enable filter so sensors[x].filtered_value updates
 
 uint16_t p[] = {0, 0, 0, 0, 0, 0, 0, 0};
-uint16_t p_sum[] = {1000, 1000}; // sum all the pressure
-uint16_t p_sum_0_filt = 0;
-uint16_t p_sum_1_filt = 0;
-uint16_t p_heel = 0;
-uint16_t p_toe = 0;
-volatile uint32_t t_IMU = 0;
 
 // SD session log (boots.txt): one BOOTED line per reset, plus a line when
 // EtherCAT drops out of the operational state.  Any line appearing during a
@@ -300,7 +287,6 @@ void  loop() {
   }
 
   // Minimal debug print to verify update timing
-  ax_curr = uStreamingDataIMU1.sData.lAcc.ax;
   ax_curr = sensors[0].filtered_value;
   // ax_curr = sensors[0].value;
   if (ax_prev != ax_curr) {
@@ -451,7 +437,7 @@ void  setupTimers() {
 
   // Do not run EasyCAT::MainTask() from an interrupt.  The SPI transaction
   // disables interrupts long enough to starve the UART used by the IMU.  We
-  // will instead invoke sendEasyCatData() periodically from loop().
+  // will instead run application() + MainTask() periodically from loop().
   if (easycat_enabled) {
     easyCatTimer.begin(sendEasyCatData_ISR, EASYCAT_TIMER_INTERVAL);
   }
@@ -541,6 +527,7 @@ int   readADChannel(byte ch_number) {
 }
 
 float readEncoder() {
+  int raw_encoder;
   SPI1.beginTransaction(SPISettings(3000000, MSBFIRST, SPI_MODE1));
 
   //--sending the command
@@ -569,12 +556,6 @@ int   readPressure(uint8_t num) {
 
     delayMicroseconds(4);
     return analogRead(PIN_PRESSURE);
-}
-
-void sendEasyCatData() {
-  // Serial.println("sendEasyCatData");
-  application();
-  EASYCAT.MainTask();
 }
 
 void setupIMU() {
@@ -607,9 +588,7 @@ void setupIMU() {
   YEIwriteCommand(IMU1, CMD_COMMIT_SETTINGS);   // persist calibration + tare to IMU flash
   IMU1.flush();
   reset_imu = TRUE;             // calibration/tare done above -> just stream and read
-  sig = FALSE;
-  startTime = micros();
-  lastIMUDataTime = startTime;  // arm the watchdog
+  lastIMUDataTime = micros();   // arm the watchdog
 }
 
 void readIMU() {
@@ -660,7 +639,6 @@ void readIMU() {
           imu_reinit_state = 0;
           reset_imu = true;             // re-init finished; back to streaming reads
           lastIMUDataTime = micros();   // give the link time to come back before re-triggering
-          sig = !sig;
         }
         break;
     }
@@ -679,17 +657,10 @@ void readIMU() {
 
 
 void readAllPressure() {
-    p_sum[0] = p_sum[1];
-    p_sum[1] = 0;
-    // // Read Pressure
+    // Raw FSRs only (Force12..19); heel/toe grouping happens in the Simulink model.
     for (uint8_t h = 0; h < 8; h++) {
       p[h] = readPressure(h+1);
-      p_sum[1] = p_sum[1] + p[h];
     }
-
-    p_heel = (p[1] + p[6] + p[7])/3;
-    p_toe = max( max( max( max(p[0], p[2]), p[3] ), p[4] ), p[5] );
-
 }
 
 void  readSensors() {
@@ -700,10 +671,6 @@ void  readSensors() {
 
   sensors[0].sum += pot_reading;      // read potentiometer
   sensors[1].sum += encoder_reading;                    // read encoder
-  sensors[2].sum += p_heel; // read pressure
-  sensors[3].sum += p_toe; // read pressure
-  sensors[4].sum += p_sum[0]; // read pressure
-  sensors[5].sum += p_sum[1]; // read pressure
 
   ADC_cycles++;
   if (ADC_cycles == PNTS_TO_AVG) {
@@ -729,19 +696,17 @@ void  filterSensors() {
         sensors[i].buff_raw[0]  = sensors[i].value;
         sensors[i].buff_filt[0] = sensors[i].filtered_value;
     }
-    p_sum_0_filt = p_sum_1_filt;
-    p_sum_1_filt = sensors[4].filtered_value;
 }
 
 void  application() {
     EASYCAT.BufferIn.Cust.Force1 = sensors[0].value;
     EASYCAT.BufferIn.Cust.Force2 = sensors[1].value;
-    EASYCAT.BufferIn.Cust.Force3 = sensors[2].value;
+    EASYCAT.BufferIn.Cust.Force3 = 0.0f;   // unused by AFO/AFO_r1 (checked 2026-11-23)
     EASYCAT.BufferIn.Cust.Force4 = sensors[0].filtered_value;
     EASYCAT.BufferIn.Cust.Force5 = sensors[1].filtered_value;
-    EASYCAT.BufferIn.Cust.Force6 = sensors[2].filtered_value;
-    EASYCAT.BufferIn.Cust.Force7 = VelocityEstimator.SV;
-    EASYCAT.BufferIn.Cust.Force8 = VelocityEstimator.SL;
+    EASYCAT.BufferIn.Cust.Force6 = 0.0f;   // unused by AFO/AFO_r1 (checked 2026-11-23)
+    EASYCAT.BufferIn.Cust.Force7 = 0.0f;   // unused by AFO/AFO_r1 (checked 2026-11-23)
+    EASYCAT.BufferIn.Cust.Force8 = 0.0f;   // unused by AFO/AFO_r1 (checked 2026-11-23)
     EASYCAT.BufferIn.Cust.Force9 = yaw1;
     EASYCAT.BufferIn.Cust.Force10 = pitch1;
     EASYCAT.BufferIn.Cust.Force11 = roll1;

@@ -118,7 +118,6 @@
 #define BYTE_DATA_PACKET 128
 #define BYTE_PUREDATA_PACKET 64       //91 60
 #define BYTE_WIFI_INCOMING_PACKET 16  //11//7
-#define BUFFER_SIZE 5000
 
 uint8_t YEIdataPacket[MAX_YEI_DATA_PACKET];
 
@@ -131,86 +130,15 @@ uint8_t YEIdataPacket[MAX_YEI_DATA_PACKET];
 
 
 
-// Curve Fitting Coefficient
-const float coef1[] = {4.9623, 4.9715, 4.5513, 4.9613, 5.0471, 4.8370, 4.7539, 4.8434}; // Multiply by 10000
-const float coef2[] = {22.869, 28.117, 22.400, 21.504, 26.127, 22.159, 25.630, 22.922}; // Multiply by 1000
-const uint16_t segmentpoint = 581;
-
-
 // AFO
+// Force20 still sends AFO_corrected/2/pi*100. Nothing in this firmware assigns
+// AFO_corrected, so it is always 0 (kept so the Force20 output is unchanged).
 const float pi = 3.14159265359f;
-
-const uint8_t AFO_m = 6; // oscillator numbers
-float AFO_phi[] = {pi / 2, pi / 2, pi / 2, pi / 2, pi / 2, pi / 2};
-float AFO_theta = 0;
-float AFO_omega = pi;
-float AFO_a[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-float AFO_dt = 0.0f;
-float AFO_t[] = {0.0f, 0.0f};
-const float AFO_v = 0.25;
-const float AFO_eps = 2.6;
 float AFO_corrected = 0;
-float AFO_phi_error = 0.0f;
-float AFO_phi_error_dot[] = {0.0f, 0.0f};
-float AFO_phi_error_Kp = 0.5;
-float AFOc_simple = 0;
-
-// Gait Event Detector
-const uint16_t threshold_pressure_sum = 400;
-const uint16_t threshold_pressure_state = 200; //50;
-
-const uint16_t threshold_pressure_sum_FC = 400;
-const uint16_t threshold_pressure_sum_LC = 350;
-
-const uint16_t threshold_pressure_heel_on = 75;
-const uint16_t threshold_pressure_heel_off = 75;
-
-const uint16_t threshold_pressure_toe_on = 175;
-const uint16_t threshold_pressure_toe_off = 175;
-
-const float    rho = 0.5; // The gain rho tunes the acceptance threshold of stride-period variance
-uint8_t  Gait_State[] = {0, 0, 1, 1};
-float    t_FC[] = {0, 0}; // Times for first contact (k-1 and k stride)
-float    t_LC[] = {0, 0}; // Times for last  contact
-float Phase_Error = 0;
-float Phase_Error_Hat[] = {0, 0};
 
 uint8_t write_command_sent = 0;
 
 
-// Velocity Estimator
-const float g_NJ = 9.802;
-struct structVelocityEstimator
-{
-  float ax[BUFFER_SIZE];
-  float ay[BUFFER_SIZE];
-  float az[BUFFER_SIZE];
-  float  t[BUFFER_SIZE];
-  float aM[BUFFER_SIZE]; // magnitude
-
-  uint16_t iter = 0;
-  uint8_t  Gait_State[2] = {1, 1};
-  float vx[BUFFER_SIZE] = {};
-  float vy[BUFFER_SIZE] = {};
-  float vz[BUFFER_SIZE] = {};
-  float px[BUFFER_SIZE];
-  float py[BUFFER_SIZE];
-  float pz[BUFFER_SIZE];
-  float SV = 0; // estimated stride velocity
-  float SL = 0; // estimated stride length
-  uint16_t start_idx = 0;
-  uint16_t end_idx = 0;
-  //
-  uint16_t FC_idx[2];
-  uint8_t  FC_iter = 0;
-  uint16_t LC_idx[2];
-  uint8_t  LC_iter = 0;
-
-  uint16_t FF_idx1[2];
-  uint16_t FF_iter1 = 0;
-  uint16_t FF_idx2[2];
-  uint16_t FF_iter2 = 0;
-} VelocityEstimator;
 
 struct structStreamingTimingInformation {
   unsigned int interval;
@@ -257,21 +185,6 @@ struct structComponentRawGyro {
   float wx;
 };
 
-struct structComponentSensorData {
-  //Big Endian
-  float mx;
-  float my;
-  float mz;
-
-  float ax;
-  float ay;
-  float az;
-
-  float gx;
-  float gy;
-  float gz;
-};
-
 struct structStreamingData {
   //Big Endian
   structComponentRawAcceleration acc;
@@ -281,35 +194,14 @@ struct structStreamingData {
   structComponentQuaternion q;
 };
 
-struct structSportSolePacket
-{
-  uint8_t Start_bytes[3];
-  uint8_t val; // 0->reboot; 1->start; 2->broadcast
-  uint8_t Odroid_Timestamp[8];
-  uint8_t Odroid_Trigger;
-  uint8_t Stop_bytes[3];
-};
-
-union unionIncomingWifi
-{
-  uint8_t vData[BYTE_WIFI_INCOMING_PACKET];
-  structSportSolePacket Raw;
-}
-Wifi_Incoming_Data;
 
 union unionStreamingData
 {
   structStreamingData sData;
   volatile uint8_t vData[sizeof(structStreamingData)];
 
-} uStreamingDataIMU1, uStreamingDataIMU2;
+} uStreamingDataIMU1;
 
-union unionComponentSensorData
-{
-  structComponentSensorData sData;
-  uint8_t vData[sizeof(structComponentSensorData)];
-
-} uCompSensData;
 
 uint8_t calcCRC256(uint8_t* dataPacket, uint8_t nByte)
 {
@@ -486,7 +378,6 @@ bool YEIpacketLooksValid(const structStreamingData& d)
 bool YEIgetStreamingBatch(unionStreamingData& uStreamingDataIMU1)
 {
   int nPacketStreamingData = sizeof(uStreamingDataIMU1);
-  int bIMU = 0;
 
   if (!write_command_sent) {
     // A new reply is requested only after the previous one was consumed, so any
