@@ -34,10 +34,18 @@ def page_static():
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
     a = js.index("function chromeHTML()")
     top = js[a:js.index("'</header>'", a)]
-    check("top bar: no Connect button", 'id="tConnect"' not in top and 'id="tStart"' in top and 'id="tStop"' in top)
+    check("top bar: no Connect, Start or Stop (Andy 15:23: AFO · pages … ID · Mass · side · Advanced · status)",
+          'id="tConnect"' not in top and 'id="tStart"' not in top and 'id="tStop"' not in top
+          and top.index('id="sPart"') < top.index('id="sMass"') < top.index('id="sideChip"') < top.index('id="advBtn"') < top.index('id="statusBtn"'))
     tr = js[js.index("function trialsHTML()"):]
     tr = tr[:tr.index("}") + 1] if "}" in tr else tr
-    check("Trials: 'MATLAB link' row with the state and Connect", "MATLAB link" in tr and 'id="mlState"' in tr and 'id="tConnect"' in tr)
+    check("Trials: 'MATLAB link' row with the state, Connect, Start and Stop", "MATLAB link" in tr and 'id="mlState"' in tr
+          and tr.index('id="tConnect"') < tr.index('id="tStart"') < tr.index('id="tStop"') < tr.index('class="toolbar"'))
+    check("Start / Stop keep the two-step confirms and busy states", "confirmable($('tStart')" in js and "confirmable($('tStop')" in js
+          and "busyNow($('tStart'), 'Starting…');" in js and "busyNow($('tStop'), 'Stopping…');" in js)
+    check("Trials: Refresh in the runs card header (no floating button above the card)",
+          '<div class="card-head"><span class="card-title">Runs</span>' in tr
+          and tr.index('class="card flush"') < tr.index('id="runsRefresh"') and "tb-right" not in tr)
     check("Start / Stop not locked by the connection", "s.disabled = !!T.running;" in js and "p.disabled = !T.running;" in js)
     live = open(os.path.join(APP, "pages", "live.py"), encoding="utf-8").read()
     check("Training: no 'Level in use' legend", "Level in use\", \"var(--s-meas)\"" not in live)
@@ -92,6 +100,13 @@ def auto_connect():
     ctx = make_ctx({}, live_age=0.05, tr_age=0.05)
     ctx.jobs = JobManager()
     seq, stages = [], []
+    # a real temporary .mat for the stub export, so the copy to afo_mat finds it (no background
+    # FileNotFoundError); afo_mat goes to a temp root too
+    import tempfile
+    tmp_root = tempfile.mkdtemp(prefix="afo_cm_")
+    tmp_mat = os.path.join(tmp_root, "S1_test.mat")
+    open(tmp_mat, "wb").write(b"MATLAB 5.0 MAT-file stub")
+    ctx.cfg.setdefault("paths", {})["afo_root"] = tmp_root
 
     class ML:
         def __init__(self, connect_ok=True):
@@ -108,7 +123,7 @@ def auto_connect():
             if action == "start":
                 return json.dumps({"ok": True, "connected": True, "app": "AFO_r1", "running": True})
             return json.dumps({"ok": True, "connected": True, "app": "AFO_r1", "running": action == "start",
-                               **({"file": "x.mat"} if action == "save" else {})})
+                               **({"file": tmp_mat} if action == "save" else {})})
     ctx.matlab = ML()
     ctx.runctl = RunControl(ctx)
 

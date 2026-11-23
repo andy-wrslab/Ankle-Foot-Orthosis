@@ -136,7 +136,11 @@ def main():
         return cx
     cx = ctx15(0.0, 0.0, 0.0)
     st = top_status(cx)
-    check("15 floats, bias 0: button 'IMU not ready' (amber)", st["text"] == "IMU not ready" and st["level"] == "amber",
+    check("15 floats, bias 0 just now (normal ~5 s recal): no 'IMU not ready' (Andy 15:23)",
+          "imu-not-ready" not in [i["key"] for i in st["issues"]], (st["text"], [i["key"] for i in st["issues"]]))
+    cx.session.bias_low_since -= 11.0                # bias still 0 after > 10 s: a fault
+    st = top_status(cx)
+    check("15 floats, bias 0 for > 10 s: button 'IMU not ready' (amber)", st["text"] == "IMU not ready" and st["level"] == "amber",
           (st["text"], [i["key"] for i in st["issues"]]))
     chk = cx.session.checklist()
     check("15 floats, bias 0: popover IMU ready not done", [i["done"] for i in chk["items"]][2] is False, chk["items"])

@@ -649,6 +649,7 @@ ul.pop-checklist li.unknown { color: var(--text-3); }
 .ml-link { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0 var(--sp-3); }
 .ml-link .ml-state { font-weight: 500; }
 .ml-link .hint { color: var(--text-3); font-size: var(--fs-12); }
+.ml-link .vr { width: 1px; height: 20px; background: var(--border); }
 .adv-in.adv-stale { color: var(--text-3); background: var(--surface-2); }
 /* Live sub-tabs (Gait | Sensors | Training) and the 2 s / 10 s window: one step larger (Andy 14:51) */
 #page-live > .toolbar .seg button { height: 30px; font-size: 16px; padding: 0 14px; }   /* 24 -> 30 px, 12 -> 16 px, 10 -> 14 px */

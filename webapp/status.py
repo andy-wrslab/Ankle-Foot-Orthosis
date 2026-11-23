@@ -28,6 +28,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List
 
+IMU_NOT_READY_FAULT_S = 10.0     # bias_ready 0 this long = a fault (a normal recal takes ~5 s)
+
 import model_profile as mp
 from session import SHORT, _num
 
@@ -187,10 +189,20 @@ def top_status(ctx) -> Dict[str, Any]:
                 except Exception:
                     b = {}
                 ph = b.get("phase")
+                # IMU not ready only as a FAULT (Andy 15:23): bias_ready 0 for more than 10 s; the
+                # normal ~5 s recal after Calibrate IMU / Start shows nothing
+                sess = ctx.session
                 if ph == "bias":
-                    issues.append({"level": "amber", "key": "imu-not-ready", "text": "IMU not ready",
-                                   "detail": b.get("text"), "todo": "The wearer holds still for 5 s."})
-                elif ph == "walk":
+                    now = time.time()
+                    if getattr(sess, "bias_low_since", None) is None:
+                        sess.bias_low_since = now
+                    if now - sess.bias_low_since > IMU_NOT_READY_FAULT_S:
+                        issues.append({"level": "amber", "key": "imu-not-ready", "text": "IMU not ready",
+                                       "detail": f"bias not ready for {now - sess.bias_low_since:.0f} s",
+                                       "todo": "The wearer holds still for 5 s; check the IMU if it stays."})
+                else:
+                    sess.bias_low_since = None
+                if ph == "walk":
                     pct = b.get("progress_pct")
                     n = int(round(30 * pct / 100.0)) if pct is not None else None
                     issues.append({"level": "amber", "key": "calibrating",

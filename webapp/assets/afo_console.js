@@ -111,11 +111,6 @@
             '<button class="btn sm" id="advBtn" aria-haspopup="dialog" aria-expanded="false">Advanced</button>' +
           '</div>' +
           '<span class="vr"></span>' +
-          '<div class="target"><div class="btn-group">' +
-            '<button class="btn sm" id="tStart">Start</button>' +
-            '<button class="btn sm danger" id="tStop">Stop</button>' +
-          '</div></div>' +
-          '<span class="vr"></span>' +
           '<div class="meta">' +
             '<button class="status-btn" id="statusBtn" aria-haspopup="dialog" aria-expanded="false" title="Connection, data streams and the settings the target reports back"><span class="sb-mark" aria-hidden="true"></span><span class="sb-txt" id="statusTxt">…</span></button>' +
           '</div>' +
@@ -170,14 +165,22 @@
 
     function trialsHTML() {
         return '' +
-        // Andy 14:48: Connect lives here (run 14: everything else is UDP); Start / Stop / Export /
-        // Load connect by themselves
+        // Andy 14:48: Connect lives here (run 14: everything else is UDP); Andy 15:23: Start / Stop
+        // too (off the top bar), same confirms, auto-connect and busy states
         '<div class="ml-link" id="mlLink"><span class="field-label">MATLAB link</span>' +
         '<span class="ml-state" id="mlState">Not connected</span>' +
-        '<button class="btn sm" id="tConnect" title="Start, Stop, Export and Load connect by themselves">Connect</button></div>' +
-        '<div class="toolbar"><h1 class="page-title">Trials</h1><span class="tb-right"><span class="hint" id="runsHint"></span>' +
-        '<button class="btn sm" id="runsRefresh">Refresh</button></span></div>' +
+        '<button class="btn sm" id="tConnect" title="Start, Stop, Export and Load connect by themselves">Connect</button>' +
+        '<span class="vr" aria-hidden="true"></span>' +
+        '<div class="target"><div class="btn-group">' +
+          '<button class="btn sm" id="tStart">Start</button>' +
+          '<button class="btn sm danger" id="tStop">Stop</button>' +
+        '</div></div></div>' +
+        '<div class="toolbar"><h1 class="page-title">Trials</h1></div>' +
+        // Refresh in the runs card's own header, like "Fetch latest" on DAQ (Andy 15:23)
         '<section class="card flush">' +
+          '<div class="card-head"><span class="card-title">Runs</span><span class="spacer"></span>' +
+            '<span class="hint" id="runsHint"></span>' +
+            '<button class="btn sm" id="runsRefresh">Refresh</button></div>' +
           '<div class="runs-limit" id="runsLimit" hidden></div>' +
           '<table class="table runs" id="runTable"><thead><tr><th>Run</th><th>Started</th><th class="r">Duration</th><th class="r">Size</th><th>Participant</th><th>Status</th></tr></thead><tbody></tbody></table>' +
           '<div class="export-bar">' +

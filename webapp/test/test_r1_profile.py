@@ -170,12 +170,8 @@ def replay_checks():
     # 2) Signals fallback (still 12 floats): bias not ready, then the walk at 40 %
     ctx.matlab.values = {"bif_bias_ready": 0.0, "bif_valid": 0.0, "bif_dbg(1)": 0.0, "bif_dbg(8)": 0.0}
     bif = sess.bif_view()
-    check("signals: hold still (IMU not ready)", bif["text"] == "Bi-LSTM: hold still 5 s… (IMU not ready yet)"
-          and bif["source"] == "signals", bif)
-    ctx.matlab.values = {"bif_bias_ready": 1.0, "bif_valid": 0.0, "bif_dbg(1)": 1.0, "bif_dbg(8)": 0.4}
-    bif = sess.bif_view()
-    check("signals: calibration walk 40 %", bif["text"] == "Bi-LSTM: IMU ready · calibration walk 40 %" and
-          bif["state_text"] == "calibrating", bif)
+    # (the "signals: ..." checks were retired: the Signals page was removed by Andy 14:36, so
+    #  the Bi-LSTM state comes only from the console echo)
 
     # 3) side set to 0 (echo), BIF mass reads back 75
     burst(side=0.0)
@@ -187,9 +183,7 @@ def replay_checks():
     keys = {i["key"] for i in st["issues"]}
     check("status: no side / mass issue", not ({"confirm-side", "bif-mass", "differs-bif_mass"} & keys), keys)
     chk = sess.checklist()
-    check("checklist: side + mass done, walk 40 %",
-          [i["done"] for i in chk["items"]] == [True, True, True, False] and chk["items"][3]["detail"] == "40 %",
-          chk["items"])
+    check("checklist: side + mass done", [i["done"] for i in chk["items"]][:2] == [True, True], chk["items"])
     tbl = {r["name"]: r for r in sess.target_table()}
     check("table: weight from echo, BIF mass from getparam",
           tbl["weight"]["source"] == "echo" and tbl["bif_mass"]["source"] == "getparam" and tbl["bif_mass"]["match"] is True,
@@ -217,7 +211,7 @@ def replay_checks():
     burst(side=0.0)
     lat = sup.latest(max_age_s=1.0)
     check("12 floats again: no tail in latest", "bif_valid" not in lat, sorted(lat))
-    check("12 floats again: Signals source", sess.bif_view()["source"] == "signals")
+
     # 6) wrong length still rejected
     s.sendto(b"\x00" * 52, ("127.0.0.1", PORT))
     time.sleep(0.8)
