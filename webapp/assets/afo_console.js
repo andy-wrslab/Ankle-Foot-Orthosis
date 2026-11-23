@@ -83,7 +83,7 @@
         var adv = ADV.map(function (sec) {
             var rows = sec[2].map(function (f) {
                 return '<label' + (f[3] ? ' title="' + esc(f[3]) + '"' : '') + '>' + esc(f[1]) + '<span><input class="input mono adv-in" data-k="' +
-                    f[0] + '"' + (f[4] ? ' readonly' : '') + '>' + (f[2] ? ' ' + esc(f[2]) : '') + '</span></label>';
+                    f[0] + '"' + (f[4] ? ' data-ro="1" readonly' : '') + '>' + (f[2] ? ' ' + esc(f[2]) : '') + '</span></label>';
             }).join('');
             if (sec[3]) {
                 rows += '<div class="adv-nc" id="advNc" title="UDP 5430 parameters: no block in this model reads them. Wiring them waits for a later round.">' +
@@ -487,9 +487,10 @@
                 var sending = sv.status[k] === 'sending' && v != null;
                 v = sending ? v : (sv.readback || {})[k];
                 var ro = !av.send || !!av.frozen;
-                inp.disabled = ro; inp.readOnly = ro || inp.hasAttribute('readonly');
-                inp.classList.remove('adv-stale');
-                var tu = v == null ? '' : String(+v); if (inp.value !== tu) { inp.value = tu; }
+                inp.disabled = ro; inp.readOnly = ro || inp.getAttribute('data-ro') === '1';
+                if (v == null) { v = (sv.adv_last || {})[k]; }        // stalled: the last values, disabled
+                inp.classList.toggle('adv-stale', !!av.frozen);
+                var tu = advFmt(k, v); if (inp.value !== tu) { inp.value = tu; }
                 var su = sv.status[k];
                 inp.classList.toggle('send-error', su === 'error' && !ro);
                 inp.classList.toggle('send-pending', su === 'sending' && !ro);
@@ -500,15 +501,15 @@
             var last = (sv.adv_last || {})[k];
             if (!advOn) {
                 // not connected: the last values read, greyed; "–" if never read (Connect is on Trials)
-                var lt = last == null ? '–' : String(+last);
+                var lt = last == null ? '–' : advFmt(k, last);
                 if (inp.value !== lt) { inp.value = lt; }
                 inp.classList.add('adv-stale'); inp.readOnly = true;
                 inp.title = 'Connect on Trials to read' + (last == null ? '' : ' (last value read)');
                 return;
             }
-            inp.classList.remove('adv-stale'); inp.readOnly = inp.hasAttribute('readonly');
+            inp.classList.remove('adv-stale'); inp.readOnly = inp.getAttribute('data-ro') === '1';
             if (v == null && last != null) { v = last; }
-            var t = v == null ? '' : String(+v); if (inp.value !== t) { inp.value = t; }
+            var t = advFmt(k, v); if (inp.value !== t) { inp.value = t; }
             var stt = sv.status[k];
             inp.classList.toggle('send-error', stt === 'error');
             inp.classList.toggle('send-pending', stt === 'pending' || stt === 'sending');
@@ -768,6 +769,14 @@
             toast(t, err); dockMsg(err ? m : '', err); poll();
         }).catch(function () { toast('App not reachable: foot side not sent', true); });
     }
+    // Advanced display: per-field decimals, never float32 noise (0.800000011920929 -> 0.8)
+    var ADV_DEC = {sv_target_min: 2, sv_target_max: 2, target_step_up: 3, target_step_down: 3, window_up: 0,
+                   window_down: 0, assist_threshold: 0, min_cycles: 0, p_gain: 2, i_gain: 2, threshold_pressure: 0};
+    function advFmt(k, v) {
+        if (v == null || v === '' || !isFinite(+v)) { return v == null ? '' : String(v); }
+        var d = ADV_DEC.hasOwnProperty(k) ? ADV_DEC[k] : 3;
+        return String(+(+v).toFixed(d));
+    }
     // run 15 (5435): range / whole number per settings_adv_udp_layout.json, min < max for the
     // SV target; '' = ok. Runs <= 14: the server checks.
     function advCheck(k, v) {
@@ -815,9 +824,10 @@
         onCommit($('sMass'), function (v) { commitField($('sMass'), 'sMass', '/api/console/value', {key: 'weight', value: v}); });
 
         document.querySelectorAll('.adv-in').forEach(function (inp) {
-            if (inp.readOnly) { return; }
+            if (inp.getAttribute('data-ro') === '1') { return; }
             var k = inp.getAttribute('data-k');
             onCommit(inp, function (v) {
+                if (inp.disabled || inp.readOnly) { return; }
                 var bad = advCheck(k, v);           // run 15: the layout's ranges before sending
                 if (bad) { flash(inp, false, bad); if (typeof toast === 'function') { toast(bad, true); } return; }
                 commitField(inp, 'adv-' + k, '/api/console/value', {key: k, value: v});

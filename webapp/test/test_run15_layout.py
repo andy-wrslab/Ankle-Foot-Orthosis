@@ -331,6 +331,83 @@ def fake_socket():
           and lk.result["high_assist_level"]["state"] == "confirmed" and len(dev.adv_received) == 1, (dev.adv, lk.result))
 
 
+def cloud_fixes():
+    """The 3 failures the cloud suite found in aad9345."""
+    import udp_settings as U
+    from pages import console_api as CA
+    # 1) 5433 stall on a 31-float build: the profile stays (sticky); Advanced locked; no setparam / UDP
+    dev, calls = Dev31(), []
+    dev.v.update(side=0.0, weight_kg=80.0, bif_mass_kg=80.0, settings_seq=3.0)
+    ctx, s = make_session(dev, calls)
+    ctx.adv_link = U.AdvLink({"udp": {"send_host": "127.0.0.1", "adv_port": 15435}}, s.echo_for_link,
+                             on_status=s.adv_link_status, on_adopt=s.adv_link_adopted, sender=dev.recv)
+    dev.on = True
+    time.sleep(0.4)
+    s.refresh_echo()
+    check("31 floats: run-15 profile known", s.adv_profile() and s.echo_cols() == 31, s.echo_cols())
+    dev.on = False                                   # 5433 stalls
+    time.sleep(0.9)
+    v = CA._adv_view(ctx)
+    check("stall (< 1 s): profile stays run 15 (sticky), popover locked (frozen)", v["udp"] and v["frozen"] and s.adv_profile(), v)
+    calls.clear()
+    n_adv = len(getattr(dev, "adv_packets", []))
+    n_set = len(dev.packets)
+    msg = s.enter_value("p_gain", 0.9)
+    check("stall: an Advanced edit is refused server-side (no setparam, no 5435)",
+          "No data from device" in msg and not [c for c in calls if c[0] == "matlab"]
+          and len(getattr(dev, "adv_packets", [])) == n_adv, (msg, calls))
+    check("stall: getparam keys stay empty (no Advanced getparam fallback)", s.getparam_keys() == [], s.getparam_keys())
+    msg = s.enter_value("weight", 75.0)
+    check("stall: a settings edit (mass) is refused too, nothing sent (5434 sticky)", "No data from device" in msg
+          and len(dev.packets) == n_set and not [c for c in calls if c[0] == "matlab"], (msg, dev.packets[n_set:], calls))
+    dev.on = True                                    # echo back
+    time.sleep(0.4)
+    v = CA._adv_view(ctx)
+    check("echo back: unfrozen, editable again", v["udp"] and not v["frozen"] and v["send"], v)
+    ctx.adv_link.stop()
+    ctx.settings_link.stop()
+
+    # 2) 18-float device + MATLAB connected: Advanced editable by setparam as before
+    dev18, calls18 = Dev(18), []
+    dev18.v.update(side=0.0, weight_kg=80.0, bif_mass_kg=80.0, settings_seq=3.0)
+    ctx18, s18 = make_session(dev18, calls18)
+    dev18.on = True
+    time.sleep(0.3)
+    s18.refresh_echo()
+    v = CA._adv_view(ctx18)
+    check("18 floats: adv {udp: false} (the run-14 path)", v["udp"] is False and v["frozen"] is False, v)
+    calls18.clear()
+    msg = s18.enter_value("p_gain", 0.9)
+    sets = [c for c in calls18 if c[0] == "matlab" and c[1] == "set"]
+    check("18 floats + connected: an Advanced edit goes by setparam", sets and "P" in str(sets[0]), (msg, calls18))
+    js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
+    check("page: static read-only by data-ro, never by the readonly attribute (.readOnly = true adds it)",
+          "hasAttribute('readonly')" not in js and "inp.readOnly = inp.getAttribute('data-ro') === '1';" in js
+          and "if (inp.getAttribute('data-ro') === '1') { return; }" in js)
+    ctx18.settings_link.stop()
+    # an unknown echo on an r1 model: no Advanced setparam
+    dev0, calls0 = Dev(18), []
+    ctx0, s0 = make_session(dev0, calls0)
+    calls0.clear()
+    msg = s0.enter_value("p_gain", 0.9)
+    check("r1 model, echo never seen: no Advanced setparam ('Waiting for the device echo')",
+          "Waiting for the device echo" in msg and not [c for c in calls0 if c[0] == "matlab" and c[1] == "set"], (msg, calls0))
+    ctx0.settings_link.stop()
+
+    # 3) display rounding per field, never float32 noise
+    f = CA._fmt
+    check("popover: speeds 2 decimals (0.800000011920929 -> 0.8)", f("sv_target_min", 0.800000011920929) == "0.8"
+          and f("sv_target_max", 1.5049999952316284) == "1.5", (f("sv_target_min", 0.800000011920929), f("sv_target_max", 1.5049999952316284)))
+    check("popover: gains 2, steps 3", f("p_gain", 0.6000000238418579) == "0.6" and f("i_gain", 1.100000023841858) == "1.1"
+          and f("target_step_up", 0.03999999910593033) == "0.04" and f("target_step_down", 0.0825) == "0.083",
+          (f("p_gain", 0.6000000238418579), f("target_step_down", 0.0825)))
+    check("popover: windows / strides / level / cutoff as integers", f("window_up", 20.0) == "20" and f("min_cycles", 10.0) == "10"
+          and f("assist_threshold", 9.0) == "9" and f("threshold_pressure", 200.00000001) == "200", f("window_up", 20.0))
+    check("page: per-field decimals in the Advanced inputs (advFmt)", "function advFmt(k, v)" in js
+          and "var tu = advFmt(k, v);" in js and "var t = advFmt(k, v);" in js
+          and "sv_target_min: 2" in js and "target_step_up: 3" in js and "window_up: 0" in js)
+
+
 if __name__ == "__main__":
     layouts()
     receiver()
@@ -338,5 +415,6 @@ if __name__ == "__main__":
     adv_link()
     session_send()
     fake_socket()
+    cloud_fixes()
     print("FAILS:", FAILS)
     sys.exit(1 if FAILS else 0)

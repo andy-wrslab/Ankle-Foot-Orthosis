@@ -1,7 +1,7 @@
 """Console packet (UDP 5433) parser with both layout files x both packet sizes
 (localhost test port 15433 only; no target).
 
-Layout 12: config/console_udp_layout.json ('<12f'). Layout 15: the same plus
+Layout 12: test/fixtures/run12_console_udp_layout.json (pinned; config/ is now 31 floats) ('<12f'). Layout 15: the same plus
 bif_valid (12), bif_cal_progress (13), bif_bias_ready (14) as written by the
 Simulink make step ('<15f'). With either layout a 48-byte (12-float) packet and a
 60-byte (15-float) packet must both parse; the Bi-LSTM values appear in "latest"
@@ -44,7 +44,7 @@ def run(label, lay):
     sup = TrainingSupervisor({"training": {"enabled": True, "listen_host": "127.0.0.1", "layout": lp}}, APP, tmpd)
     sup.start()
     time.sleep(3)
-    base = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))
+    base = json.load(open(os.path.join(APP, "test", "fixtures", "run12_console_udp_layout.json"), encoding="utf-8"))
     names = [c.get("name", c.get("n")) for c in sorted(base["columns"], key=lambda c: c.get("column", c.get("i")))]
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     t = [10.0]
@@ -83,7 +83,7 @@ def run(label, lay):
 
 
 def main():
-    lay12, names = load_layout(os.path.join(APP, "config", "console_udp_layout.json"))
+    lay12, names = load_layout(os.path.join(APP, "test", "fixtures", "run12_console_udp_layout.json"))
     check("layout 12 file is '<12f'", lay12["format"] == "<12f" and len(names) == 12, lay12["format"])
     lay15 = json.loads(json.dumps(lay12))
     lay15["format"] = "<15f"

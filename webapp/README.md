@@ -12,7 +12,7 @@ requests only. Target writes for session values are disabled in `config.yaml`
 `console.view_only: true` in the config to run a watch-only console (no UDP commands).
 
 Origin: developed on branch `afo-webapp-20261119` of SherimaX/GUI (local commits
-951d5e0..9325992, then batch branch afo-mass-20261123 up to 96342d2 (2026-11-23, run 14 UDP settings), not pushed there: no write access), copied here as a subfolder.
+951d5e0..9325992, then batch branch afo-mass-20261123 up to 256b839 (2026-11-23, run 14 UDP settings), not pushed there: no write access), copied here as a subfolder.
 
 ---
 

@@ -43,7 +43,7 @@ from session import SHORT, _num
 _log = logging.getLogger("afo.status")
 
 NO_DATA_S = 0.5          # SPEC: no 5431 packet for > 0.5 s -> "No data"
-IMU_ROSE_S = 10.0        # imu_bad_count rising within this window -> "IMU fault"
+IMU_NOT_OK_S = 0.2       # console imu_ok = 0 NOW (onset debounce against flicker) -> "IMU fault"; clears at once
 BUSY = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Starting…", "stop": "Stopping…",
         "load": "Loading…", "save": "Exporting…"}
 
@@ -66,37 +66,26 @@ def _age(sup, status: Dict[str, Any]):
 
 
 def _imu_fault(ctx) -> str:
-    """'' when the IMU looks fine, else why not: console imu_ok = 0, imu_bad_count rose in
-    the last 10 s, or the main bus IMU columns invalid (health group 'bad')."""
-    why = []
+    """'' when the IMU looks fine, else why not. Andy 15:39-15:40 ("a little drop is not an
+    issue", "fault only shows when it CURRENTLY has no data"): ONLY console imu_ok = 0 right now,
+    after a 0.2 s onset debounce; clears the moment imu_ok is 1 again. No latch, no window, no
+    count: bad packets (byte slips) stay a plain number in the Rig status row."""
     tr = {}
     try:
         tr = ctx.training.latest(max_age_s=1.0) or {}
     except Exception:
         tr = {}
     ok = tr.get("imu_ok")
-    if isinstance(ok, (int, float)) and ok == ok and ok < 0.5:
-        why.append("imu_ok = 0 (console)")
-    cnt = tr.get("imu_bad_count")
     now = time.monotonic()
-    hist = getattr(ctx.session, "_imu_hist", None)
-    if hist is None:
-        hist = ctx.session._imu_hist = []       # (monotonic time, imu_bad_count), per app session
-    if isinstance(cnt, (int, float)) and cnt == cnt:
-        _imu_hist = hist
-        _imu_hist.append((now, float(cnt)))
-        while _imu_hist and now - _imu_hist[0][0] > IMU_ROSE_S:
-            _imu_hist.pop(0)
-        first = min(c for _, c in _imu_hist)
-        if cnt > first:
-            why.append(f"imu_bad_count rose by {int(cnt - first)} in the last {IMU_ROSE_S:.0f} s")
-    try:
-        g = ((ctx.live.get_status().get("health") or {}).get("groups") or {}).get("imu") or {}
-        if g.get("state") == "bad":
-            why.append(f"bus IMU values invalid ({g.get('recent_bad', 0)} of {g.get('recent_total', 0)} in 10 s)")
-    except Exception:
-        pass
-    return "; ".join(why)
+    if isinstance(ok, (int, float)) and ok == ok and ok < 0.5:
+        t0 = getattr(ctx.session, "_imu_not_ok_since", None)
+        if t0 is None:
+            t0 = ctx.session._imu_not_ok_since = now
+        if now - t0 > IMU_NOT_OK_S:
+            return f"imu_ok = 0 (console) for {now - t0:.1f} s"
+    else:
+        ctx.session._imu_not_ok_since = None
+    return ""
 
 
 def _hm(t):

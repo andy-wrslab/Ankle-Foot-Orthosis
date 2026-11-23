@@ -155,21 +155,33 @@ def main():
     check("15 floats, valid: button 'Ready' (green), no note", st["text"] == "Ready" and st["level"] == "green"
           and not st.get("notes"), (st["text"], st["issues"], st.get("notes")))
     check("15 floats, valid: checklist all done", cx.session.checklist()["all_done"] is True)
-    # IMU fault (red): console imu_ok = 0, or imu_bad_count rising in the last 10 s
+    # IMU fault (red), Andy 15:39 "a little drop is not an issue": ONLY imu_ok = 0 for > 1 s;
+    # bad packets (byte slips, imu_ok = 1) never show on the button, however many
+    import status as _ST
     cx = ctx15(1.0, 1.0, 1.0)
     cx.training._latest.update(imu_ok=1.0, imu_bad_count=93.0)
     st = top_status(cx); top_status(cx)
     check("IMU fine, constant bad count: no IMU fault", not any(i["key"] == "imu-fault" for i in st["issues"]),
           [i["key"] for i in st["issues"]])
-    cx.training._latest.update(imu_bad_count=97.0)
+    cx.training._latest.update(imu_bad_count=210.0)
     st = top_status(cx)
-    check("imu_bad_count rose: red 'IMU fault'", st["text"] == "IMU fault" and st["level"] == "red", (st["text"], st["issues"]))
+    check("imu_bad_count +117 (run 15 byte slips), imu_ok = 1: no IMU fault", not any(i["key"] == "imu-fault" for i in st["issues"]),
+          (st["text"], [i["key"] for i in st["issues"]]))
     cx = ctx15(1.0, 1.0, 1.0)
     cx.training._latest.update(imu_ok=0.0, imu_bad_count=0.0)
     st = top_status(cx)
+    check("imu_ok = 0 just now (< 0.2 s debounce): no IMU fault yet", not any(i["key"] == "imu-fault" for i in st["issues"]),
+          [i["key"] for i in st["issues"]])
+    cx.session._imu_not_ok_since -= 0.3             # imu_ok still 0 after the 0.2 s debounce
+    st = top_status(cx)
     fault = next((i for i in st["issues"] if i["key"] == "imu-fault"), {})
-    check("imu_ok = 0: red 'IMU fault' with what to do", st["text"] == "IMU fault" and "replug" in fault.get("todo", ""),
+    check("imu_ok = 0 now (> 0.2 s): red 'IMU fault' with what to do", st["text"] == "IMU fault" and "replug" in fault.get("todo", ""),
           (st["text"], fault))
+    cx.training._latest.update(imu_ok=1.0)
+    st = top_status(cx)
+    check("imu_ok back to 1: fault gone at once (no latch)", not any(i["key"] == "imu-fault" for i in st["issues"]), [i["key"] for i in st["issues"]])
+    check("only trigger: imu_ok = 0 now, 0.2 s debounce (no bad-packet-rate trigger)", _ST.IMU_NOT_OK_S == 0.2
+          and not hasattr(_ST, "IMU_ROSE_MAX") and "imu_bad_count" not in open(_ST.__file__, encoding="utf-8").read().split("def _imu_fault", 1)[1].split("def _hm", 1)[0])
 
     # fresh readbacks: Connect / Start / Disconnect clear them; a failed getparam drops the value
     import json as _json

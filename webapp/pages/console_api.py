@@ -26,6 +26,11 @@ BUSY_TEXT = {"connect": ("Connecting…", "Connecting… attaching MATLAB"),
 PENDING_S = 1.0
 
 
+# Advanced display decimals (speeds / gains 2, step sizes 3, windows / strides / level / cutoff whole)
+ADV_DEC = {"sv_target_min": 2, "sv_target_max": 2, "target_step_up": 3, "target_step_down": 3, "window_up": 0,
+           "window_down": 0, "assist_threshold": 0, "min_cycles": 0, "p_gain": 2, "i_gain": 2, "threshold_pressure": 0}
+
+
 def _fmt(key: str, v) -> str:
     if v is None:
         return "–"
@@ -43,6 +48,8 @@ def _fmt(key: str, v) -> str:
         return f"{f:g} kg"
     if key == "k_percent":
         return f"{f:.1f} %"
+    if key in ADV_DEC:                     # never float32 noise like 0.800000011920929
+        return f"{round(f, ADV_DEC[key]):g}" if ADV_DEC[key] else f"{int(round(f))}"
     return f"{f:g}"
 
 
@@ -255,14 +262,18 @@ def console_state(ctx) -> Dict[str, Any]:
 def _adv_view(ctx) -> Dict[str, Any]:
     sess = ctx.session
     try:
-        udp = bool(sess.adv_echo())
+        udp = bool(sess.adv_profile())          # sticky for the run: a stall only freezes
+        stale = bool(sess.echo_stale())
     except Exception:
-        udp = False
-    lk = sess.adv_send_link() if udp and hasattr(sess, "adv_send_link") else None
-    out = {"udp": udp, "send": lk is not None, "frozen": False, "msg": "", "rules": {}}
+        udp, stale = False, False
+    lk = getattr(ctx, "adv_link", None) if udp else None
+    out = {"udp": udp, "send": lk is not None, "frozen": bool(udp and stale), "msg": sess.FROZEN_MSG if udp and stale else "",
+           "rules": {}}
     if lk is not None:
         v = lk.view()
-        out.update(frozen=bool(v.get("frozen")), msg=v.get("msg") or "", rules=lk.rules_for_page())
+        if v.get("frozen"):
+            out.update(frozen=True, msg=v.get("msg") or sess.FROZEN_MSG)
+        out["rules"] = lk.rules_for_page()
     return out
 
 

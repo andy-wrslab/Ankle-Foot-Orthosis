@@ -293,7 +293,7 @@ class SessionSetup:
 
     def enter_value(self, key: str, value: Any) -> str:
         """A committed edit of a number or mode field (not the side)."""
-        if key in self.ADV_ECHO_COL and self.adv_echo():
+        if key in self.ADV_ECHO_COL and self.adv_profile():
             # run 15: Advanced goes over 5435 only (never setparam); no S-ID needed
             sp = self.spec(key)
             try:
@@ -378,10 +378,56 @@ class SessionSetup:
     # ---------------------------------------------------------- run 14: UDP settings (5434)
     LINK_FIELD = {"side": "side", "weight": "mass", "mode": "mode", "k_percent": "k"}
 
+    STALE_S = 0.75            # = udp_settings.STALE_S: an echo older than this = stalled
+    FROZEN_MSG = "No data from device: settings unchanged on the device"
+
+    def echo_cols(self) -> Optional[int]:
+        """Column count of the running build's 5433 echo, STICKY: every fresh echo sets it and
+        a stall keeps it (a stall only freezes; it never turns a run-15 build into run 14)."""
+        tr = getattr(self.ctx, "training", None)
+        if tr is not None:
+            try:
+                s = tr.get_status()
+                cols, age = s.get("columns"), s.get("age_s")
+                if cols and age is not None and float(age) < 1.0:
+                    self.echo_cols_known = int(cols)
+            except Exception:
+                pass
+        return getattr(self, "echo_cols_known", None)
+
+    def echo_stale(self) -> bool:
+        row, age, cols = self.echo_for_link()
+        return not row or age is None or age > self.STALE_S
+
+    def udp_profile(self) -> bool:
+        """Run 14+ (echo known >= 18 floats, sticky): side / mass / mode / K over 5434."""
+        return (self.echo_cols() or 0) >= 18
+
+    def adv_profile(self) -> bool:
+        """Run 15 (echo known = 31 floats, sticky): Advanced over 5435, never setparam."""
+        return (self.echo_cols() or 0) >= 31
+
+    def write_blocked(self, key: str) -> Optional[str]:
+        """Why a settings / Advanced write is refused now (no setparam, no UDP), or None.
+        UDP builds (echo known >= 18): refused while the echo is stale. Advanced by setparam only
+        when the running build's echo is known to be <= 18 floats (or the model has no console
+        echo at all, the old AFO)."""
+        settings = key in self.LINK_FIELD or key == "bif_mass" or key in self.ADV_ECHO_COL
+        if not settings:
+            return None
+        if self.udp_profile() and self.echo_stale():
+            return self.FROZEN_MSG
+        if key in self.ADV_ECHO_COL and self.echo_cols() is None and self.profile().get("console_expected"):
+            return "Waiting for the device echo (5433): Advanced not sent"
+        return None
+
     def link(self):
-        """The UDP settings link when the device speaks it (18-float 5433 echo), else None."""
+        """The UDP settings link when the device speaks it (18-float 5433 echo), else None.
+        Sticky: a build known to speak 5434 keeps it through an echo stall (frozen, nothing sent)."""
         lk = getattr(self.ctx, "settings_link", None)
-        return lk if lk is not None and lk.active() else None
+        if lk is None:
+            return None
+        return lk if (lk.active() or self.udp_profile()) else None
 
     def echo_for_link(self):
         """(latest 5433 row, its age now in s, column count) for udp_settings.SettingsLink."""
@@ -510,6 +556,10 @@ class SessionSetup:
 
     def _send(self, key: str, value: float) -> str:
         sp = self.spec(key)
+        why = self.write_blocked(key)
+        if why:
+            self.status[key] = {"state": "error", "msg": why, "at": time.time()}
+            return f"{sp['label']}: {why}"
         lk = self.link()
         if lk is not None and key in self.LINK_FIELD:
             r = lk.press(self.LINK_FIELD[key], value)
@@ -520,8 +570,8 @@ class SessionSetup:
             return f"{sp['label']}: sending…"
         if lk is not None and key == "bif_mass":
             return f"{sp['label']}: follows Body mass (5434)"
-        if key in self.ADV_ECHO_COL and self.adv_echo():
-            alk = self.adv_send_link()
+        if key in self.ADV_ECHO_COL and self.adv_profile():
+            alk = getattr(self.ctx, "adv_link", None)
             if alk is None:
                 self.status[key] = {"state": "error", "msg": self.ADV_READONLY_MSG, "at": time.time()}
                 return f"{sp['label']}: {self.ADV_READONLY_MSG}"
@@ -684,8 +734,8 @@ class SessionSetup:
         mass / BIF / mode / K / Gyro_Cal: those come from the echo); runs <= 13 everything
         without a fresh echo."""
         if self.link() is not None:
-            if self.adv_echo():
-                return []                     # run 15: the Advanced values come from the echo too
+            if self.adv_profile():
+                return []                     # run 15 (sticky): the Advanced values come from the echo
             return [k for k in self.advanced_keys() if k not in self.ECHO_ONLY_KEYS]
         return [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
 
