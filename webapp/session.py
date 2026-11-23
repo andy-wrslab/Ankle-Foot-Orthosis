@@ -76,8 +76,6 @@ SPECS = [
      "block": "P|Value", "default": 0.6},
     {"key": "i_gain", "label": "Torque I gain", "kind": "number", "min": 0, "max": 10, "adv": True,
      "block": "I|Value", "default": 0.8},
-    {"key": "spring", "label": "Spring stiffness", "kind": "number", "adv": True, "readonly": True,
-     "block": "Spring Constant Nm/deg|Value", "default": -0.7651, "unit": "Nm/deg"},
     # Advanced: Safety
     {"key": "threshold_pressure", "label": "Standing-still cutoff", "kind": "number", "min": 0, "max": 5000,
      "adv": True, "block": "threshold_pressure|Value", "default": 200, "unit": "counts"},
@@ -615,7 +613,7 @@ class SessionSetup:
                 self.readback_src.pop(k, None)
 
     # ---------------------------------------------------------- Advanced params (12 root constants)
-    # Run 14: side / mass / mode / K / gyro come over UDP (5434 + echo); the 12 Advanced params
+    # Run 14: side / mass / mode / K / gyro come over UDP (5434 + echo); the 11 Advanced params
     # are still root Constants -> getparam (read) / setparam (write) while connected. Run 15 will
     # move them to UDP 5435 + a 32-float echo: swap AdvancedParams.read_keys / the send path.
     def advanced_keys(self) -> List[str]:

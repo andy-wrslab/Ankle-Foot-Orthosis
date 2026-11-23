@@ -69,7 +69,8 @@ def make_ctx(training, rc_status, model_cfg="auto"):
 def profile_checks():
     m = S.DEFAULT_MODELS
     check("r1 side path escaped", m["AFO_r1"]["side"] == "AFO_r1/Left 0//Right 1|Value", m["AFO_r1"]["side"])
-    check("r1 spring path escaped", m["AFO_r1"]["spring"] == "AFO_r1/Spring Constant Nm//deg|Value")
+    check("r1 spring stiffness not an Advanced setting any more (Andy 15:03)", "spring" not in m["AFO_r1"])
+    check("r1 torque P gain path", m["AFO_r1"]["p_gain"] == "AFO_r1/P|Value", m["AFO_r1"].get("p_gain"))
     check("r1 weight is Constant Value", m["AFO_r1"]["weight"] == "AFO_r1/weight|Value")
     check("r1 BIF mass path", m["AFO_r1"]["bif_mass"] == "AFO_r1/BIF_mass_kg|Value")
     check("AFO weight is Gain", m["AFO"]["weight"] == "AFO/weight|Gain")

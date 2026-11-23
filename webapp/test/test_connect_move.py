@@ -5,7 +5,7 @@ no browser, no target (run control and MATLAB are stubs).
   own stage) and stay connected; a failed auto-connect does not run the action;
 - run 14 without MATLAB: the status is not a problem ("Ready" while UDP data flows); the Rig
   row explains "MATLAB: not connected (connects on Start/Stop/Export)";
-- Advanced on run 14: the getparam read covers the 12 Advanced constants and none of side /
+- Advanced on run 14: the getparam read covers the 11 Advanced constants and none of side /
   mass / BIF mass / mode / K / Gyro_Cal; the IMU probe makes no MATLAB call;
 - Training Assistance card: no single-trace legend.
 
@@ -76,6 +76,8 @@ def page_static():
         check(f"DAQ text removed: {gone}", gone not in ty)
     check("DAQ: the live-stream lock is not printed next to Flash (still blocks, reason in the title)",
           'msg = "" if (reason or "").startswith("Locked while the UDP stream is live")' in ty)
+    check("Advanced Torque controller: no Spring stiffness row (P and I gain kept)", "'spring', 'Spring stiffness'" not in js
+          and "['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', '']]]" in js)
     order = [js.index('id="' + k + '"') for k in ("bZero", "bImuCal", "bCal", "bResetSV")]
     check("dock order: Zero, Calibrate IMU, Calibrate FSR, Reset SV (Andy 15:02)", order == sorted(order), order)
     ca = open(os.path.join(APP, "pages", "console_api.py"), encoding="utf-8").read()
@@ -158,7 +160,8 @@ def advanced_run14():
     time.sleep(0.3)
     keys = s.getparam_keys()
     adv = s.advanced_keys()
-    check("run 14: getparam read = the 12 Advanced constants", sorted(keys) == sorted(adv) and len(adv) == 12, (keys, adv))
+    check("run 14: getparam read = the 11 Advanced constants", sorted(keys) == sorted(adv) and len(adv) == 11, (keys, adv))
+    check("Spring stiffness removed (Andy 15:03): not read, not counted", "spring" not in adv and "spring" not in keys, adv)
     check("run 14: no side / mass / BIF mass / mode / K in the getparam read",
           not set(keys) & {"side", "weight", "bif_mass", "mode", "k_percent"}, keys)
     paths = [s.target_path(k) for k in keys]

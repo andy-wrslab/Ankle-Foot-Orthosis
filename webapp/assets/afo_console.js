@@ -74,8 +74,7 @@
             ['assist_threshold', 'High-assist level', 'of 10', 'A step down needs RL assistance above this level ...'],
             ['min_cycles', 'High-assist strides', 'strides', '... for this many strides in a row']]],
         ['Torque controller', '', [
-            ['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', ''],
-            ['spring', 'Spring stiffness', 'Nm/deg', 'Converts spring deflection into measured torque. A wrong value gives wrong torque feedback, so it is read-only here.', true]]],
+            ['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', '']]],
         ['Safety', '', [
             ['threshold_pressure', 'Standing-still cutoff', 'counts', 'Torque is cut to 0 when the insole pressure sum varies by less than this over the last 0.7 s (standing still)']]]
     ];
