@@ -170,7 +170,7 @@ def rig_view(ctx) -> Dict[str, Any]:
     ecat = rc.get("ethercat_state")
     return {
         "target": f"{rc.get('target') or ctx.poller.get().get('target_host', '192.168.7.5')} · "
-                  + ("connected" if rc.get("connected") else "not connected"),
+                  + ("MATLAB connected" if rc.get("connected") else "MATLAB: not connected (connects on Start/Stop/Export)"),
         "application": (f"{rc.get('app')} · " + ("running" if rc.get("running") else "stopped")) if rc.get("app") else "–",
         "tet": tet or "–",
         "ethercat": "–" if ecat in (None, []) else ("OP" if ecat == 8 else f"state {ecat}"),
@@ -231,6 +231,7 @@ def console_state(ctx) -> Dict[str, Any]:
                    "address": rc.get("target") or "192.168.7.5", "app": rc.get("app")},
         "session": {"sid": sess.sid, "values": values, "modes": {str(k): v for k, v in MODES.items()},
                     "readback": dict(sess.readback), "readback_source": dict(sess.readback_src),
+                    "adv_last": {k: v["value"] for k, v in getattr(sess, "adv_last", {}).items()},
                     "status": {k: (v or {}).get("state") for k, v in sess.status.items()},
                     "status_msg": {k: (v or {}).get("msg") for k, v in sess.status.items()},
                     "writes_enabled": sess.writes_enabled},

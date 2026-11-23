@@ -75,7 +75,7 @@
             ['min_cycles', 'High-assist strides', 'strides', '... for this many strides in a row']]],
         ['Torque controller', '', [
             ['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', ''],
-            ['spring', 'Spring stiffness', 'N·m/deg', 'Converts spring deflection into measured torque. A wrong value gives wrong torque feedback, so it is read-only here.', true]]],
+            ['spring', 'Spring stiffness', 'Nm/deg', 'Converts spring deflection into measured torque. A wrong value gives wrong torque feedback, so it is read-only here.', true]]],
         ['Safety', '', [
             ['threshold_pressure', 'Standing-still cutoff', 'counts', 'Torque is cut to 0 when the insole pressure sum varies by less than this over the last 0.7 s (standing still)']]]
     ];
@@ -92,10 +92,8 @@
                     ['epsilon up', 'epsilon down', 'step up', 'step down', 'v min'].map(function (n) {
                         return '<label>' + n + '<span><input class="input mono" value="–" disabled></span></label>'; }).join('') + '</div>';
             }
-            if (sec[0] === 'Safety') {
-                rows += '<p class="sec-help">Torque goes to 0 when the insole pressure sum changes by less than this over 0.7 s.</p>';
-            }
-            return '<fieldset class="adv-sec"><legend>' + esc(sec[0]) + (sec[1] ? ' <span class="sec-note">' + esc(sec[1]) + '</span>' : '') +
+
+            return '<fieldset class="adv-sec"><legend' + (sec[1] ? ' title="' + esc(sec[1]) + '"' : '') + '>' + esc(sec[0]) +
                 '</legend>' + rows + '</fieldset>';
         }).join('');
         return '' +
@@ -115,13 +113,11 @@
           '</div>' +
           '<span class="vr"></span>' +
           '<div class="target"><div class="btn-group">' +
-            '<button class="btn sm" id="tConnect">Connect</button>' +
             '<button class="btn sm" id="tStart">Start</button>' +
             '<button class="btn sm danger" id="tStop">Stop</button>' +
           '</div></div>' +
           '<span class="vr"></span>' +
           '<div class="meta">' +
-            '<span><span class="mt-label">Model time </span><span class="num" id="mtime">–</span></span>' +
             '<button class="status-btn" id="statusBtn" aria-haspopup="dialog" aria-expanded="false" title="Connection, data streams and the settings the target reports back"><span class="sb-mark" aria-hidden="true"></span><span class="sb-txt" id="statusTxt">…</span></button>' +
           '</div>' +
         '</header>' +
@@ -136,7 +132,7 @@
           '<dl class="kv" id="rigKv"></dl>' +
         '</div>' +
         '<div class="popover adv-pop top" id="advPop" role="dialog" aria-label="Advanced parameters" hidden>' +
-          '<div class="pop-head"><span class="card-title">Advanced</span><span class="spacer"></span><span class="hint">Rarely changed · sent on Enter</span></div>' +
+          '<div class="pop-head" title="Rarely changed · sent on Enter"><span class="card-title">Advanced</span></div>' +
           '<div class="adv-groups">' + adv + '</div>' +
         '</div>' +
         '<div class="popover side-pop" id="sidePop" role="dialog" aria-label="Foot side" hidden>' +
@@ -166,28 +162,32 @@
         '<button class="btn sm" id="unknownOff" hidden>Set unknown to OFF</button>' +
         '<span class="spacer"></span>' +
         '<div class="actions">' +
-          '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
-          '<button class="btn act" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
-          '<button class="btn act" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
           '<button class="btn act" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
+          '<button class="btn act" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
+          '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
+          '<button class="btn act" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
         '</div>';
     }
 
     function trialsHTML() {
         return '' +
-        '<div class="toolbar"><h1 class="page-title">Trials</h1><span class="tb-right"><span class="hint" id="runsHint">All runs in the Speedgoat file log, newest first</span>' +
+        // Andy 14:48: Connect lives here (run 14: everything else is UDP); Start / Stop / Export /
+        // Load connect by themselves
+        '<div class="ml-link" id="mlLink"><span class="field-label">MATLAB link</span>' +
+        '<span class="ml-state" id="mlState">Not connected</span>' +
+        '<button class="btn sm" id="tConnect" title="Start, Stop, Export and Load connect by themselves">Connect</button></div>' +
+        '<div class="toolbar"><h1 class="page-title">Trials</h1><span class="tb-right"><span class="hint" id="runsHint"></span>' +
         '<button class="btn sm" id="runsRefresh">Refresh</button></span></div>' +
         '<section class="card flush">' +
           '<div class="runs-limit" id="runsLimit" hidden></div>' +
           '<table class="table runs" id="runTable"><thead><tr><th>Run</th><th>Started</th><th class="r">Duration</th><th class="r">Size</th><th>Participant</th><th>Status</th></tr></thead><tbody></tbody></table>' +
           '<div class="export-bar">' +
             '<label class="field-label" for="expName">Export file name</label>' +
-            '<input class="input mono" id="expName" autocomplete="off">' +
+            '<input class="input mono" id="expName" autocomplete="off" title="Participant ID, date, start time and trial number; saved to afo_mat with a settings .json beside the .mat">' +
             '<span class="sent" id="expState"></span><span class="spacer"></span>' +
             '<button class="btn primary" id="expBtn">Export</button>' +
           '</div>' +
-        '</section>' +
-        '<p class="hint">Click a run to select it. The name is participant ID, date, start time and trial number; edit it before exporting if needed. Saved to the OMEN\'s afo_mat folder with a settings .json beside the .mat; a run split by a reconnect is joined into one file.</p>';
+        '</section>';
     }
 
     // ---------------------------------------------------------- router
@@ -258,13 +258,18 @@
         document.querySelectorAll('#page-live [data-live]').forEach(function (c) { c.hidden = c.getAttribute('data-live') !== sub; });
         resizeSoon($('page-live'));
         if (window._afoRequestRender) { window._afoRequestRender(); }
-        // one 2 s / 10 s window for Gait, Sensors and Training (Andy 14:34)
-        if ($('liveWin')) { $('liveWin').hidden = false; }
+        // one 2 s / 10 s window for Gait, Sensors and Training (Andy 14:34 / 14:58): the selector shows
+        // the current window on every switch; the plots use it on their first frame
+        if ($('liveWin')) { $('liveWin').hidden = false; showWin(); }
         if ($('trWin')) { $('trWin').hidden = true; }
         setProps('live-sub', {data: sub});
         if (window._afoReleaseAllHolds) { window._afoReleaseAllHolds(); }
         if (window._afoPlots && window._afoPlots.release) { window._afoPlots.release(); }
         setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
+    }
+    function showWin() {
+        var w = window._afoWinSec === 2 ? 2 : 10, b = $(w === 2 ? 'w2' : 'w10');
+        if (b && $('liveWin')) { segPress($('liveWin'), b); }
     }
     function segPress(group, btn) {
         group.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b === btn ? 'true' : 'false'); });
@@ -277,7 +282,8 @@
         else if (t.id === 'pgSensors') { setLiveSub('sensors'); }
         else if (t.id === 'pgTraining') { setLiveSub('training'); }
         else if (t.id === 'w2' || t.id === 'w10') { segPress($('liveWin'), t); window._afoWinSec = t.id === 'w2' ? 2 : 10;
-            setProps('window-sec', {data: window._afoWinSec}); }
+            setProps('window-sec', {data: window._afoWinSec});
+            try { window.localStorage.setItem('afo.win', String(window._afoWinSec)); } catch (e) { /* no storage */ } }
         else if (t.parentElement && t.parentElement.id === 'trWin') { segPress($('trWin'), t); window._afoTrWin = Number(t.getAttribute('data-w'));
             setProps('tr-window', {data: window._afoTrWin}); }
     });
@@ -369,7 +375,17 @@
 
     function renderTarget(st) {
         var c = $('tConnect'), s = $('tStart'), p = $('tStop');
-        if (!c) { return; }
+        if (!c || !s || !p) { return; }
+        // MATLAB link row (Trials): Connected · app RUNNING / Not connected / Connecting… m:ss / Busy / Offline
+        var mls = $('mlState');
+        if (mls) {
+            var bz = st.busy, keys = ((st.status || {}).issues || []).map(function (i) { return i.key; }), T0 = st.target || {};
+            var txt = (bz && bz.stage === 'Connecting…') ? 'Connecting… ' + (bz.started ? mmss(Date.now() / 1000 - bz.started) : '') :
+                T0.connected ? 'Connected' + (T0.app ? ' · ' + T0.app + (T0.running ? ' RUNNING' : ' stopped') : '') :
+                keys.indexOf('speedgoat-busy') >= 0 ? 'Busy (another MATLAB session)' :
+                keys.indexOf('speedgoat-offline') >= 0 ? 'Offline' : 'Not connected';
+            if (mls.textContent !== txt) { mls.textContent = txt; }
+        }
         var busy = st.busy, T = st.target, tablet = !st.local;
         // a button pressed less than its hold time ago keeps the busy text the click handler
         // gave it (until the server's busy state takes over); the others show their label
@@ -400,11 +416,12 @@
         if (st.view_only) { return; }
         // Start is never locked by the foot side: Start reloads the build defaults, and the
         // confirmed side and mass are sent right after it; Motor/Assist wait for the readback
-        s.disabled = !T.connected || T.running;
-        s.title = !T.connected ? 'Connect first' : T.running ? 'Running' :
+        // Start / Stop connect by themselves when needed (Andy 14:48)
+        s.disabled = !!T.running;
+        s.title = T.running ? 'Running' : (T.connected ? '' : 'Connects first, then ') +
             'Reload the app and start; the confirmed foot side and mass are sent right after Start';
-        p.disabled = !T.running || !T.connected;
-        p.title = !T.connected ? 'Connect first' : !T.running ? 'Stopped' : 'Stop the app (the file log stays on the target; export it from Trials)';
+        p.disabled = !T.running;
+        p.title = !T.running ? 'Stopped' : (T.connected ? '' : 'Connects first, then: ') + 'Stop the app (the file log stays on the target; export it from Trials)';
     }
     function b_conf(b) { return b.classList.contains('confirming'); }
 
@@ -457,10 +474,22 @@
             gear.title = (gs === 'pending' || gs === 'error') ? (sv.status_msg.bif_mass || 'Not sent') :
                 low ? 'Target has ' + (+rb) + ' kg: the Bi-LSTM gives no assist until this is more than 20 kg' : '';
         }
+        var advOn = !!(st.target && st.target.connected);
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (document.activeElement === inp || S.editing['adv-' + inp.getAttribute('data-k')]) { return; }
             var k = inp.getAttribute('data-k'), v = sv.values[k];
             if (v == null && sv.readback && sv.readback[k] != null) { v = sv.readback[k]; }
+            var last = (sv.adv_last || {})[k];
+            if (!advOn) {
+                // not connected: the last values read, greyed; "–" if never read (Connect is on Trials)
+                var lt = last == null ? '–' : String(+last);
+                if (inp.value !== lt) { inp.value = lt; }
+                inp.classList.add('adv-stale'); inp.readOnly = true;
+                inp.title = 'Connect on Trials to read' + (last == null ? '' : ' (last value read)');
+                return;
+            }
+            inp.classList.remove('adv-stale'); inp.readOnly = inp.hasAttribute('readonly');
+            if (v == null && last != null) { v = last; }
             var t = v == null ? '' : String(+v); if (inp.value !== t) { inp.value = t; }
             var stt = sv.status[k];
             inp.classList.toggle('send-error', stt === 'error');
@@ -1045,6 +1074,10 @@
         go((location.pathname || '/').replace(/^\/+|\/+$/g, '') || 'live', false);
         if (location.pathname === '/' ) { history.replaceState({}, '', '/live'); window.dispatchEvent(new PopStateEvent('popstate')); }
         topbarHeight(); window.addEventListener('resize', topbarHeight);
+        // the shared 2 s / 10 s window survives a reload
+        try { var sw = Number(window.localStorage.getItem('afo.win')); if (sw === 2 || sw === 10) { window._afoWinSec = sw;
+            setProps('window-sec', {data: sw}); } } catch (e) { /* no storage */ }
+        showWin();
         poll(); setInterval(poll, POLL_MS);
         // while a value is being sent, poll every 100 ms so its confirmation shows at once
         setInterval(function () { if (S.fastUntil && Date.now() < S.fastUntil) { poll(); } }, 100);

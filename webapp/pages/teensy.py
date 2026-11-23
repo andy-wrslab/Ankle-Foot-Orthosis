@@ -57,8 +57,6 @@ def layout() -> html.Div:
         dcc.Store(id="ty-serial-paused", data=False),
         html.Div(className="toolbar", children=[
             html.H1("DAQ", className="page-title"),
-            html.Span("Debugging only. The Teensy USB is unplugged during collection; that is normal.",
-                      className="hint"),
         ]),
         html.Div(className="grid2", children=[
             html.Section(className="card", children=[
@@ -79,8 +77,6 @@ def layout() -> html.Div:
                 html.Div(className="card-head", children=[html.Span("IMU data", className="card-title")]),
                 _kv([("State", "ty-imu-state"), ("Invalid, last 10 s", "ty-imu-recent"),
                      ("Invalid since app start", "ty-imu-total"), ("Invalid spells seen", "ty-imu-spells")]),
-                html.P("From the live UDP stream. A byte slip makes every IMU value invalid until the IMU "
-                       "is unplugged for about 1 s.", className="hint ty-note"),
             ]),
         ]),
         html.Div(className="seg", role="group", **{"aria-label": "Teensy tools"}, children=[
@@ -111,8 +107,7 @@ def layout() -> html.Div:
         ]),
         _panel("changes", [
             html.Div(className="card-head", children=[
-                html.Span("Changes vs main", className="card-title"),
-                html.Span("DAQ/ only", className="hint")]),
+                html.Span("Changes vs main", className="card-title", title="DAQ/ only")]),
             html.Pre(id="ty-diff", className="log ty-log tall"),
         ]),
         _panel("serial", [
@@ -319,9 +314,8 @@ def register(app, ctx) -> None:
             vs = ("same firmware as main" if n == 0 else f"{n} firmware commit(s) not on main") if n is not None else "–"
             if src.get("note"):
                 vs += f" · {src['note']}"
-        board_txt = html.Span([board["summary"], html.Br(),
-                               html.Span(("from " if board["pinned"] else "") + board["source"], className="hint")],
-                              title=board["fqbn"])
+        board_txt = html.Span(board["summary"],
+                              title=board["fqbn"] + " · " + ("from " if board["pinned"] else "") + board["source"])
         file_val = cur_file if cur_file in files else ("DAQ.ino" if "DAQ.ino" in files else (files[0] if files else None))
         try:
             diff = tt.changes_vs_main(cfg, source) if trig != "ty-slow" else no_update
@@ -430,7 +424,7 @@ def register(app, ctx) -> None:
         sc.touch()
         scan = sc.get()
         teensys = [p for p in scan["ports"] if p.get("teensy")]
-        port_txt = ", ".join(p["label"] for p in teensys) if teensys else "Not connected (USB only when debugging)"
+        port_txt = ", ".join(p["label"] for p in teensys) if teensys else "Not connected"
         if not teensys and sc.status()["scanning"]:
             port_txt = "Scanning USB…"
         if scan.get("error"):
@@ -466,7 +460,8 @@ def register(app, ctx) -> None:
             msg = "Click again to flash."
         else:
             btn_txt, btn_cls, f_dis = ("Flash (dry run)" if dry_run else "Flash"), "btn danger", False
-            msg = reason or "Ready: flashes the last build."
+            # the live-stream lock stays (Flash disabled, reason in its title) but is not printed
+            msg = "" if (reason or "").startswith("Locked while the UDP stream is live") else (reason or "Ready: flashes the last build.")
 
         opts = [{"label": p["label"], "value": p["port"]} for p in scan["ports"]]
         vals = [o["value"] for o in opts]

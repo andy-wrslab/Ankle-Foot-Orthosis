@@ -20,7 +20,7 @@ import trials_data
 from constants import COLOR_CYCLE
 
 GROUPS = {
-    "Torque (N·m)": [("bus", 25, "actual"), ("bus", 28, "demand")],
+    "Torque (Nm)": [("bus", 25, "actual"), ("bus", 28, "demand")],
     "Ankle angle (deg)": [("bus", 2, "ankle")],
     "Stride velocity (m/s)": [("bus", 1, "SV")],
     "Pressure (raw)": [("bus", c, f"p{c - 2}") for c in range(3, 11)],
@@ -32,7 +32,7 @@ GROUPS = {
     "Status / sync": [("bus", 29, "statusword"), ("bus", 30, "sync")],
     "Drive stream": [("drive", i, f"drive {i + 1}") for i in range(7)],
 }
-DEFAULT_GROUPS = ["Torque (N·m)", "Pressure (raw)", "IMU accel (g)", "Status / sync"]
+DEFAULT_GROUPS = ["Torque (Nm)", "Pressure (raw)", "IMU accel (g)", "Status / sync"]
 MAX_POINTS = 4000  # per trace before min/max decimation
 
 

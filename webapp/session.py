@@ -33,6 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import model_profile as mp
+_log_s = logging.getLogger("afo.session")
 
 _log = logging.getLogger("afo.session")
 
@@ -76,7 +77,7 @@ SPECS = [
     {"key": "i_gain", "label": "Torque I gain", "kind": "number", "min": 0, "max": 10, "adv": True,
      "block": "I|Value", "default": 0.8},
     {"key": "spring", "label": "Spring stiffness", "kind": "number", "adv": True, "readonly": True,
-     "block": "Spring Constant Nm/deg|Value", "default": -0.7651, "unit": "N·m/deg"},
+     "block": "Spring Constant Nm/deg|Value", "default": -0.7651, "unit": "Nm/deg"},
     # Advanced: Safety
     {"key": "threshold_pressure", "label": "Standing-still cutoff", "kind": "number", "min": 0, "max": 5000,
      "adv": True, "block": "threshold_pressure|Value", "default": 200, "unit": "counts"},
@@ -161,6 +162,7 @@ class SessionSetup:
         # mass and sent to run 14 after Start): "entered" in this page session for this S-ID,
         # "adopted18" (valid run-14 echo; mass only from col 17 > 0) or "adopted15" (shown only)
         self.src: Dict[str, str] = {}
+        self.adv_last: Dict[str, Dict[str, Any]] = {}     # last Advanced values read (shown greyed offline)
         self.start_owned_until = 0.0     # a page Start owns the settings until it has sent them
         self._start_waited = False
         self.after_start = False      # SPEC: every Start ends in the Confirm state
@@ -438,6 +440,7 @@ class SessionSetup:
             vals = self._start_values()
             pkt = lk.send_values(vals)
             self.audit("udp send after page Start", f"{vals} -> {pkt}")
+            self.read_after("start")
             if "mass" not in vals:
                 self.status["weight"] = {"state": "pending", "msg": MASS_NOT_SET, "at": time.time()}
         else:
@@ -538,6 +541,8 @@ class SessionSetup:
             self.status[key] = {"state": "confirmed" if ok else "error", "msg": msg, "at": time.time()}
             if ok:
                 self._put(key, out.get("readback"), "getparam")
+                if key in self.advanced_keys():
+                    self.read_after("advanced send")
             self.audit("set", f"{key}={value:g} ({blk}|{prm}) -> {json.dumps(out)[:200]}")
             return out
         self.status[key] = {"state": "sending", "msg": "", "at": time.time()}
@@ -572,6 +577,8 @@ class SessionSetup:
         return self.REFUSED_ELSEWHERE if m == self.ELSEWHERE_MSG else ("Target refused: " + m)
 
     def _put(self, key: str, value, src: str) -> None:
+        if src == "getparam" and key in self.advanced_keys():
+            self.adv_last[key] = {"value": value, "at": time.time()}     # survives a disconnect
         self.readback[key] = value
         self.readback_src[key] = src
         self.readback_t[key] = self.readback_at = time.time()
@@ -607,16 +614,43 @@ class SessionSetup:
                 self.readback.pop(k, None)
                 self.readback_src.pop(k, None)
 
+    # ---------------------------------------------------------- Advanced params (12 root constants)
+    # Run 14: side / mass / mode / K / gyro come over UDP (5434 + echo); the 12 Advanced params
+    # are still root Constants -> getparam (read) / setparam (write) while connected. Run 15 will
+    # move them to UDP 5435 + a 32-float echo: swap AdvancedParams.read_keys / the send path.
+    def advanced_keys(self) -> List[str]:
+        return [sp["key"] for sp in self.specs() if sp.get("adv")]
+
+    def getparam_keys(self) -> List[str]:
+        """What a getparam read covers now: on run 14 only the Advanced constants (never side /
+        mass / BIF / mode / K / Gyro_Cal: those come from the echo); runs <= 13 everything
+        without a fresh echo."""
+        if self.link() is not None:
+            return [k for k in self.advanced_keys() if k not in self.ECHO_ONLY_KEYS]
+        return [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
+
+    def read_after(self, why: str, wait_s: float = 15.0) -> None:
+        """One getparam read once the current run-control / session job has finished (after
+        Connect, Start and each Advanced send)."""
+        def run():
+            t_end = time.time() + wait_s
+            time.sleep(0.2)
+            while time.time() < t_end and (self.ctx.jobs.running("rc") or self.ctx.jobs.running("session")):
+                time.sleep(0.2)
+            try:
+                self.refresh_readback()
+            except Exception:
+                _log_s.exception("read after %s failed", why)
+        threading.Thread(target=run, name=f"read-after-{why}", daemon=True).start()
+
     def refresh_readback(self) -> None:
         """Echo first (no MATLAB); getparam for every value without a fresh echo
-        (never with the run-14 UDP settings: the 5433 echo is the only readback)."""
+        (run 14: getparam only for the Advanced constants)."""
         self.adopt_echo()
         self.refresh_echo()
-        if self.link() is not None:
-            return
         if not self._connected() or self.ctx.jobs.running("rc") or self.ctx.jobs.running("session"):
             return
-        need = [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
+        need = self.getparam_keys()
         paths = {k: "|".join(self.target_path(k)) for k in need if self.target_path(k)}
         if not paths:
             return
@@ -725,7 +759,8 @@ class SessionSetup:
             return
         lk = self.link()
         if lk is not None:
-            return                              # Connect with run 14: adopt only, nothing sent
+            self.read_after("connect")          # Connect with run 14: adopt only, nothing sent; read Advanced
+            return
         self.clear_readback()               # Connect / Start: only values read from now on count
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})

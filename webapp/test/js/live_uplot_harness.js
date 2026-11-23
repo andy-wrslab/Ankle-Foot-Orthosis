@@ -38,12 +38,12 @@ function Host(id) {
     this.fire = function (ev) { if (self.on[ev]) { self.on[ev]({}); } };
 }
 var spec = {window_default: 10, style: {text: "#777", grid: "#eee", zero: "#ccc"}, plots: {
-    torque: {group: "gait", y: [-6.6, 16.6], series: [{label: "Measured", src: ["torque", null], color: "#000", width: 1.5, dec: 2, unit: "N·m"},
+    torque: {group: "gait", y: [-6.6, 16.6], ylabel: "Torque (Nm)", xlabels: false, series: [{label: "Measured", src: ["torque", null], color: "#000", width: 1.5, dec: 2, unit: "N·m"},
                                                      {label: "Command", src: ["demand_torque", null], color: "#1F6F78", width: 1.5, dash: [5, 4], dec: 2, unit: "N·m"}]},
-    gait: {group: "gait", y: [-0.16, 2.16], series: [{label: "Current", src: ["gait", null], color: "#000", width: 1.5, dec: 2, unit: "m/s"},
+    gait: {group: "gait", y: [-0.16, 2.16], ylabel: "Stride velocity (m/s)", xlabels: true, series: [{label: "Current", src: ["gait", null], color: "#000", width: 1.5, dec: 2, unit: "m/s"},
                                                     {label: "Target", src: ["sv_target", null], color: "#1F6F78", width: 1.5, dec: 2, unit: "m/s"}]},
-    press: {group: "sensors", y: [-80, 1080], series: [{label: "Hallux (FSR1)", src: ["press", 0], color: "#000", width: 1.25, dec: 0, unit: "counts"}]},
-    imu: {group: "sensors", y: [-3.48, 3.48], series: [{label: "x", src: ["imu", 0], color: "#000", width: 1.25, dec: 2, unit: "g"}]}}};
+    press: {group: "sensors", y: [-80, 1080], ylabel: "Pressure", xlabels: false, series: [{label: "Hallux (FSR1)", src: ["press", 0], color: "#000", width: 1.25, dec: 0, unit: "counts"}]},
+    imu: {group: "sensors", y: [-3.48, 3.48], ylabel: "Acceleration", xlabels: true, series: [{label: "x", src: ["imu", 0], color: "#000", width: 1.25, dec: 2, unit: "g"}]}}};
 var specEl = {getAttribute: function () { return "__SPEC__"; }};
 var hosts = {torque: new Host("torque"), gait: new Host("gait"), press: new Host("press"), imu: new Host("imu")};
 var document = {hidden: false,
@@ -123,7 +123,16 @@ if (CASE === "hold") {
     check("no hold: pointer on Torque for 10 s, both plots identical every frame", same, stringify(lastX("torque")) + " " + stringify(lastX("gait")));
     check("no hold: both keep scrolling with the shared clock", adv >= 190 && Math.abs(lastX("torque").max - tlh) < 0.3, adv + " advances");
     check("no hold: state never 'held'", E.state().held === false && E.state().plots.torque.held === false, "");
-    check("same x-axis height on every plot", optsOf.torque.axes[0].size === optsOf.gait.axes[0].size, "");
+    var vt = optsOf.torque.axes[0].values(null, [10, 12], 0, 0, 2), vg = optsOf.gait.axes[0].values(null, [10, 12], 0, 0, 2);
+    check("y labels: 'Torque (Nm)' / 'Stride velocity (m/s)' next to the axes", optsOf.torque.axes[1].label === "Torque (Nm)"
+          && optsOf.gait.axes[1].label === "Stride velocity (m/s)", optsOf.torque.axes[1].label);
+    check("x tick labels only on the bottom plot (Torque none, Stride velocity '10 s')", vt.join("") === "" && vg[0] === "10 s",
+          stringify(vt) + " " + stringify(vg));
+    check("vertical grid lines on every plot", optsOf.torque.axes[0].grid.show === true && optsOf.gait.axes[0].grid.show === true, "");
+    check("equal drawing areas: the bottom plot is taller by exactly its x-axis height (CSS 26 px)",
+          optsOf.gait.axes[0].size - optsOf.torque.axes[0].size === 26, optsOf.gait.axes[0].size + " - " + optsOf.torque.axes[0].size);
+    check("same y gutter + label width on every plot", optsOf.torque.axes[1].size + optsOf.torque.axes[1].labelSize ===
+          optsOf.gait.axes[1].size + optsOf.gait.axes[1].labelSize, "");
     check("tick font 13 px", /^13px/.test(optsOf.torque.axes[0].font), optsOf.torque.axes[0].font);
     check("same y-axis gutter and padding on every plot (ticks line up)",
           optsOf.torque.axes[1].size === optsOf.gait.axes[1].size && stringify(optsOf.torque.padding) === stringify(optsOf.gait.padding),

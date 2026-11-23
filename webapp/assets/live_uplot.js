@@ -23,7 +23,8 @@
     var E = window._afoPlots = window._afoPlots || {};
     E.plots = {};          // id -> {u, host, spec, ...}
     E.frames = 0; E.drawn = 0; E.fpsLog = [];
-    var LAG = 0.08, Y_GUTTER = 52, X_AXIS_H = 30;
+    var LAG = 0.08, Y_GUTTER = 52, Y_LABEL = 20, X_AXIS_H = 30;
+    E.X_AXIS_H = X_AXIS_H;
     var HOLD = {on: false};                             // kept for the state() hook: always false
     var SERIES_KEYS = ['ankle', 'torque', 'demand_torque', 'gait', 'sv_target', 'uc', 'assistance_level', 'ankle_vel', 'heel_strike'];
 
@@ -163,11 +164,16 @@
             cursor: {y: false, points: {show: false}, drag: {x: false, y: false, setScale: false}},
             scales: {x: {time: false, auto: false}, y: {auto: false, range: function () { return ps.y; }}},
             axes: [
-                {stroke: st.text, font: cssFont(), grid: {show: false}, ticks: {stroke: st.grid, width: 1, size: 4},
+                // x tick labels only on the bottom plot of the tab (Andy 14:55); every plot keeps the
+                // vertical grid lines at the same ticks
+                {stroke: st.text, font: cssFont(), grid: {show: true, stroke: st.grid, width: 1},
+                 ticks: {stroke: st.grid, width: 1, size: ps.xlabels ? 4 : 0},
                  border: {show: true, stroke: st.grid, width: 1},
-                 incrs: [0.5, 1, 2, 5, 10, 15, 20, 30, 60], space: 64, size: X_AXIS_H,
-                 values: function (u, vals, ax, sp, incr) { return vals.map(function (v) { return fmtTick(v, incr); }); }},
-                {stroke: st.text, font: cssFont(), grid: {stroke: st.grid, width: 1}, ticks: {show: false}, size: Y_GUTTER, space: 32}
+                 incrs: [0.5, 1, 2, 5, 10, 15, 20, 30, 60], space: 64, size: ps.xlabels ? X_AXIS_H : 4,
+                 values: function (u, vals, ax, sp, incr) { return vals.map(function (v) { return ps.xlabels ? fmtTick(v, incr) : ''; }); }},
+                // rotated y label next to the axis; the same gutter on every plot so the areas line up
+                {stroke: st.text, font: cssFont(), grid: {stroke: st.grid, width: 1}, ticks: {show: false}, size: Y_GUTTER, space: 32,
+                 label: ps.ylabel || '', labelSize: Y_LABEL, labelGap: 2, labelFont: '500 13px Inter, "Segoe UI", system-ui, sans-serif'}
             ],
             series: [{}].concat(ps.series.map(function (s) {
                 return {label: s.label, stroke: s.color, width: s.width, dash: s.dash || undefined,
@@ -310,6 +316,8 @@
         Object.keys(E.plots).forEach(function (id) {
             var P = E.plots[id]; if (!P) { return; }
             out.plots[id] = {xmin: P.xmin, xmax: P.xmax, lastX: P.lastX, w: P.w, h: P.h, gutter: P.gutter,
+                             area_h: P.u.bbox ? Math.round(P.u.bbox.height / (window.devicePixelRatio || 1)) : null,
+                             area_w: P.u.bbox ? Math.round(P.u.bbox.width / (window.devicePixelRatio || 1)) : null,
                              visible: P.host.offsetParent !== null, held: HOLD.on,
                              shown: P.u.series.slice(1).map(function (s) { return s.show; })};
         });

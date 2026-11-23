@@ -225,7 +225,7 @@ def main():
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
     check("page: Mass state tag + toast on commit", 'id="sMassState"' in js and "after Start" in js
           and "toast(r.needs_confirm" in js)
-    check("page: Start not locked by side", "s.disabled = !T.connected || T.running;" in js)
+    check("page: Start not locked by side", "s.disabled = !!T.running;" in js)
     print("\nFAILS:", FAILS)
     sys.exit(1 if FAILS else 0)
 

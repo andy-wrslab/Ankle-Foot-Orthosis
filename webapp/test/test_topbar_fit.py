@@ -26,9 +26,9 @@ check("side chip: max-width + ellipsis + no wrap + may shrink",
       and "text-overflow: ellipsis" in css)
 check("side chip: full text in its title", "chip.title = sd.chip + ' · ' +" in js)
 check("status button never shrinks", ".topbar .status-btn { flex: none; }" in css)
-check("Model time gives way first (shrinks to nothing before anything else)",
-      ".topbar .meta > span:first-child { flex: 0 100 auto; min-width: 0; overflow: hidden; white-space: nowrap; }" in css
-      and ".topbar .meta { min-width: 0; flex: 0 1 auto; }" in css)
-check("Model time label hidden below 1600 px", "@media (max-width: 1600px) { .topbar .meta .mt-label { display: none; } }" in css)
+check("no Model time in the top bar (Andy 14:57)", 'id="mtime"' not in js and "mt-label" not in js)
+check("status area never shrinks; the session bar (side chip) gives way", ".topbar .meta { flex: none; }" in css
+      and ".topbar .session-bar { min-width: 0; }" in css)
+check("entries centred: ID, Mass, K %, Advanced", "#sPart, #sMass, #kPct, .k-field .input, .adv-sec .input, .adv-grid .input, .adv-in { text-align: center; }" in css)
 print("\nFAILS:", FAILS)
 sys.exit(1 if FAILS else 0)

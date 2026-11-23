@@ -50,7 +50,10 @@ def echo_only():
           s.readback.get("bif_mass") == 80.0 and s.readback_src.get("bif_mass") == "echo", (s.readback, s.readback_src))
     calls.clear()
     s.refresh_readback()
-    check("18 floats: no getparam at all", not [c for c in calls if c[0] == "matlab"], calls)
+    reads = [c for c in calls if c[0] == "matlab"]
+    check("18 floats: getparam only for the Advanced constants (never side / mass / BIF / mode / K / gyro)",
+          (lambda reads: all(all(not any(x in pth for x in ("Left 0/Right 1", "Constant4", "Constant10", "weight", "BIF_mass", "Gyro_Cal"))
+                                    for pth in (r[2][0] if len(r) > 2 and r[2] else [])) for r in reads))(reads), reads)
     ctx.live = Sup({"live_seen": True, "age_s": 0.05})
     dev_status = dev.status
     ctx.training.get_status = lambda: dict(dev_status(), packets_ok=100)

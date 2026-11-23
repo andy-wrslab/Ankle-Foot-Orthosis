@@ -85,18 +85,21 @@ def live_spec() -> dict:
         return {"label": label, "src": list(src), "color": color or st.get("color"), "width": width or st.get("width", 1.5),
                 "dash": [5, 4] if st.get("dash") else None, "unit": unit, "dec": dec}
     plots = {
-        "torque": {"group": "gait", "y": pad_range(-5, 15), "series": [
-            ser("Measured", ("torque", None), "meas", unit="N·m"), ser("Command", ("demand_torque", None), "cmd", unit="N·m")]},
-        "gait": {"group": "gait", "y": pad_range(0, 2), "series": [
+        "torque": {"group": "gait", "y": pad_range(-5, 15), "ylabel": "Torque (Nm)", "xlabels": False, "series": [
+            ser("Measured", ("torque", None), "meas", unit="Nm"), ser("Command", ("demand_torque", None), "cmd", unit="Nm")]},
+        "gait": {"group": "gait", "y": pad_range(0, 2), "ylabel": "Stride velocity (m/s)", "xlabels": True, "series": [
             ser("Current", ("gait", None), "meas", unit="m/s"), ser("Target", ("sv_target", None), "cmd", unit="m/s")]},
     }
-    for c in SENSOR_CARDS:
-        plots[c["id"]] = {"group": "sensors", "y": pad_range(*c["y"]), "series": [
+    for i, c in enumerate(SENSOR_CARDS):
+        plots[c["id"]] = {"group": "sensors", "y": pad_range(*c["y"]), "ylabel": c["title"] +
+                          (f" ({c['card_unit']})" if c.get("card_unit") else ""),
+                          "xlabels": i == len(SENSOR_CARDS) - 1, "series": [
             ser(n, c["src"][k], color=c["colors"][k % len(c["colors"])], width=1.25, unit=c["unit"], dec=c["dec"])
             for k, n in enumerate(c["names"])]}
-    for p in TRAINING_PLOTS:
+    for i, p in enumerate(TRAINING_PLOTS):
         dec = int(p["fmt"].strip(".f") or 2)
-        plots[p["id"]] = {"group": "training", "y": pad_range(*p["y"]), "series": [
+        plots[p["id"]] = {"group": "training", "y": pad_range(*p["y"]), "ylabel": p["title"],
+                          "xlabels": i == len(TRAINING_PLOTS) - 1, "series": [
             ser(n, (col, None), "meas", dec=dec) for n, col in zip(p["names"], p["columns"])]}
     return {"window_default": N_WINDOW_SEC, "style": {"text": TEXT_3, "grid": GRID, "zero": ZERO}, "plots": plots}
 
@@ -115,16 +118,10 @@ def _value_legend(c):
 
 
 def _card(graph_id, title, unit, legend, live, hidden=False, extra_class=""):
-    head = [html.Span(title, className="card-title")]
-    if unit:
-        head.append(html.Span(unit, className="card-unit"))
-    if legend is not None:
-        head.append(legend)
-    head.append(html.Span(className="spacer"))
+    """A live plot card: no header row (Andy 14:54: the rotated y label names the plot)."""
     attrs = {"data-live": live} if live else {}
     return html.Section(className="card plot-card" + (f" {extra_class}" if extra_class else ""), hidden=hidden,
                         **attrs, children=[
-        html.Div(className="card-head", children=head),
         html.Div(className="plot-body", children=html.Div(id=graph_id, className="uplot-host")),
     ])
 
@@ -159,10 +156,9 @@ def layout(ctx=None) -> html.Div:
         _card("gait", "Stride velocity", "m/s", _legend([("Current", "var(--s-meas)", False),
                                                          ("Target", "var(--s-cmd)", True)]), "gait"),
         html.Div(className="sensor-grid", id="sensorGrid", hidden=True, **{"data-live": "sensors"}, children=[
-            _card(c["id"], c["title"], c["unit"], _value_legend(c), None,
+            _card(c["id"], c["title"], c.get("card_unit", c["unit"]), _value_legend(c), None,
                   extra_class="wide" if c.get("wide") else "") for c in SENSOR_CARDS]),
-        _card("tr-assist", "Assistance", None, _legend([("Level in use", "var(--s-meas)", False)]), "training",
-              hidden=True),
+        _card("tr-assist", "Assistance", None, None, "training", hidden=True),     # single trace: the title is enough
         _card("tr-uc", "Uc", None, None, "training", hidden=True),
     ]
 

@@ -268,7 +268,9 @@ def session_checks(echo, dev13):
                                                                          and (ctx.session.status.get("weight") or {}).get("state") == "confirmed", 1.0),
               {k: ctx.session.status.get(k) for k in ("side", "weight")})
         ctx.session.refresh_readback()
-        check("run 14: no getparam (refresh_readback makes no MATLAB call)", not [c for c in calls if c[0] == "matlab"], calls)
+        reads = [c for c in calls if c[0] == "matlab" and c[2] == "read"]
+        check("run 14: getparam only for the Advanced constants", all(
+            not set(ctx.session.ECHO_ONLY_KEYS) & set(ctx.session.getparam_keys()) for _ in reads), (reads, ctx.session.getparam_keys()))
         lk.stop()
     finally:
         dev.close()

@@ -83,6 +83,23 @@ class RunControl:
             job.export_meta = _meta
             stage = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Loading / starting…",
                      "stop": "Stopping…", "load": "Loading…", "save": "Exporting…"}.get(action)
+            if action in ("start", "stop", "save", "load") and not (self.status or {}).get("connected"):
+                # Andy 14:48 (run 14: everything over UDP): no separate Connect needed; these
+                # connect first ("Connecting…", then their own stage), and stay connected
+                if hasattr(job, "meta"):
+                    job.meta["stage"] = "Connecting…"
+                try:
+                    cres = self.call(job, "connect")
+                except Exception as exc:
+                    err = str(exc).strip()[:300] or type(exc).__name__
+                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
+                    self.audit("connect (auto, for " + action + ")", "-> " + err, False)
+                    raise
+                if not cres.get("ok") or not cres.get("connected"):
+                    err = str(cres.get("err") or "no answer from the target")[:300]
+                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
+                    self.audit("connect (auto, for " + action + ")", "-> " + err, False)
+                    return {"ok": False, "err": f"Connect failed before {action}: {err}"}
             if stage and hasattr(job, "meta"):
                 job.meta["stage"] = stage
             if action == "connect":

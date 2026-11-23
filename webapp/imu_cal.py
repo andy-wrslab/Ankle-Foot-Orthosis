@@ -55,7 +55,16 @@ class ImuCal:
 
     # ------------------------------------------------------------------ probe
     def probe(self, force: bool = False) -> None:
-        """getparam the request block (in a job, never on the request thread)."""
+        """getparam the request block (in a job, never on the request thread). Not on run 14:
+        the counter is the 5433 echo col 15 (gyro_cal_request), no MATLAB read."""
+        lk = self.ctx.session.link() if hasattr(self.ctx.session, "link") else None
+        if lk is not None:
+            g = ((lk.view().get("adopted") or {}).get("gyro"))
+            with self.lock:
+                self.available, self.probe_err = True, ""
+                if g is not None:
+                    self.value = float(g)
+            return
         rc = self._rc()
         key = (bool(rc.get("connected")), rc.get("app"))
         if key != self.probe_key:

@@ -53,10 +53,26 @@ def spec_and_endpoint():
           {k: v["group"] for k, v in s["plots"].items()} == {"torque": "gait", "gait": "gait", "press": "sensors", "imu": "sensors",
                                                               "tr-assist": "training", "tr-uc": "training"}, s["plots"].keys())
     names = [x["label"] for x in s["plots"]["press"]["series"]]
-    check("spec: FSR names", names == ["Hallux (FSR1)", "Heel medial (FSR2)", "Met 1 (FSR3)", "Met 5 (FSR4)", "Arch (FSR5)",
-                                       "Toes (FSR6)", "Heel lateral (FSR7)", "Met 3 (FSR8)"], names)
+    check("spec: pressure names heel -> toe, no (FSRn)", names == ["Heel medial", "Heel lateral", "Arch", "Met 1", "Met 3",
+                                                                  "Met 5", "Hallux", "Toes"], names)
+    srcs = [x["src"] for x in s["plots"]["press"]["series"]]
+    check("spec: channel mapping unchanged (Heel medial = p1, Hallux = p0, Met 3 = p7)",
+          srcs[0] == ["press", 1] and srcs[6] == ["press", 0] and srcs[4] == ["press", 7], srcs)
+    from plot_style import CATEGORICAL
+    cols = [x["color"] for x in s["plots"]["press"]["series"]]
+    check("spec: colour tied to the sensor (Hallux keeps CATEGORICAL[0])", cols[6] == CATEGORICAL[0] and cols[0] == CATEGORICAL[1], cols)
     check("spec: linear acceleration x/y/z", [x["label"] for x in s["plots"]["imu"]["series"]] == ["x", "y", "z"]
           and [x["src"] for x in s["plots"]["imu"]["series"]] == [["imu", 0], ["imu", 1], ["imu", 2]])
+    check("spec: y labels (Nm; no unit for Pressure / Acceleration); x labels on the bottom plots",
+          [s["plots"][k]["ylabel"] for k in ("torque", "gait", "press", "imu", "tr-assist", "tr-uc")] ==
+          ["Torque (Nm)", "Stride velocity (m/s)", "Pressure", "Acceleration", "Assistance", "Uc"]
+          and [s["plots"][k]["xlabels"] for k in ("torque", "gait", "press", "imu", "tr-assist", "tr-uc")] ==
+          [False, True, False, True, False, True], {k: (v["ylabel"], v["xlabels"]) for k, v in s["plots"].items()})
+    css = open(os.path.join(APP, "assets", "afo-ui.css"), encoding="utf-8").read()
+    check("bottom card taller by the x-axis height (26 px)", "#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 26px; }" in css
+          and ".sensor-grid .plot-card:has(#imu) { flex: 1 1 26px; }" in css)
+    live = open(os.path.join(APP, "pages", "live.py"), encoding="utf-8").read()
+    check("live cards: no header row (no title / legend chips above the plots)", 'className="card-head"' not in live.split("def _card", 1)[1].split("def layout", 1)[0])
     check("spec: command traces dashed", s["plots"]["torque"]["series"][1]["dash"] == [5, 4]
           and s["plots"]["torque"]["series"][0]["dash"] is None)
     import flask

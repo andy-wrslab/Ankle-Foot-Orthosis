@@ -635,7 +635,30 @@ ul.pop-checklist li.unknown { color: var(--text-3); }
 .topbar .side-chip { display: inline-block; max-width: 220px; min-width: 0; flex: 0 1 auto; overflow: hidden;
                      white-space: nowrap; text-overflow: ellipsis; line-height: 28px; }
 .topbar .status-btn { flex: none; }
-.topbar .meta { min-width: 0; flex: 0 1 auto; }
-.topbar .meta > span:first-child { flex: 0 100 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.topbar .meta { flex: none; }
 .topbar .session-bar { min-width: 0; }
-@media (max-width: 1600px) { .topbar .meta .mt-label { display: none; } }
+/* Trials: MATLAB link row (Connect moved here, Andy 14:48) */
+.ml-link { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2) 0 var(--sp-3); }
+.ml-link .ml-state { font-weight: 500; }
+.ml-link .hint { color: var(--text-3); font-size: var(--fs-12); }
+.adv-in.adv-stale { color: var(--text-3); background: var(--surface-2); }
+/* Live sub-tabs (Gait | Sensors | Training) and the 2 s / 10 s window: one step larger (Andy 14:51) */
+#page-live > .toolbar .seg button { height: 30px; font-size: 16px; padding: 0 14px; }   /* 24 -> 30 px, 12 -> 16 px, 10 -> 14 px */
+#page-live > .toolbar .seg { align-items: center; }
+/* focus ring only for keyboard focus (a mouse click left the teal ring on the selected tab) */
+button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:focus:not(:focus-visible),
+.side-chip:focus:not(:focus-visible), .status-btn:focus:not(:focus-visible), .lg:focus:not(:focus-visible),
+.side-opt:focus:not(:focus-visible), a:focus:not(:focus-visible) { outline: none; }
+/* Live plots without header rows (Andy 14:54-14:55): the bottom card of each tab carries the x
+   tick labels and is taller by exactly that height, so every drawing area is the same size */
+#page-live .plot-card { flex: 1 1 0px; }
+#page-live .plot-card#torqueCard, #page-live .plot-card:has(#torque) { flex: 1 1 0px; }
+#page-live .plot-card:has(#gait), #page-live .plot-card:has(#tr-uc) { flex: 1 1 26px; }
+.sensor-grid { display: flex; flex-direction: column; }
+.sensor-grid .plot-card { flex: 1 1 0px; }
+.sensor-grid .plot-card:has(#imu) { flex: 1 1 26px; }
+#page-live .plot-body { padding-top: var(--sp-2); }
+/* entries centred in their boxes (Andy 14:57): ID, Mass, K %, Advanced */
+#sPart, #sMass, #kPct, .k-field .input, .adv-sec .input, .adv-grid .input, .adv-in { text-align: center; }
+/* fixed-width page columns centred (Andy 14:59): DAQ, Trials; the top bar and Live stay full width */
+.page:not(.live) > .narrow { margin-inline: auto; }

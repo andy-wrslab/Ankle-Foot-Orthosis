@@ -51,7 +51,7 @@ HOVER_FMT = {"torque": ".2f", "speed": ".2f", "fsr": ".0f", "imu": ".2f",
 
 
 def trace_hover(name, fmt=".2f", unit=""):
-    """Trace kwargs for the unified hover label: 'Measured  +12.41 N·m'."""
+    """Trace kwargs for the unified hover label: 'Measured  +12.41 Nm'."""
     u = f" {unit}" if unit else ""
     # yhoverformat, not a format inside the template: in "x unified" mode
     # Plotly 2.35 printed full precision with %{y:.2f} (checked in the mock).
@@ -153,6 +153,9 @@ def training_plots() -> list:
 # confirmed by Andy (Met 1/3/5 order, which heel is medial): change only here.
 FSR_NAMES = ["Hallux", "Heel medial", "Met 1", "Met 5", "Arch", "Toes", "Heel lateral", "Met 3"]   # FSR1..FSR8 = cols 3..10
 
+# display order heel -> toe: Heel medial, Heel lateral, Arch, Met 1, Met 3, Met 5, Hallux, Toes
+FSR_HEEL_TO_TOE = [FSR_NAMES.index(n) for n in ("Heel medial", "Heel lateral", "Arch", "Met 1", "Met 3", "Met 5",
+                                                "Hallux", "Toes")]
 # eight clearly different hues (FSR traces), readable on the light card
 CATEGORICAL = ["#1F6F78", "#C2702E", "#6E5BA8", "#2E7D4F", "#B5446E", "#4C6EB5", "#8A7A2E", "#3F3F46"]
 XYZ = ["#1F6F78", "#C2702E", "#6E5BA8"]
@@ -160,10 +163,13 @@ XYZ = ["#1F6F78", "#C2702E", "#6E5BA8"]
 # id, title, unit, source in the snapshot ("press" k / "imu" k / "ankle" / "ankle_vel"),
 # trace names, y range, decimals. imu k = imu_(k+1) = 5431 col 11+k.
 SENSOR_CARDS = [
-    {"id": "press", "title": "FSR", "unit": "counts", "src": [("press", k) for k in range(8)],
-     "names": [f"{n} (FSR{i + 1})" for i, n in enumerate(FSR_NAMES)], "y": (0, 1000), "dec": 0,
-     "colors": CATEGORICAL, "wide": True},
-    {"id": "imu", "title": "Linear acceleration (gravity removed)", "unit": "g",
+    # heel to toe (Andy 14:56), no "(FSRn)"; colour tied to the sensor (CATEGORICAL[FSR index]);
+    # the channel mapping is unchanged (FSR1 = p0 = Hallux ...)
+    {"id": "press", "title": "Pressure", "unit": "counts", "card_unit": None,
+     "src": [("press", k) for k in FSR_HEEL_TO_TOE],
+     "names": [FSR_NAMES[k] for k in FSR_HEEL_TO_TOE], "y": (0, 1000), "dec": 0,
+     "colors": [CATEGORICAL[k] for k in FSR_HEEL_TO_TOE], "wide": True},
+    {"id": "imu", "title": "Acceleration", "unit": "g", "card_unit": None,
      "src": [("imu", 0), ("imu", 1), ("imu", 2)], "names": ["x", "y", "z"], "y": (-3, 3), "dec": 2, "colors": XYZ,
      "wide": True},
 ]
