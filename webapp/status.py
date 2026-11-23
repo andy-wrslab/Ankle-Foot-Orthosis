@@ -31,10 +31,12 @@ from typing import Any, Dict, List
 
 IMU_NOT_READY_FAULT_S = 10.0     # bias_ready 0 this long = a fault (a normal recal takes ~5 s)
 # Speedgoat restarted into its startup app (15:24 power loss, 15:32 boot into the old AFO):
-# 5431 flows again, model time restarted near 0, and no console echo (12/15/18/31 floats)
+# 5431 flows again, model time restarted near 0, and no console echo (any echo_sizes.ECHO_SIZES length)
 RESTART_T_MAX_S = 30.0          # model time this low after a jump back = a fresh start
 RESTART_ECHO_WAIT_S = 3.0       # no r1 echo this long after the restart (or while 5431 flows) -> flag
-R1_ECHO_COLS = (12, 15, 18, 31)   # any console echo (run 12 sends 12 floats) clears / prevents it
+# any console echo length a build sends (12 / 15 / 18 / 31 / 44 / 45, echo_sizes.ECHO_SIZES) clears /
+# prevents it; missing 44 / 45 made healthy run-16b / 16c devices read 'Speedgoat restarted'
+from echo_sizes import ECHO_SIZES as R1_ECHO_COLS  # noqa: E402
 STARTUP_APP_TEXT = "Speedgoat restarted: AFO_r1 not running (startup app)"
 
 import model_profile as mp

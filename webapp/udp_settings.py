@@ -52,7 +52,9 @@ PACKET = struct.Struct("<8f")
 FIELDS = ("side", "mass", "mode", "k", "gyro")          # packet slots 3..7
 ECHO_COL = {"side": "side", "mass": "bif_mass_kg", "mode": "assist_mode", "k": "fixed_k_pct",
             "gyro": "gyro_cal_request"}
-ECHO_N = 18
+from echo_sizes import ADV_UDP_MIN, GUARD_UDP_MIN, UDP_SETTINGS_MIN  # noqa: E402
+
+ECHO_N = UDP_SETTINGS_MIN                 # 18 (echo_sizes)
 STALE_S = 0.75             # echo older than this: link stalled -> frozen
 RETRY_EVERY_S = 0.25       # resend after 0.25, 0.5, 0.75 s ...
 MAX_RETRIES = 3
@@ -414,7 +416,7 @@ class AdvLink(SettingsLink):
     MAGIC, VERSION = 4135.0, 1.0
     PACKET = struct.Struct("<16f")
     SEQ_COL = "adv_seq"
-    ECHO_N = 31
+    ECHO_N = ADV_UDP_MIN                       # 31 (echo_sizes)
     PORT_KEY, PORT_DEFAULT = "adv_port", 5435
     COUNTER = None
     KEEP: Dict[str, float] = {}                # NaN = keep (any invalid value keeps the one in use)
@@ -523,7 +525,7 @@ class GuardLink(AdvLink):
     MAGIC, VERSION = 4136.0, 1.0
     PACKET = struct.Struct("<12f")
     SEQ_COL = "guard_seq"
-    ECHO_N = 44
+    ECHO_N = GUARD_UDP_MIN                     # 44 (echo_sizes)
     PORT_KEY, PORT_DEFAULT = "guard_port", 5436
     LAYOUT = GUARD_LAYOUT                      # [11] reserved -> 0 (SLOTS)
 

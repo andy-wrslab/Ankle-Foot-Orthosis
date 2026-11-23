@@ -597,10 +597,14 @@ ul.pop-checklist li.done { color: var(--text-2); }
 #rigKv dt { color: var(--text-2); margin: 0; }
 #rigKv dd { margin: 0; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
 
-/* long status texts never push the bar wider: ellipsis, full text in the tooltip / popover */
-.status-btn .sb-txt { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-@media (max-width: 1400px) { .status-btn .sb-txt { max-width: 220px; } }
-@media (max-width: 640px)  { .status-btn .sb-txt { max-width: 150px; } }
+/* long status texts never push the bar wider and are never cut: they wrap onto a second line
+   inside the button ("Speedgoat restarted: AFO_r1 not running (startup app)" was cut on DAQ at
+   820 / 1024 / 1280 px); the button grows in height (2 lines = 34 px < the 64 px bar) */
+.status-btn .sb-txt { display: inline-block; max-width: 340px; white-space: normal; overflow-wrap: anywhere;
+  line-height: 1.25; text-align: left; vertical-align: middle; }
+@media (max-width: 1400px) { .status-btn .sb-txt { max-width: 240px; } }
+@media (max-width: 640px)  { .status-btn .sb-txt { max-width: 160px; } }
+.status-btn, .topbar .status-btn { height: auto; min-height: var(--btn-md); padding-block: 2px; white-space: normal; }
 
 /* Teensy: job stage line under Build / Flash */
 .ty-stage { min-height: 20px; padding: 6px var(--sp-4, 16px) 0; font-size: var(--fs-12, 12px); color: var(--text-2); display: flex; align-items: center; gap: 6px; }

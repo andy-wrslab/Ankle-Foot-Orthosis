@@ -53,19 +53,8 @@ RESTART_JUMP_S = 1.0      # model time back by more than this = a restart: the h
 RESTART_RUN = 20          # or 20 packets in a row (0.2 s) older than the last time: a new timeline
 
 
-DEFAULT_TAIL = ["bif_valid", "bif_cal_progress", "bif_bias_ready"]
-# run 14 (UDP settings 5434): 3 more floats, cols 15-17 = gyro_cal_request in use, last
-# accepted 5434 seq (0 = none), bif_mass_kg in use (0 = unset) -> '<18f'
-RUN14_TAIL = ["gyro_cal_request", "settings_seq", "bif_mass_kg"]
-# run 15 (Advanced over UDP 5435): 13 more floats, cols 18-30 -> '<31f'
-RUN15_TAIL = ["sv_target_min", "sv_target_max", "target_step_up", "target_step_down", "step_up_window",
-              "step_down_window", "high_assist_level", "high_assist_strides", "torque_p_gain", "torque_i_gain",
-              "standing_still_cutoff", "adv_seq", "spring_stiffness"]
-# run 16 (torque guard over UDP 5436): 13 more floats, cols 31-43 -> '<44f'
-RUN16_TAIL = ["slack_flag", "jam_flag", "slack_count", "slack_last_stride", "slack_floor_on", "slack_thr_nm", "slack_ms",
-              "slack_floor_nm", "jam_cut_on", "jam_apnm", "jam_ms", "fb_filter", "guard_seq"]
-# run 16c: 1 more float, col 44 = standstill_fade_ms in use -> '<45f' (run 16b stays '<44f')
-RUN16C_TAIL = ["standstill_fade_ms"]
+# the column tails per build and the echo lengths: ONE place (echo_sizes.py)
+from echo_sizes import DEFAULT_TAIL, ECHO_SIZES, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL  # noqa: E402,F401
 
 
 def load_layout(path):

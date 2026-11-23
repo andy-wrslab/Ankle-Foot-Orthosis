@@ -283,7 +283,7 @@ def _guard_view(ctx) -> Dict[str, Any]:
     (cols 35-42), editable over 5436 with the 5434 rules, frozen in a stall."""
     sess = ctx.session
     try:
-        udp = (sess.echo_cols() or 0) >= 44
+        udp = bool(sess.guard_profile())
         stale = bool(sess.echo_stale())
     except Exception:
         udp, stale = False, False
@@ -362,7 +362,7 @@ def register(server, ctx) -> None:
     def api_console_guard():  # type: ignore
         b = body()
         lk = getattr(ctx, "guard_link", None)
-        if lk is None or (ctx.session.echo_cols() or 0) < 44:
+        if lk is None or not ctx.session.guard_profile():
             return jsonify({"ok": False, "msg": "Torque guard: not on this build"}), 409
         if ctx.session.echo_stale():
             return jsonify({"ok": False, "msg": ctx.session.FROZEN_MSG}), 409

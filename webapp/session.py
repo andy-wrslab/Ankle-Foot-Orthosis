@@ -33,6 +33,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import model_profile as mp
+from echo_sizes import ADV_UDP_MIN, GUARD_UDP_MIN, UDP_SETTINGS_MIN
 _log_s = logging.getLogger("afo.session")
 
 _log = logging.getLogger("afo.session")
@@ -406,11 +407,15 @@ class SessionSetup:
 
     def udp_profile(self) -> bool:
         """Run 14+ (echo known >= 18 floats, sticky): side / mass / mode / K over 5434."""
-        return (self.echo_cols() or 0) >= 18
+        return (self.echo_cols() or 0) >= UDP_SETTINGS_MIN
 
     def adv_profile(self) -> bool:
         """Run 15 (echo known = 31 floats, sticky): Advanced over 5435, never setparam."""
-        return (self.echo_cols() or 0) >= 31
+        return (self.echo_cols() or 0) >= ADV_UDP_MIN
+
+    def guard_profile(self) -> bool:
+        """Run 16b+ (echo known >= 44 floats, sticky): torque guard over 5436."""
+        return (self.echo_cols() or 0) >= GUARD_UDP_MIN
 
     def write_blocked(self, key: str) -> Optional[str]:
         """Why a settings / Advanced write is refused now (no setparam, no UDP), or None.
