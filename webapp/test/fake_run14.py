@@ -87,7 +87,7 @@ class FakeRun14:
                  "step_up_window": (1, 60, True), "step_down_window": (1, 60, True),
                  "high_assist_level": (0, 10, False), "high_assist_strides": (0, 200, True),
                  "torque_p_gain": (0.05, 3, False), "torque_i_gain": (0, 5, False),
-                 "standing_still_cutoff": (50, 5000, False)}
+                 "standing_still_cutoff": (0, 5000, False)}      # 0 allowed (Andy 16:31)
         new = dict(self.adv)
         for i, f in enumerate(ADV_FIELDS):
             v, (lo, hi, whole) = p[3 + i], rules[f]

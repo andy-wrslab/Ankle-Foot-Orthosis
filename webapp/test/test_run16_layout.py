@@ -68,6 +68,15 @@ def layouts():
     for f in ("console_udp_layout.json", "settings_guard_udp_layout.json", "settings_adv_udp_layout.json", "settings_udp_layout.json"):
         a = json.load(open(os.path.join(APP, "config", f), encoding="utf-8"))
         b = json.load(open(os.path.join(ROUND1, f), encoding="utf-8"))
+        if f == "settings_adv_udp_layout.json":
+            # Andy 16:31: the standing-still cutoff may be 0 (0..5000); round1 matches once the
+            # Simulink thread's rebuilt layout lands, until then only that rule may differ
+            cut = [x["rule"] for x in a["fields"] if x["name"] == "standing_still_cutoff"]
+            check("config: standing-still cutoff 0..5000", cut == ["0..5000 (threshold_pressure); else keep"], cut)
+            for lay in (a, b):
+                for x in lay["fields"]:
+                    if x["name"] == "standing_still_cutoff":
+                        x["rule"] = "0..5000 (threshold_pressure); else keep"
         check(f"config/{f} = round1 copy", a == b)
     import udp_settings as U
     fields, rules, _ = U.load_adv_layout(os.path.join(ROUND1, "settings_guard_udp_layout.json"))

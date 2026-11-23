@@ -71,6 +71,15 @@ def layouts():
     for f in ("settings_adv_udp_layout.json", "settings_udp_layout.json"):
         a = json.load(open(os.path.join(APP, "config", f), encoding="utf-8"))
         b = json.load(open(os.path.join(ROUND1, f), encoding="utf-8"))
+        if f == "settings_adv_udp_layout.json":
+            # Andy 16:31: the standing-still cutoff may be 0 (0..5000); round1 matches once the
+            # Simulink thread's rebuilt layout lands, until then only that rule may differ
+            cut = [x["rule"] for x in a["fields"] if x["name"] == "standing_still_cutoff"]
+            check("config: standing-still cutoff 0..5000", cut == ["0..5000 (threshold_pressure); else keep"], cut)
+            for lay in (a, b):
+                for x in lay["fields"]:
+                    if x["name"] == "standing_still_cutoff":
+                        x["rule"] = "0..5000 (threshold_pressure); else keep"
         check(f"config/{f} = round1 copy", a == b)
     cfg = names_of(json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8")))
     check("config/console_udp_layout.json keeps the run-15 columns 0-30", cfg[:31] == n, cfg[:31])
@@ -214,7 +223,7 @@ def adv_link():
     lk = U.AdvLink({"udp": {"send_host": "127.0.0.1", "adv_port": 15435}},
                    lambda: (dict(echo["row"]), echo["age"], echo["cols"]),
                    sender=lambda data, addr: sent.append((data, addr)), start_thread=False,
-                   layout_path=os.path.join(ROUND1, "settings_adv_udp_layout.json"))
+                   layout_path=os.path.join(APP, "config", "settings_adv_udp_layout.json"))   # the page copy (cutoff 0..5000)
     check("5435 link: fields in the round1 layout order", list(lk.FIELDS) == ADV_FIELDS, lk.FIELDS)
     lk.tick()
     check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.6, (sent, lk.state))
@@ -249,12 +258,15 @@ def adv_link():
     sent.clear()
     for f, bad in (("sv_target_min", 0.1), ("sv_target_max", 2.5), ("target_step_up", 0.6), ("step_up_window", 2.5),
                    ("step_down_window", 61), ("high_assist_strides", 10.5), ("torque_p_gain", 0.01), ("torque_i_gain", 6),
-                   ("standing_still_cutoff", 40), ("sv_target_min", 1.5), ("sv_target_max", 0.8)):
+                   ("standing_still_cutoff", 5001), ("sv_target_min", 1.5), ("sv_target_max", 0.8)):
         r = lk.press(f, bad)
         check(f"5435 refused before sending: {f} = {bad}", not r["ok"], r)
     check("5435: nothing sent for refused values", not sent, sent)
     r = lk.press("step_up_window", 25)
     check("5435: a whole number in range is sent", r["ok"] and len(sent) == 1, r)
+    r = lk.press("standing_still_cutoff", 0)
+    check("5435: standing-still cutoff 0 is allowed and sent (Andy 16:31)", r["ok"] and len(sent) == 2
+          and struct.unpack("<16f", sent[-1][0])[3 + ADV_FIELDS.index("standing_still_cutoff")] == 0.0, r)
     # stall: frozen, nothing sent; back: re-adopt, nothing sent
     lk.pending.clear()
     sent.clear()
