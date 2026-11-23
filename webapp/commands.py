@@ -35,7 +35,7 @@ from typing import Any, Callable, Dict, Optional
 
 TOGGLES = ("motor", "assist", "k")
 MOMENTARY = ("zero", "calibrate", "reset")
-LATCHED = ("zero", "calibrate")          # toggles; "reset" stays a pulse
+LATCHED: tuple = ()     # Andy 16:15 "why is zero a switch now?": Zero / Calibrate FSR are pulses again
 # 5433 echo of a latched field (zero has none: its lit state is the commanded one)
 LATCH_ECHO = {"calibrate": "cmd_calibrate_pressure"}
 PARAMS = ("epsilon_up", "epsilon_down", "step_up", "step_down", "v_min")
@@ -63,6 +63,7 @@ class CommandState:
         self.held: Dict[str, int] = {m: 0 for m in MOMENTARY}
         self.loaded_from_disk = False
         self.last_sent_at: Optional[float] = None
+        self.echo_expected: Optional[Callable[[], bool]] = None    # model has a 5433 echo (AFO_r1)
         self.guard: Optional[Callable[[str], Optional[str]]] = None   # e.g. session setup: block Motor/Assist
         # run 14: the 5433 echo stalled -> the device keeps its settings and nothing is sent
         self.frozen: Optional[Callable[[], Optional[str]]] = None
@@ -143,10 +144,16 @@ class CommandState:
         else what this console last sent, else inferred from the bus, else unknown."""
         rb = self.readback() or {}
         out = {}
+        device_only = bool(self.echo_expected()) if self.echo_expected else False
         for t in TOGGLES:
             mv = rb.get(MODEL_KEYS[t])
             if isinstance(mv, (int, float)) and math.isfinite(mv):
                 out[t] = {"value": 1 if mv >= 0.5 else 0, "source": "model"}
+                continue
+            if device_only:
+                # a model with a console echo and no echo now: unknown / frozen, never the
+                # remembered last command (last_command.json is a write log only)
+                out[t] = {"value": None, "source": None}
                 continue
             v = self.toggles[t]
             src = "sent" if v is not None else None
@@ -170,8 +177,8 @@ class CommandState:
         rb = self.readback() or {}
         now = time.time()
         found = []
-        pairs = [(t, self.toggles[t], rb.get(MODEL_KEYS[t])) for t in TOGGLES]
-        pairs += [(p, self.params[p], rb.get(self.param_echo.get(p, ""))) for p in PARAMS]
+        # Motor / Assist / K never 'differ': the page shows the device echo (Andy 16:15)
+        pairs = [(p, self.params[p], rb.get(self.param_echo.get(p, ""))) for p in PARAMS]
         for name, sent, model in pairs:
             if sent is None or not isinstance(model, (int, float)) or not math.isfinite(model):
                 self._mismatch_since.pop(name, None)
@@ -208,9 +215,8 @@ class CommandState:
                                                                   for m in missing)
                     + " is unknown (this console has not set it, and it cannot be read from the bus). "
                       "Use 'Set unknown to OFF' first.")
-        lat = self.latched()       # hold-last-command: latched fields as last sent / echoed
-        self.send_control(self.cfg, float(lat["zero"]), float(toggles["motor"]), float(toggles["assist"]),
-                          float(toggles["k"]), float(lat["calibrate"]), float(self.held["reset"]), force=True)
+        self.send_control(self.cfg, float(self.held["zero"]), float(toggles["motor"]), float(toggles["assist"]),
+                          float(toggles["k"]), float(self.held["calibrate"]), float(self.held["reset"]), force=True)
         self.last_sent_at = time.time()
         return None
 
@@ -268,19 +274,23 @@ class CommandState:
     CALIBRATE_LOCK_S = 30.0
 
     def pulse(self, name: str) -> Dict[str, Any]:
-        """Dock one-shot buttons. Zero and Calibrate FSR are latched toggles (press_latch);
-        Reset SV: exactly two packets, the full last-sent state with reset = 1, then ~200 ms
-        later the same state with it = 0."""
-        if name in LATCHED:
-            return self.press_latch(name)
+        """Dock one-shot buttons Zero (field 0), Calibrate FSR (field 4), Reset SV (field 5):
+        exactly two packets, the echoed motor / assist / k with the field = 1, then ~200 ms later
+        the same with it = 0. Zero and Calibrate FSR act on the rising edge in the model (run 15
+        code: RISING_ZERO_CROSSING / 'ok && !prevTrig' / trig_edge), so one pulse fires once.
+        Zero only with Assist off."""
         fz = self.frozen() if self.frozen else None
         if fz:
             return {"ok": False, "msg": fz}
-        if name != "reset":
+        if name not in ("zero", "calibrate", "reset"):
             return {"ok": False, "msg": "unknown action"}
+        if self.held[name]:
+            return {"ok": False, "msg": "already sending"}
         now = time.time()
         with self.lock:
             cur = {t: r["value"] for t, r in self.resolved().items()}
+            if name == "zero" and cur["assist"] != 0:
+                return {"ok": False, "msg": "Zero: switch Assist off first (hold the ankle still in neutral)"}
             self.held[name] = 1
             err = self._packet(cur)
             if err:
@@ -294,7 +304,7 @@ class CommandState:
         def release():
             seen = False
             t_end = time.time() + self.PULSE_S
-            echo_key = "cmd_reset_sv"
+            echo_key = {"reset": "cmd_reset_sv", "calibrate": "cmd_calibrate_pressure", "zero": "cmd_zero"}[name]
             samples, mx = set(), {"cmd_calibrate_pressure": None, "cmd_reset_sv": None}
 
             def look():

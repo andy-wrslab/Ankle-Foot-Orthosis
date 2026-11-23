@@ -103,7 +103,8 @@ def main():
     res["latest_after_silence_0_5"] = sup.latest(max_age_s=0.5)
     sup.shutdown()
     fails = [k for k in expect if res["got"].get(k) != expect[k]]
-    if [m["name"] for m in res["mismatch_after_3_s"]] != ["assist"]:
+    # Andy 16:15: Motor / Assist / K show the device echo and never 'differ'
+    if [m["name"] for m in res["mismatch_after_3_s"]] != []:
         fails.append("mismatch")
     if res["toggles_from_model"]["assist"] != {"value": 0, "source": "model"}:
         fails.append("toggle_source")

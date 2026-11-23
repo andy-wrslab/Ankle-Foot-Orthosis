@@ -45,6 +45,10 @@ class RunControl:
         # "Speedgoat offline" / "Speedgoat busy" / "Connect failed" until Disconnect or a
         # successful connect (Connect stays enabled: all can be retried)
         self.offline = None
+        # Andy 16:11 "the MATLAB based tools are ONLY used for logging data": Start / Stop /
+        # Export / Load / the run list connect on demand and disconnect right after. Only an
+        # explicit Connect press (manual) keeps the link open.
+        self.manual = False
 
     def audit(self, action: str, detail: str, ok) -> None:
         path = os.path.join(self.ctx.cfg["paths"]["log_dir"], "run_control.csv")
@@ -78,28 +82,76 @@ class RunControl:
                     job.add(f"send pending failed: {exc}")
         return res
 
+    ON_DEMAND = ("start", "stop", "save", "load")
+    STAGE = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Loading / starting…",
+             "stop": "Stopping…", "load": "Loading…", "save": "Exporting…", "list": "Reading the file log…"}
+
+    def ensure_link(self, job, action: str):
+        """On demand: connect for *action* if not connected (the stage shows the action's own
+        verb, never 'Connecting…'). Returns None when connected, else the failure result."""
+        if (self.status or {}).get("connected"):
+            return None
+        if hasattr(job, "meta"):
+            job.meta["stage"] = self.STAGE.get(action, "Working…")
+        try:
+            cres = self.call(job, "connect")
+        except Exception as exc:
+            err = str(exc).strip()[:300] or type(exc).__name__
+            self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
+            self.audit("connect (on demand, for " + action + ")", "-> " + err, False)
+            raise
+        if not cres.get("ok") or not cres.get("connected"):
+            err = str(cres.get("err") or "no answer from the target")[:300]
+            self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
+            self.audit("connect (on demand, for " + action + ")", "-> " + err, False)
+            return {"ok": False, "err": f"Connect failed before {action}: {err}"}
+        return None
+
+    def release_link(self, job, action: str) -> None:
+        """After an on-demand action: let the session finish what it sends / reads now (page
+        Start: its after-Start step; 18-float builds: the Advanced getparam), then disconnect,
+        unless the operator connected by hand."""
+        if self.manual or not (self.status or {}).get("connected"):
+            return
+        sess = getattr(self.ctx, "session", None)
+        if sess is not None:
+            th = getattr(sess, "after_start_thread", None)
+            if action == "start" and th is not None:
+                th.join(timeout=10.0)
+            t_end = time.time() + 40
+            while self.ctx.jobs.running("session") and time.time() < t_end:
+                time.sleep(0.1)
+            try:
+                sess.read_now()
+            except Exception as exc:
+                job.add(f"read before disconnect failed: {exc}")
+        try:
+            self.call(job, "disconnect")
+            self.audit("disconnect (on demand, after " + action + ")", "", True)
+        except Exception as exc:
+            job.add(f"disconnect after {action} failed: {exc}")
+
     def run_action(self, action: str, *args, _meta=None):
         def fn(job):
             job.export_meta = _meta
-            stage = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Loading / starting…",
-                     "stop": "Stopping…", "load": "Loading…", "save": "Exporting…"}.get(action)
-            if action in ("start", "stop", "save", "load") and not (self.status or {}).get("connected"):
-                # Andy 14:48 (run 14: everything over UDP): no separate Connect needed; these
-                # connect first ("Connecting…", then their own stage), and stay connected
-                if hasattr(job, "meta"):
-                    job.meta["stage"] = "Connecting…"
+            stage = self.STAGE.get(action)
+            if action == "connect":
+                self.manual = True             # an explicit Connect keeps the link open
+            if action == "disconnect":
+                self.manual = False
+            if action in self.ON_DEMAND:
+                fail = self.ensure_link(job, action)
+                if fail is not None:
+                    return fail
                 try:
-                    cres = self.call(job, "connect")
-                except Exception as exc:
-                    err = str(exc).strip()[:300] or type(exc).__name__
-                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
-                    self.audit("connect (auto, for " + action + ")", "-> " + err, False)
-                    raise
-                if not cres.get("ok") or not cres.get("connected"):
-                    err = str(cres.get("err") or "no answer from the target")[:300]
-                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
-                    self.audit("connect (auto, for " + action + ")", "-> " + err, False)
-                    return {"ok": False, "err": f"Connect failed before {action}: {err}"}
+                    return self._do(job, action, stage, args)
+                finally:
+                    self.release_link(job, action)
+            return self._do(job, action, stage, args)
+        return self.ctx.jobs.start("rc", f"run control: {action}", fn)
+
+    def _do(self, job, action, stage, args):
+        if True:
             if stage and hasattr(job, "meta"):
                 job.meta["stage"] = stage
             if action == "connect":
@@ -152,13 +204,12 @@ class RunControl:
                 except Exception as exc:
                     job.add(f"file-log list after stop failed: {exc}")
             self.audit(action, " ".join(str(a) for a in args) + " -> " + json.dumps(res)[:400], ok)
-            if action not in ("status",):
+            if action not in ("status", "disconnect"):
                 try:
                     self.call(job, "status")
                 except Exception as exc:
                     job.add(f"status after {action} failed: {exc}")
             return res
-        return self.ctx.jobs.start("rc", f"run control: {action}", fn)
 
     def export_name(self) -> dict:
         """Default export name: {S-ID}_{YYYYMMDD}_{HHMM}_T{nn}; T{nn} = next free trial

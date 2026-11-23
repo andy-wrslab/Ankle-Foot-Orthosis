@@ -62,20 +62,28 @@ def run(ctx, action):
     return job
 
 
+def lt(st):
+    """The MATLAB link result (Trials row), '' when none."""
+    return st["rc_issues"][0]["text"] if st.get("rc_issues") else ""
+
+
 def units():
     ctx = make_ctx({}, live_age=None, tr_age=None)
     ctx.jobs = JobManager()
     ctx.matlab = StubML()
     ctx.runctl = RunControl(ctx)
     st = top_status(ctx)
-    check("start: 'Not connected' (grey)", st["text"] == "Not connected" and st["level"] == "grey", st["text"])
+    # Andy 16:11: the MATLAB link result is NOT on the status button (it says 'No data' here: no
+    # stream); it is in rc_issues, shown on the Trials 'MATLAB link' row
+    check("start: button 'No data' (grey), no link issue", st["text"] == "No data" and st["level"] == "grey"
+          and not st["rc_issues"], st["text"])
     # 1) ping timeout: afo_rc raises
     ctx.matlab.next["connect"] = TimeoutError("Unable to connect to target computer 'TargetPC1': ping timeout")
     run(ctx, "connect")
     st = top_status(ctx)
-    check("connect raised (ping timeout): 'Speedgoat offline' amber", st["text"] == "Speedgoat offline"
-          and st["level"] == "amber", (st["text"], st["level"]))
-    it = next((i for i in st["issues"] if i["key"] == "speedgoat-offline"), {})
+    check("connect raised (ping timeout): 'Speedgoat offline' amber", lt(st) == "Speedgoat offline"
+          and st["rc_issues"][0]["level"] == "amber" and st["text"] == "No data", (lt(st), st["level"]))
+    it = next((i for i in st["rc_issues"] if i["key"] == "speedgoat-offline"), {})
     check("popover: why (the error, with the time)", "ping timeout" in it.get("detail", "")
           and "Connect failed at" in it.get("detail", ""), it)
     check("popover: what to do", "switched on" in it.get("todo", "") and "Connect again" in it.get("todo", ""), it)
@@ -83,25 +91,25 @@ def units():
     ctx.matlab.next["status"] = {"ok": True, "connected": False}
     job = type("J", (), {"add": lambda self, l: None, "meta": {}})()
     ctx.runctl.call(job, "status")
-    check("status refresh, still not connected: stays 'Speedgoat offline'", top_status(ctx)["text"] == "Speedgoat offline")
+    check("status refresh, still not connected: stays 'Speedgoat offline'", lt(top_status(ctx)) == "Speedgoat offline")
     # Disconnect clears it
     ctx.matlab.next["disconnect"] = {"ok": True, "connected": False}
     run(ctx, "disconnect")
-    check("Disconnect: back to 'Not connected'", top_status(ctx)["text"] == "Not connected", top_status(ctx)["text"])
+    check("Disconnect: no link issue any more", lt(top_status(ctx)) == "", lt(top_status(ctx)))
     # 2) connect answers connected=false (no response)
     ctx.matlab.next["connect"] = {"ok": False, "connected": False, "err": "no response from 192.168.7.5"}
     run(ctx, "connect")
     st = top_status(ctx)
-    check("connect answered not connected: 'Speedgoat offline'", st["text"] == "Speedgoat offline", st["text"])
-    check("... reason shown", "no response" in st["issues"][0].get("detail", ""), st["issues"][:1])
+    check("connect answered not connected: 'Speedgoat offline'", lt(st) == "Speedgoat offline", lt(st))
+    check("... reason shown", "no response" in st["rc_issues"][0].get("detail", ""), st["rc_issues"][:1])
     offline_status = st
     # 3) a successful connect clears it
     ctx.matlab.next["connect"] = {"ok": True, "connected": True, "loaded": True, "running": False, "app": "AFO_r1"}
     ctx.matlab.next["status"] = {"ok": True, "connected": True, "loaded": True, "running": False, "app": "AFO_r1"}
     run(ctx, "connect")
     st = top_status(ctx)
-    check("successful connect: not offline any more", st["text"] != "Speedgoat offline"
-          and ctx.runctl.offline is None, (st["text"], ctx.runctl.offline))
+    check("successful connect: not offline any more", lt(st) != "Speedgoat offline"
+          and ctx.runctl.offline is None, (lt(st), ctx.runctl.offline))
     # 4) "another MATLAB session" (13:50:43 live): busy, not offline
     ctx.matlab.next["status"] = {"ok": True, "connected": False}     # target gone again
     ctx.matlab.next["disconnect"] = {"ok": True, "connected": False}
@@ -110,9 +118,9 @@ def units():
                                               "may be connected to another MATLAB session.")
     run(ctx, "connect")
     st = top_status(ctx)
-    it = next((i for i in st["issues"] if i["key"] == "speedgoat-busy"), {})
-    check("another MATLAB session: amber 'Speedgoat busy' (not offline)", st["text"] == "Speedgoat busy"
-          and st["level"] == "amber" and not any(i["key"] == "speedgoat-offline" for i in st["issues"]), st["text"])
+    it = next((i for i in st["rc_issues"] if i["key"] == "speedgoat-busy"), {})
+    check("another MATLAB session: amber 'Speedgoat busy' (not offline)", lt(st) == "Speedgoat busy"
+          and st["rc_issues"][0]["level"] == "amber" and not any(i["key"] == "speedgoat-offline" for i in st["rc_issues"]), lt(st))
     check("busy: what to do", it.get("todo", "").startswith("Another MATLAB session is connected to the Speedgoat")
           and "press Connect again" in it.get("todo", ""), it)
     check("busy: the real error in the detail", "another MATLAB session" in it.get("detail", ""), it)
@@ -121,14 +129,14 @@ def units():
     ctx.matlab.next["connect"] = RuntimeError("slrealtime: license checkout failed (error -5)")
     run(ctx, "connect")
     st = top_status(ctx)
-    it = next((i for i in st["issues"] if i["key"] == "connect-failed"), {})
-    check("other error: 'Connect failed' with the real error", st["text"] == "Connect failed"
-          and "license checkout failed" in it.get("detail", ""), (st["text"], it))
+    it = next((i for i in st["rc_issues"] if i["key"] == "connect-failed"), {})
+    check("other error: 'Connect failed' with the real error", lt(st) == "Connect failed"
+          and "license checkout failed" in it.get("detail", ""), (lt(st), it))
     # 6) 'Request timed out' is offline
     run(ctx, "disconnect")
     ctx.matlab.next["connect"] = {"ok": False, "connected": False, "err": "Request timed out."}
     run(ctx, "connect")
-    check("'Request timed out': offline", top_status(ctx)["text"] == "Speedgoat offline", top_status(ctx)["text"])
+    check("'Request timed out': offline", lt(top_status(ctx)) == "Speedgoat offline", lt(top_status(ctx)))
     from pages.runctl import connect_failure_kind as k
     check("classifier", [k("ping timeout"), k("The target computer may be connected to another MATLAB session."),
                          k("no response from 192.168.7.5"), k("Access is denied")] == ["offline", "busy", "offline", "failed"])
@@ -185,13 +193,11 @@ def e2e(status):
         c.pump(4)
         v = json.loads(c.js("JSON.stringify({cls: document.getElementById('statusBtn').className, "
                             "txt: document.getElementById('statusTxt').textContent})"))
-        check("page: status button 'Speedgoat offline'", v["txt"] == "Speedgoat offline", v)
-        check("page: amber (not grey / red)", "caution" in v["cls"] or "amber" in v["cls"], v)
+        check("page: the status button does NOT show the MATLAB link result", v["txt"] != "Speedgoat offline", v)
         c.js("document.getElementById('statusBtn').click(); 1")
         c.pump(0.6)
         pop = c.js("document.getElementById('openItems') ? document.getElementById('openItems').textContent : ''")
-        check("popover: item, reason and what to do", "Speedgoat offline" in pop and "no response" in pop
-              and "switched on" in pop, pop[:300])
+        check("popover: no link item (Trials row only)", "Speedgoat offline" not in pop, pop[:300])
         check("no browser errors", not c.console, c.console[:4])
     finally:
         if b:

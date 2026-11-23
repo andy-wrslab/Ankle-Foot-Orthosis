@@ -134,7 +134,9 @@ def auto_connect():
             time.sleep(0.02)
     run("start")
     check("Start while not connected: connect, then start", seq[:2] == ["connect", "start"], seq)
-    check("stages: 'Connecting…' then 'Loading / starting…'", stages[:2] == ["Connecting…", "Loading / starting…"], stages)
+    # Andy 16:11: no 'Connecting…' in normal use: the on-demand connect shows the action's own verb
+    check("stages: the action's own verb from the start (no 'Connecting…')", stages[:2] == ["Loading / starting…", "Loading / starting…"]
+          and "Connecting…" not in stages, stages)
     check("stays connected afterwards", (ctx.runctl.status or {}).get("connected") is True, ctx.runctl.status)
     seq.clear(); stages.clear()
     run("stop")
@@ -194,7 +196,7 @@ def advanced_run14():
           and "p_gain" not in s.readback)
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
     check("page: offline Advanced = last read greyed / '–', title 'Connect on Trials to read'",
-          "inp.title = 'Connect on Trials to read'" in js and "var lt = last == null ? '–' : String(+last);" in js)
+          "inp.title = 'Connect on Trials to read'" in js and "var lt = last == null ? '–' : advFmt(k, last);" in js)
     ctx.settings_link.stop()
 
 

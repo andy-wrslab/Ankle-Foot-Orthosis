@@ -105,6 +105,35 @@ if (CASE === "early") {
     for (var r0 = 0; r0 < results.length; r0++) { WScript.Echo(results[r0]); }
     WScript.Quit(0);
 }
+if (CASE === "restart") {
+    // a run at t ~ 1000 s, then the model restarts at t = 0 with the SAME stream session (worst case:
+    // the live worker restarted too); also the Sensors plots exist
+    t0 = 990.0;
+    window._afoLiveMsg(message("full", 0, 1000, function () { return 1; }));
+    n = 1000;
+    for (var r1 = 0; r1 < 20; r1++) { window._afoLiveMsg(message("delta", n, n + 5, function () { return 1; })); n += 5; runFrames(3); }
+    window._afoLiveSub = "sensors"; runFrames(3); window._afoLiveSub = "gait"; runFrames(3);
+    var before = lastX("torque");
+    var dataBefore = (calls.torque || []).length;
+    t0 = 0.0; n = 0;                                       // restart: t = 0.00, 0.01, ...
+    window._afoLiveMsg(message("delta", n, n + 5, function () { return 2; })); n += 5;
+    var B1 = E.buffer(), stale = 0;
+    for (var b1 = 0; b1 < B1.t.length; b1++) { if (B1.t[b1] > 5) { stale++; } }
+    check("restart: buffer holds only the new run (no point > 5 s)", B1.t.length > 0 && stale === 0, stale + " stale of " + B1.t.length);
+    var cleared = false, cl = calls.press || [];
+    for (var c1 = dataBefore; c1 < (calls.torque || []).length; c1++) { if (calls.torque[c1].op === "data" && calls.torque[c1].n === 0) { cleared = true; } }
+    for (var c2 = 0; c2 < cl.length; c2++) { if (cl[c2].op === "data" && cl[c2].n === 0) { cleared = true; } }
+    check("restart: plots emptied at once (setData with no points)", cleared && E.resets === 1, "resets " + E.resets);
+    for (var r2 = 0; r2 < 20 * 3; r2++) { window._afoLiveMsg(message("delta", n, n + 5, function () { return 2; })); n += 5; runFrames(3); }
+    var after = lastX("torque"), ld = null, ct = calls.torque;
+    for (var c3 = ct.length - 1; c3 >= 0; c3--) { if (ct[c3].op === "data") { ld = ct[c3]; break; } }
+    check("restart: x range starts near 0 again ([0, 10] for a 10 s window)", before.max > 900 && after.min === 0 && after.max === 10,
+          stringify(before) + " -> " + stringify(after));
+    check("restart: the last data drawn is the new run only (last t < 5 s)", ld && ld.last < 5 && ld.last > 2, stringify(ld));
+    check("restart: the shared clock follows the new time (< 5 s)", E.clock != null && E.clock < 5, E.clock);
+    for (var r0x = 0; r0x < results.length; r0x++) { WScript.Echo(results[r0x]); }
+    WScript.Quit(0);
+}
 if (CASE === "hold") {
     window._afoLiveMsg(message("full", 0, 1000, function () { return 0; }));
     n = 1000;

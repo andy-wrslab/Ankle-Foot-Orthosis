@@ -42,13 +42,17 @@
     function ingest(p) {
         var t = Array.isArray(p.t) ? p.t : [];
         var sess = (p.meta || {}).session;
-        var reset = !B || p.kind === 'full' || (sess !== undefined && B.session !== undefined && sess !== B.session) ||
-            (t.length && B.t.length && t[t.length - 1] < B.t[B.t.length - 1] - 1);
+        // a new run / restart: another stream session, or the model time back by more than 1 s
+        // (Andy 16:08: after the Speedgoat reboot the old run's plots stayed until a reload)
+        var restart = !!B && ((sess !== undefined && sess !== B.session && B.t.length > 0) ||
+            (t.length > 0 && B.t.length > 0 && t[t.length - 1] < B.t[B.t.length - 1] - 1));
+        var reset = !B || p.kind === 'full' || restart;
         var i0 = 0;
         if (reset) {
             B = {t: [], s: {}, press: [], imu: [], gen: (B ? B.gen + 1 : 1), session: sess, ver: 0};
             SERIES_KEYS.forEach(function (n) { B.s[n] = []; });
             E.clock = null;
+            if (restart) { clearAll(); }
         } else if (B.t.length) {
             var last = B.t[B.t.length - 1];
             while (i0 < t.length && t[i0] <= last) { i0++; }
@@ -81,6 +85,22 @@
         B.statusword = p.statusword;
     }
     E.buffer = function () { return B; };
+
+    // on a restart: every plot (Gait, Sensors, Training) emptied at once, the shared clock and the
+    // Training buffer dropped (refetched now), so no point of the old run is drawn again
+    function clearAll() {
+        E.resets = (E.resets || 0) + 1;
+        E.shown = null;
+        Object.keys(E.plots).forEach(function (id) {
+            var P = E.plots[id];
+            if (!P || !P.u) { return; }
+            var empty = [[]];
+            P.spec.series.forEach(function () { empty.push([]); });
+            try { P.u.setData(empty, false); } catch (e) { /* plot gone */ }
+            P.ver = -1; P.gen = -1; P.lastX = null;
+        });
+        if (typeof TR !== 'undefined' && TR) { TR.data = null; TR.at = 0; TR.ver = (TR.ver || 0) + 1; }
+    }
 
     var linkSession = null;
     window._afoLiveMsg = function (raw) {

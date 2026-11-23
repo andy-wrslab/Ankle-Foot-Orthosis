@@ -1,8 +1,6 @@
 """Dock one-shot buttons (Andy 15:05-15:06), seconds, no browser, no target:
-- Zero / Calibrate FSR are latched toggles: one 5430 packet per press, field = 1 then (next
-  press) 0, motor / assist / k unchanged, and every later packet carries the latched field
-  (hold-last-command). Zero ON refused with Assist on, OFF always allowed. Calibrate FSR's lit
-  state is adopted from the 5433 echo (cmd_calibrate_pressure) without sending anything.
+- Zero / Calibrate FSR (Andy 16:15) and Reset SV: one ~200 ms 1 -> 0 pulse per press, no
+  latch; Zero refused with Assist on.
 - Reset SV stays a ~200 ms 1 -> 0 pulse (level-triggered in the model), with one INFO line:
   send times of the 1 and the 0, echo samples seen, max col 8 / col 9.
 - Calibrate IMU = the 5434 gyro counter + 1.
@@ -42,59 +40,34 @@ def make_cs(rb):
 
 
 def toggles():
+    """Andy 16:15 "why is zero a switch now?": Zero and Calibrate FSR are momentary pulses again
+    (rising edge in the model), like Reset SV; no latch."""
     rb = {"cmd_motor": 1.0, "cmd_assist": 0.0, "cmd_k": 1.0}
     cs, sent, path = make_cs(rb)
-    r = cs.pulse("zero")
-    time.sleep(0.4)
-    check("Zero ON: accepted, state 1, no success text", r["ok"] and r.get("state") == 1 and r["msg"] == "", r)
-    check("Zero ON: exactly one packet, field 0 = 1, motor / assist / k = 1, 0, 1",
-          len(sent) == 1 and sent[0][1] == (1.0, 1.0, 0.0, 1.0, 0.0, 0.0), sent)
-    sent.clear()
-    r = cs.press_toggle("k")
-    check("hold-last-command: a K press carries Zero = 1", r["ok"] and len(sent) == 1 and sent[0][1][0] == 1.0
-          and sent[0][1][3] == 0.0, sent)
-    rb["cmd_k"] = 0.0
+    for name, field in (("zero", 0), ("calibrate", 4)):
+        sent.clear()
+        r = cs.pulse(name)
+        time.sleep(0.45)
+        check(f"{name}: accepted, no success text", r["ok"] and r["msg"] == "", r)
+        echo = (rb["cmd_motor"], rb["cmd_assist"], rb["cmd_k"])
+        check(f"{name}: one 1 -> 0 pulse on field {field} (exactly two packets), motor / assist / k = the echo",
+              len(sent) == 2 and sent[0][1][field] == 1.0 and sent[1][1][field] == 0.0
+              and all(x[1][1:4] == echo for x in sent), (echo, sent))
+        check(f"{name}: ~200 ms pulse", len(sent) == 2 and 0.15 <= sent[1][0] - sent[0][0] <= 0.35,
+              [round(x[0] - sent[0][0], 3) for x in sent])
+        sent.clear()
+        cs.press_toggle("k")
+        check(f"{name}: no latch (a later K press carries field {field} = 0)", len(sent) == 1 and sent[0][1][field] == 0.0, sent)
+        rb["cmd_k"] = sent[0][1][3]
     rb["cmd_assist"] = 1.0
     sent.clear()
     r = cs.pulse("zero")
-    check("Zero OFF with Assist on: allowed, one packet field 0 = 0", r["ok"] and r.get("state") == 0 and len(sent) == 1
-          and sent[0][1][0] == 0.0, (r, sent))
-    sent.clear()
-    r = cs.pulse("zero")
-    check("Zero ON with Assist on: refused, nothing sent", not r["ok"] and "Assist off" in r["msg"] and not sent, (r, sent))
-    rb["cmd_assist"] = 0.0
-
-    # Calibrate FSR toggle
-    sent.clear()
+    check("Zero with Assist on: refused, nothing sent", not r["ok"] and "Assist off" in r["msg"] and not sent, (r, sent))
     r = cs.pulse("calibrate")
-    check("Calibrate FSR ON: one packet, field 4 = 1, no lock / countdown text",
-          r["ok"] and r.get("state") == 1 and r["msg"] == "" and len(sent) == 1 and sent[0][1][4] == 1.0, (r, sent))
+    time.sleep(0.45)
+    check("Calibrate FSR with Assist on: allowed (pulse)", r["ok"] and len(sent) == 2, (r, sent))
+    check("no latched state in the view", not cs.view().get("latched"), cs.view().get("latched"))
     check("Calibrate FSR: no 30 s lock in the view", cs.view()["calibrate_busy_s"] == 0.0, cs.view()["calibrate_busy_s"])
-    rb["cmd_calibrate_pressure"] = 0.0          # echo not caught up yet: the just-sent state wins
-    check("Calibrate FSR: lit right after the press although the echo still says 0",
-          cs.view()["latched"]["calibrate"] == 1, cs.view()["latched"])
-    rb["cmd_calibrate_pressure"] = 1.0
-    sent.clear()
-    r = cs.pulse("calibrate")
-    check("Calibrate FSR OFF: second press sends field 4 = 0 (press again = off)",
-          r["ok"] and r.get("state") == 0 and len(sent) == 1 and sent[0][1][4] == 0.0, (r, sent))
-
-    # adopt from the echo: nothing sent, the next packet carries the device's state
-    cs2, sent2, _ = make_cs({"cmd_motor": 0.0, "cmd_assist": 0.0, "cmd_k": 0.0, "cmd_calibrate_pressure": 1.0})
-    v = cs2.view()
-    check("adopt: Calibrate FSR lit from the echo (col 8 = 1) on a fresh console, nothing sent",
-          v["latched"]["calibrate"] == 1 and not sent2, (v["latched"], sent2))
-    cs2.press_toggle("motor")
-    check("adopt: the next packet (Motor) carries calibrate = 1", len(sent2) == 1 and sent2[0][1][4] == 1.0, sent2)
-
-    # restart: the latched Zero comes back from last_command.json, nothing sent
-    from commands import CommandState
-    sent3 = []
-    cs3 = CommandState({"udp": {}}, path, lambda cfg, *v, force=False: sent3.append(v), lambda *a, **k: None,
-                       lambda: {"cmd_motor": 1.0, "cmd_assist": 0.0, "cmd_k": 0.0})
-    cs3.toggles.update(motor=1, assist=0, k=0)
-    check("restart: Zero state from the last sent command (no echo for Zero), nothing sent",
-          cs3.view()["latched"]["zero"] == 0 and not sent3, (cs3.view()["latched"], sent3))
 
 
 class _Cap(logging.Handler):

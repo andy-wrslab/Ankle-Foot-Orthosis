@@ -1,6 +1,6 @@
 {
   "port": 5433,
-  "format": "<31f",
+  "format": "<44f",
   "period_ms": 10,
   "note": "console values not on the main bus; 5431 and 5432 unchanged",
   "columns": [
@@ -220,6 +220,97 @@
       "unit": "N*m/deg",
       "description": "spring stiffness (Spring Constant Nm/deg), read-only",
       "column": 30
+    },
+    {
+      "name": "slack_flag",
+      "tag": "GRD_Slack",
+      "unit": "",
+      "description": "1 = slack detected (torque < slack_thr for > slack_ms, drive enabled) until torque > 0",
+      "column": 31
+    },
+    {
+      "name": "jam_flag",
+      "tag": "GRD_Jam",
+      "unit": "",
+      "description": "1 = jam detected, latched until Motor OFF -> ON",
+      "column": 32
+    },
+    {
+      "name": "slack_count",
+      "tag": "GRD_SlackCount",
+      "unit": "",
+      "description": "slack events since app start",
+      "column": 33
+    },
+    {
+      "name": "slack_last_stride",
+      "tag": "GRD_SlackStride",
+      "unit": "",
+      "description": "slack events in the last completed stride (heel strike to heel strike)",
+      "column": 34
+    },
+    {
+      "name": "slack_floor_on",
+      "tag": "GRD_FloorOn",
+      "unit": "",
+      "description": "slack floor on (1) / off (0) in use",
+      "column": 35
+    },
+    {
+      "name": "slack_thr_nm",
+      "tag": "GRD_SlackThr",
+      "unit": "N*m",
+      "description": "slack threshold in use",
+      "column": 36
+    },
+    {
+      "name": "slack_ms",
+      "tag": "GRD_SlackMs",
+      "unit": "ms",
+      "description": "slack time in use",
+      "column": 37
+    },
+    {
+      "name": "slack_floor_nm",
+      "tag": "GRD_FloorNm",
+      "unit": "N*m",
+      "description": "slack torque floor in use",
+      "column": 38
+    },
+    {
+      "name": "jam_cut_on",
+      "tag": "GRD_CutOn",
+      "unit": "",
+      "description": "jam cut on (1) / off (0) in use",
+      "column": 39
+    },
+    {
+      "name": "jam_apnm",
+      "tag": "GRD_JamApNm",
+      "unit": "A/(N*m)",
+      "description": "jam current-per-torque threshold in use",
+      "column": 40
+    },
+    {
+      "name": "jam_ms",
+      "tag": "GRD_JamMs",
+      "unit": "ms",
+      "description": "jam time in use",
+      "column": 41
+    },
+    {
+      "name": "fb_filter",
+      "tag": "GRD_FbFilter",
+      "unit": "",
+      "description": "PI feedback in use: 0 = 12 Hz torque (as before), 1 = 45 Hz",
+      "column": 42
+    },
+    {
+      "name": "guard_seq",
+      "tag": "GRD_Seq",
+      "unit": "",
+      "description": "seq of the last accepted 5436 guard packet (0 = none yet)",
+      "column": 43
     }
   ]
 }

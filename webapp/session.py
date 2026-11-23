@@ -694,6 +694,35 @@ class SessionSetup:
         lk = getattr(self.ctx, "adv_link", None)
         return lk if lk is not None and lk.active() else None
 
+    def _follow_device(self, echo: Dict[str, Any]) -> None:
+        """Run 14+ (Andy 16:15 "it should hold whatever value on speedgoat"): the page shows the
+        device's side / mass / mode / K, never a remembered or 'differing' value. A field being
+        sent keeps the typed value (amber) until the echo confirms it. Unset device values
+        (side -1, mass 0) leave the page's value for the resend after Start."""
+        cols = {"side": "side", "weight": "bif_mass_kg", "mode": "assist_mode", "k_percent": "fixed_k_pct"}
+        with self.lock:
+            for k, col in cols.items():
+                if (self.status.get(k) or {}).get("state") in ("sending", "pending"):
+                    continue
+                v = echo.get(col)
+                if not isinstance(v, (int, float)) or v != v:
+                    continue
+                if k == "side" and v not in (0.0, 1.0):
+                    continue
+                if k == "weight" and not 20.0 <= v <= 200.0:
+                    continue
+                if k == "mode" and v not in (1.0, 3.0):
+                    continue
+                nv = int(v) if k in ("side", "mode") else float(v)
+                if self.values.get(k) != nv:
+                    self.values[k] = nv
+                    self.src[k] = "adopted18"
+                    if k == "weight":
+                        self.values["bif_mass"] = float(v)
+                        self.src["bif_mass"] = "adopted18"
+                    if k == "side" and self.sid:
+                        self.side_confirmed = {"sid": self.sid, "side": nv, "at": time.time(), "adopted": True}
+
     def refresh_echo(self) -> None:
         """The cheap part of refresh_readback (no MATLAB): readbacks from the fresh 5433 echo.
         Called on every page state poll, so a confirmation shows within one poll."""
@@ -701,6 +730,8 @@ class SessionSetup:
         self.echo_port = echo.get("_port")
         udp = self.link() is not None
         adv = self.adv_echo(echo)
+        if udp and echo:
+            self._follow_device(echo)
         for sp in self.specs():
             k = sp["key"]
             col = sp.get("udp") or (self.ECHO18_COL.get(k) if udp else None) or (self.ADV_ECHO_COL.get(k) if adv else None)
@@ -765,7 +796,20 @@ class SessionSetup:
         if not paths:
             return
 
-        def run(job):
+        self.ctx.jobs.start("session", "read session params", lambda job: self._read_paths(paths))
+
+    def read_now(self) -> Optional[Dict[str, Any]]:
+        """The getparam read, synchronously, inside an on-demand MATLAB session (run control
+        job), before it disconnects again (18-float builds: the Advanced values)."""
+        self.refresh_echo()
+        if not self._connected():
+            return None
+        need = self.getparam_keys()
+        paths = {k: "|".join(self.target_path(k)) for k in need if self.target_path(k)}
+        return self._read_paths(paths) if paths else None
+
+    def _read_paths(self, paths: Dict[str, str]) -> Dict[str, Any]:
+        if True:
             out = json.loads(self.ctx.matlab.call("afo_session", "read", list(paths.values()), timeout=20))
             if out.get("ok"):
                 vals = out.get("values") or []
@@ -785,7 +829,6 @@ class SessionSetup:
                             if m == self.ELSEWHERE_MSG:
                                 self.status[k] = {"state": "error", "msg": m, "at": time.time()}
             return out
-        self.ctx.jobs.start("session", "read session params", run)
 
     def target_table(self) -> list:
         """'Settings on the target': name, entered, target value, source (echo/getparam), match."""
@@ -865,7 +908,8 @@ class SessionSetup:
             self.start_owned_until = time.time() + 8.0
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
             self.side_verified = None
-            threading.Thread(target=self._after_page_start, name="after-start", daemon=True).start()
+            self.after_start_thread = threading.Thread(target=self._after_page_start, name="after-start", daemon=True)
+            self.after_start_thread.start()
             return
         lk = self.link()
         if lk is not None:

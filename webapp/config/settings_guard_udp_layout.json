@@ -1,0 +1,81 @@
+{
+  "port": 5436,
+  "to": "192.168.7.5",
+  "format": "<12f",
+  "bytes": 48,
+  "note": "Torque-guard settings from the OMEN page to AFO_r1 (run 16). Packet accepted only with magic and version; each field taken only if valid, else the value in use is kept. Held forever, no timeout. Flags and values in use are echoed on 5433 columns 31-43.",
+  "fields": [
+    {
+      "index": 0,
+      "name": "magic",
+      "unit": "",
+      "rule": "must be 4136"
+    },
+    {
+      "index": 1,
+      "name": "version",
+      "unit": "",
+      "rule": "must be 1"
+    },
+    {
+      "index": 2,
+      "name": "seq",
+      "unit": "",
+      "rule": "any finite; echoed as 5433 column 43 (guard_seq)"
+    },
+    {
+      "index": 3,
+      "name": "slack_floor_on",
+      "unit": "",
+      "rule": "0 or 1 (default 1); else keep"
+    },
+    {
+      "index": 4,
+      "name": "slack_thr_nm",
+      "unit": "N*m",
+      "rule": "-5..-0.05 (default -0.5); else keep"
+    },
+    {
+      "index": 5,
+      "name": "slack_ms",
+      "unit": "ms",
+      "rule": "whole number 1..500 (default 20); else keep"
+    },
+    {
+      "index": 6,
+      "name": "slack_floor_nm",
+      "unit": "N*m",
+      "rule": "0..3 (default 0.5); else keep"
+    },
+    {
+      "index": 7,
+      "name": "jam_cut_on",
+      "unit": "",
+      "rule": "0 or 1 (default 1); else keep"
+    },
+    {
+      "index": 8,
+      "name": "jam_apnm",
+      "unit": "A/(N*m)",
+      "rule": "1..50 (default 5); else keep"
+    },
+    {
+      "index": 9,
+      "name": "jam_ms",
+      "unit": "ms",
+      "rule": "whole number 10..2000 (default 100); else keep"
+    },
+    {
+      "index": 10,
+      "name": "fb_filter",
+      "unit": "",
+      "rule": "0 = 12 Hz torque as before (default), 1 = 45 Hz; else keep"
+    },
+    {
+      "index": 11,
+      "name": "reserved",
+      "unit": "",
+      "rule": "ignored"
+    }
+  ]
+}

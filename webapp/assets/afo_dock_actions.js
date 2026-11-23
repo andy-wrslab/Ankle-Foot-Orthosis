@@ -1,10 +1,9 @@
 /* Dock one-shot buttons: Zero, Calibrate IMU, Calibrate FSR, Reset SV (Andy 15:06).
  * - Labels never change (no busy verb, no countdown); state is colour only:
- *   lit = an active toggle (Zero, Calibrate FSR), greyed = locked (aria-disabled).
- * - Zero / Calibrate FSR are latched toggles on the server (commands.latched, adopted
- *   from the 5433 echo). Calibrate IMU (5434 counter + 1) and Reset SV (200 ms pulse) are
- *   momentary (Andy 15:22): dark only while held (CSS :active), never lit, never driven by
- *   bias_ready / busy, no completion feedback.
+ *   greyed = locked (aria-disabled); never lit.
+ * - All four are momentary (Andy 15:22 / 16:15): dark only while held (CSS :active). Zero /
+ *   Calibrate FSR / Reset SV = one ~200 ms 5431 pulse, Calibrate IMU = the 5434 counter + 1.
+ *   No latched state, no completion feedback.
  * - The `disabled` property is ALWAYS false here: only the dock freeze / view-only paths
  *   (renderDock) set it, and they return before this runs. That was the 15:05 bug: a press
  *   set disabled = true and the render only reset aria-disabled, so Zero stayed grey.
@@ -22,18 +21,17 @@
     function view(st) {
         var cmd = st.commands || {}, lat = cmd.latched || {}, T = cmd.toggles || {}, ic = st.imu_cal || {};
         var assist = (T.assist || {}).value;
-        var zLit = lat.zero === 1, cLit = lat.calibrate === 1;
+        var zLit = false, cLit = false;              // momentary: never lit (lat kept for old servers)
+        if (lat) { /* ignored */ }
         var zLock = !zLit && assist !== 0;      // Zero ON needs Assist off; OFF always works
         return {
             zero: {lit: zLit, locked: zLock,
-                   title: zLit ? 'Zero is on: press to switch it off' :
-                       zLock ? 'Zero: switch Assist off first (hold the ankle still in neutral)' :
+                   title: zLock ? 'Zero: switch Assist off first (hold the ankle still in neutral)' :
                        'Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)'},
             imu: {hidden: !ic.visible, lit: false, locked: !ic.enabled,
                   title: ic.enabled ? 'Resets the IMU front end; the wearer holds still for 5 s' : (ic.reason || '')},
             cal: {lit: cLit, locked: false,
-                  title: cLit ? 'FSR calibration on: press to switch it off' :
-                      '30 s FSR (insole pressure) calibration: walk normally until it finishes'},
+                  title: '30 s FSR (insole pressure) calibration: walk normally until it finishes'},
             reset: {lit: false, locked: false, title: 'Clears the stride-velocity buffers'}
         };
     }

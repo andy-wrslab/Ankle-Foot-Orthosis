@@ -69,7 +69,12 @@ class AppContext:
         self.adv_link = AdvLink(cfg, self.session.echo_for_link,
                                 view_only=bool((cfg.get("console") or {}).get("view_only", False)),
                                 on_status=self.session.adv_link_status, on_adopt=self.session.adv_link_adopted)
+        # run 16: the torque guard over UDP 5436, confirmed by the 44-float 5433 echo
+        from udp_settings import GuardLink
+        self.guard_link = GuardLink(cfg, self.session.echo_for_link,
+                                    view_only=bool((cfg.get("console") or {}).get("view_only", False)))
         self.commands.frozen = self.session.link_frozen
+        self.commands.echo_expected = lambda: bool(self.session.profile().get("console_expected"))
         from filelog import FileLogRuns
         self.filelog = FileLogRuns(self)
 

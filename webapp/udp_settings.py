@@ -378,21 +378,29 @@ ADV_FIELD = {"sv_target_min": "sv_target_min", "sv_target_max": "sv_target_max",
 _RANGE = re.compile(r"(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)")
 
 
+_SWITCH = re.compile(r"(^|\b)0 or 1\b|^\s*0 = .*\b1 = ")
+
+
 def load_adv_layout(path: str = ADV_LAYOUT) -> Tuple[List[str], Dict[str, Dict[str, Any]], Dict[str, Any]]:
-    """(the value fields in packet order, {field: {min, max, int}}, the layout) from
-    settings_adv_udp_layout.json: slots 3.. up to the reserved ones; the rule text gives the
-    range ("0.2..2.0", "0..0.5") and "whole number" = integers only."""
+    """(the value fields in packet order, {field: {min, max, int}}, the layout) from a UDP
+    settings layout (5435 / 5436): slots 3.. except the reserved ones; the rule text gives the
+    range ("0.2..2.0", "-5..-0.05"), "whole number" = integers only, "0 or 1" / "0 = ..., 1 =
+    ..." = a 0/1 switch."""
     lay = json.load(open(path, encoding="utf-8"))
     fields, rules = [], {}
     for f in sorted(lay["fields"], key=lambda x: x["index"]):
         if f["index"] < 3 or f["name"].startswith("reserved"):
             continue
-        m = _RANGE.search(f.get("rule") or "")
-        if not m:
+        rule = f.get("rule") or ""
+        m = _RANGE.search(rule)
+        if m:
+            r = {"min": float(m.group(1)), "max": float(m.group(2)), "int": "whole number" in rule}
+        elif _SWITCH.search(rule):
+            r = {"min": 0.0, "max": 1.0, "int": True}
+        else:
             raise ValueError(f"{path}: no range in the rule of {f['name']!r}")
         fields.append(f["name"])
-        rules[f["name"]] = {"min": float(m.group(1)), "max": float(m.group(2)),
-                            "int": "whole number" in (f.get("rule") or "")}
+        rules[f["name"]] = r
     return fields, rules, lay
 
 
@@ -412,9 +420,11 @@ class AdvLink(SettingsLink):
     TAIL = (0.0, 0.0)                          # [14] reserved_spring, [15] reserved: ignored
     UNSET: Dict[str, float] = {}
 
-    def __init__(self, cfg, echo_fn, layout_path: str = ADV_LAYOUT, **kw):
-        fields, rules, lay = load_adv_layout(layout_path)
-        assert struct.calcsize(lay["format"]) == self.PACKET.size and len(fields) + 5 == 16, lay["format"]
+    LAYOUT = ADV_LAYOUT
+
+    def __init__(self, cfg, echo_fn, layout_path: Optional[str] = None, **kw):
+        fields, rules, lay = load_adv_layout(layout_path or self.LAYOUT)
+        assert struct.calcsize(lay["format"]) == self.PACKET.size == 4 * (3 + len(fields) + len(self.TAIL)), lay["format"]
         self.FIELDS = tuple(fields)
         self.ECHO_COL = {f: f for f in fields}           # 5433 cols 18-28 carry the same names
         self.RULES = rules
@@ -479,3 +489,38 @@ class AdvLink(SettingsLink):
     def rules_for_page(self) -> Dict[str, Dict[str, Any]]:
         """{session key: {min, max, int}} for the page's own check before sending."""
         return {k: dict(self.RULES[f]) for k, f in ADV_FIELD.items() if f in self.RULES}
+
+
+# ---------------------------------------------------------------- run 16: torque guard (5436)
+GUARD_LAYOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "settings_guard_udp_layout.json")
+
+
+class GuardLink(AdvLink):
+    """Run 16: the 8 torque-guard settings over UDP 5436 ('<12f', magic 4136, seq echoed as
+    guard_seq = 5433 col 43, values in use = cols 35-42) with the same adopt / confirm / retry /
+    freeze rules. Active with a 44-float echo. No min < max pair here."""
+    NAME = "5436"
+    MAGIC, VERSION = 4136.0, 1.0
+    PACKET = struct.Struct("<12f")
+    SEQ_COL = "guard_seq"
+    ECHO_N = 44
+    PORT_KEY, PORT_DEFAULT = "guard_port", 5436
+    TAIL = (0.0,)                              # [11] reserved: ignored
+    LAYOUT = GUARD_LAYOUT
+
+    def check(self, field: str, value: Any) -> Optional[str]:
+        r = self.RULES.get(field)
+        if r is None:
+            return f"{field}: not a torque-guard setting"
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return "not a number"
+        if not math.isfinite(f) or not (r["min"] <= f <= r["max"]):
+            return f"{f:g} is outside {r['min']:g}..{r['max']:g}"
+        if r["int"] and f != int(f):
+            return f"must be a whole number ({r['min']:g}..{r['max']:g})"
+        return None
+
+    def rules_for_page(self) -> Dict[str, Dict[str, Any]]:
+        return {f: dict(r) for f, r in self.RULES.items()}

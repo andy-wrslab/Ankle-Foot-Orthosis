@@ -42,20 +42,16 @@ for (var i = 0; i < keys.length; i++) {
     check(k + ": pressed style gone after the hold time", !x.classList.contains("pressed"), "still pressed");
     check(k + ": label unchanged", x.textContent === A.LABELS[k], x.textContent);
 }
-// 2. Zero toggle: lit from commands.latched, ON locked with Assist on, OFF always allowed
+// 2. Zero / Calibrate FSR momentary (Andy 16:15): never lit, Zero greyed with Assist on
 A.render(b, st({assist: 0, zero: 1}), t);
-check("zero: lit when latched on", b.zero.classList.contains("lit") && b.zero.getAttribute("aria-disabled") === "false", b.zero.attrs["aria-disabled"]);
-A.render(b, st({assist: 1, zero: 1}), t);
-check("zero: lit + Assist on -> still pressable (switch off)", b.zero.getAttribute("aria-disabled") === "false", b.zero.attrs["aria-disabled"]);
-A.render(b, st({assist: 1, zero: 0}), t);
-check("zero: off + Assist on -> greyed (aria-disabled), not disabled",
-      b.zero.getAttribute("aria-disabled") === "true" && b.zero.disabled === false && !b.zero.classList.contains("lit"), b.zero.attrs["aria-disabled"]);
+check("zero: never lit (momentary), pressable with Assist off", !b.zero.classList.contains("lit") && b.zero.getAttribute("aria-disabled") === "false", b.zero.attrs["aria-disabled"]);
+A.render(b, st({assist: 1}), t);
+check("zero: Assist on -> greyed (aria-disabled), not disabled",
+      b.zero.getAttribute("aria-disabled") === "true" && b.zero.disabled === false, b.zero.attrs["aria-disabled"]);
 check("zero: label 'Zero' in every state", b.zero.textContent === "Zero", b.zero.textContent);
-// 3. Calibrate FSR toggle: lit from the latched (echo-adopted) state, never locked
+// 3. Calibrate FSR: never lit, never locked
 A.render(b, st({assist: 1, cal: 1}), t);
-check("cal: lit when latched on, never locked", b.cal.classList.contains("lit") && b.cal.getAttribute("aria-disabled") === "false", b.cal.attrs["aria-disabled"]);
-A.render(b, st({assist: 1, cal: 0}), t);
-check("cal: unlit when off", !b.cal.classList.contains("lit"), "lit");
+check("cal: never lit (momentary), never locked", !b.cal.classList.contains("lit") && b.cal.getAttribute("aria-disabled") === "false", b.cal.attrs["aria-disabled"]);
 check("cal: label 'Calibrate FSR', no countdown", b.cal.textContent === "Calibrate FSR", b.cal.textContent);
 // 4. Calibrate IMU: momentary (Andy 15:22): never lit, not driven by bias_ready / busy
 A.render(b, st({assist: 0, imu: "busy", imuText: "Hold still 3 s"}), t);

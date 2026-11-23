@@ -72,7 +72,7 @@ def settings_rows(ctx) -> Dict[str, Any]:
         elif st == "sending" or (r.get("entered") is not None and r.get("target") is None):
             state = "sending"
         elif r.get("match") is False:
-            state = "differs"
+            state = "sending"                 # not confirmed by the device yet: amber, never "differs"
         else:
             state = "none"
         if r.get("source") == "echo" and not console_live:
@@ -86,7 +86,7 @@ def settings_rows(ctx) -> Dict[str, Any]:
             row["title"] = (f"weight {_fmt('weight', r.get('target'))} · BIF_mass_kg "
                             f"{_fmt('bif_mass', bt) if bt is not None else '…'} (both are set from Body mass)")
             if state == "ok" and b.get("match") is not True:
-                row["state"] = "differs" if b.get("match") is False else "sending"
+                row["state"] = "sending"
                 if bt is not None:
                     row["target"] = f"{row['target']} / {_fmt('bif_mass', bt)}"
         rows.append(row)
@@ -96,7 +96,7 @@ def settings_rows(ctx) -> Dict[str, Any]:
     differs = [r for r in known if r.get("match") is False]
     rows.append({"key": "adv", "label": f"Advanced ({len(adv)})", "entered": str(len(adv)),
                  "target": f"{n_match} match" if known else "…",
-                 "state": "differs" if differs else ("ok" if len(known) == len(adv) else "sending" if known else "none"),
+                 "state": "sending" if differs else ("ok" if len(known) == len(adv) else "sending" if known else "none"),
                  "differs": [d["label"] for d in differs]})
     ages = [r.get("age_s") for r in table.values() if r.get("age_s") is not None]
     read_at = time.strftime("%H:%M:%S", time.localtime(sess.readback_at)) if sess.readback_at else None
@@ -153,12 +153,11 @@ def side_view(ctx) -> Dict[str, Any]:
 def commands_view(ctx) -> Dict[str, Any]:
     v = ctx.commands.view()
     sent = dict(getattr(ctx.commands, "toggles", {}) or {})
-    mism = {m["name"] for m in v["mismatch"]}
     recent = v.get("last_sent_at") and time.time() - v["last_sent_at"] < PENDING_S
     out = {}
     for t, r in v["toggles"].items():
         pending = bool(recent and r.get("source") == "model" and sent.get(t) is not None and sent.get(t) != r.get("value"))
-        out[t] = {"value": r.get("value"), "source": r.get("source"), "pending": pending, "mismatch": t in mism}
+        out[t] = {"value": r.get("value"), "source": r.get("source"), "pending": pending, "mismatch": False}
     return {"toggles": out, "calibrate_busy_s": v["calibrate_busy_s"], "last_pulse": v["last_pulse"],
             "latched": v.get("latched") or {},
             "params_used_by_model": v["params_used_by_model"]}
@@ -245,7 +244,7 @@ def console_state(ctx) -> Dict[str, Any]:
                     "writes_enabled": sess.writes_enabled,
                     # run 15 (31-float echo): Advanced values from the echo; editable only with the
                     # 5435 sender (until then read-only, no hint)
-                    "adv": _adv_view(ctx)},
+                    "adv": _adv_view(ctx), "guard": _guard_view(ctx)},
         "model": {"name": sess.model(), "label": prof["label"], "bif": bool(prof.get("bif")),
                   "loaded": rc.get("app") or None,
                   "source": ("loaded" if rc.get("app") in sess.models else
@@ -274,6 +273,32 @@ def _adv_view(ctx) -> Dict[str, Any]:
         if v.get("frozen"):
             out.update(frozen=True, msg=v.get("msg") or sess.FROZEN_MSG)
         out["rules"] = lk.rules_for_page()
+    return out
+
+
+def _guard_view(ctx) -> Dict[str, Any]:
+    """Run 16 (44-float echo, sticky): the Torque guard card: values in use from the echo
+    (cols 35-42), editable over 5436 with the 5434 rules, frozen in a stall."""
+    sess = ctx.session
+    try:
+        udp = (sess.echo_cols() or 0) >= 44
+        stale = bool(sess.echo_stale())
+    except Exception:
+        udp, stale = False, False
+    lk = getattr(ctx, "guard_link", None) if udp else None
+    out = {"udp": udp, "send": lk is not None, "frozen": bool(udp and stale),
+           "msg": sess.FROZEN_MSG if udp and stale else "", "rules": {}, "values": {}, "status": {}, "status_msg": {}}
+    if lk is not None:
+        e = sess.echo() or {}
+        out["rules"] = lk.rules_for_page()
+        out["values"] = {f: e.get(f) for f in lk.FIELDS}
+        res = lk.view()
+        if res.get("frozen"):
+            out.update(frozen=True, msg=res.get("msg") or sess.FROZEN_MSG)
+        out["status"] = {f: (r or {}).get("state") for f, r in (res.get("result") or {}).items()}
+        out["status_msg"] = {f: (r or {}).get("msg") for f, r in (res.get("result") or {}).items()}
+        for f in res.get("pending") or []:
+            out["status"][f] = "sending"
     return out
 
 
@@ -329,6 +354,17 @@ def register(server, ctx) -> None:
     @server.route("/api/console/pulse", methods=["POST"])
     def api_console_pulse():  # type: ignore
         r = ctx.commands.pulse(str(body().get("name", "")))
+        return jsonify(r), (200 if r.get("ok") else 409)
+
+    @server.route("/api/console/guard", methods=["POST"])
+    def api_console_guard():  # type: ignore
+        b = body()
+        lk = getattr(ctx, "guard_link", None)
+        if lk is None or (ctx.session.echo_cols() or 0) < 44:
+            return jsonify({"ok": False, "msg": "Torque guard: not on this build"}), 409
+        if ctx.session.echo_stale():
+            return jsonify({"ok": False, "msg": ctx.session.FROZEN_MSG}), 409
+        r = lk.press(str(b.get("field", "")), b.get("value"))
         return jsonify(r), (200 if r.get("ok") else 409)
 
     @server.route("/api/console/imucal", methods=["POST"])

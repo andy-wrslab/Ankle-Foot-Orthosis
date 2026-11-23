@@ -79,6 +79,31 @@
             ['threshold_pressure', 'Standing-still cutoff', 'counts', 'Torque is cut to 0 when the insole pressure sum varies by less than this over the last 0.7 s (standing still)']]]
     ];
 
+    // field, label, unit, decimals, tip (round1/settings_guard_udp_layout.json)
+    var GUARD = [
+        ['slack_floor_on', 'Slack floor', '0/1', 0, '1 = on (default)'],
+        ['slack_thr_nm', 'Slack threshold', 'N·m', 2, '-5 .. -0.05 (default -0.5)'],
+        ['slack_ms', 'Slack time', 'ms', 0, 'whole number 1 .. 500 (default 20)'],
+        ['slack_floor_nm', 'Slack torque floor', 'N·m', 2, '0 .. 3 (default 0.5)'],
+        ['jam_cut_on', 'Jam cut', '0/1', 0, '1 = on (default)'],
+        ['jam_apnm', 'Jam current per torque', 'A/(N·m)', 1, '1 .. 50 (default 5)'],
+        ['jam_ms', 'Jam time', 'ms', 0, 'whole number 10 .. 2000 (default 100)'],
+        ['fb_filter', 'PI feedback filter', '', 0, '0 = 12 Hz torque (default), 1 = 45 Hz']];
+    function guardFmt(f, v) {
+        var g = GUARD.filter(function (x) { return x[0] === f; })[0], d = g ? g[3] : 3;
+        if (v == null || v === '' || !isFinite(+v)) { return v == null ? '' : String(v); }
+        return String(+(+v).toFixed(d));
+    }
+    function guardCheck(f, v) {
+        var gv = ((S.state || {}).session || {}).guard || {}, r = (gv.rules || {})[f];
+        if (!r) { return ''; }
+        var x = Number(v);
+        if (String(v).trim() === '' || !isFinite(x)) { return f.replace(/_/g, ' ') + ': not a number'; }
+        if (x < r.min || x > r.max) { return f.replace(/_/g, ' ') + ': ' + x + ' is outside ' + r.min + '..' + r.max; }
+        if (r.int && x !== Math.round(x)) { return f.replace(/_/g, ' ') + ': must be a whole number'; }
+        return '';
+    }
+
     function chromeHTML() {
         var adv = ADV.map(function (sec) {
             var rows = sec[2].map(function (f) {
@@ -95,6 +120,12 @@
             return '<fieldset class="adv-sec"><legend' + (sec[1] ? ' title="' + esc(sec[1]) + '"' : '') + '>' + esc(sec[0]) +
                 '</legend>' + rows + '</fieldset>';
         }).join('');
+        // run 16 (44-float echo): Torque guard card, values from the echo, sent over 5436
+        adv += '<fieldset class="adv-sec" id="advGuard" hidden><legend title="Run 16: sent over UDP 5436, confirmed by the device echo">Torque guard</legend>' +
+            GUARD.map(function (g) {
+                return '<label' + (g[4] ? ' title="' + esc(g[4]) + '"' : '') + '>' + esc(g[1]) + '<span><input class="input mono guard-in" data-g="' +
+                    g[0] + '">' + (g[2] ? ' ' + esc(g[2]) : '') + '</span></label>';
+            }).join('') + '</fieldset>';
         return '' +
         '<header class="topbar" id="topbar">' +
           '<span class="appname">AFO</span>' +
@@ -156,9 +187,9 @@
         '<button class="btn sm" id="unknownOff" hidden>Set unknown to OFF</button>' +
         '<span class="spacer"></span>' +
         '<div class="actions">' +
-          '<button class="btn act" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
+          '<button class="btn act momentary" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
           '<button class="btn act momentary" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
-          '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
+          '<button class="btn act momentary" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
           '<button class="btn act momentary" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
         '</div>';
     }
@@ -168,7 +199,7 @@
         // Andy 14:48: Connect lives here (run 14: everything else is UDP); Andy 15:23: Start / Stop
         // too (off the top bar), same confirms, auto-connect and busy states
         '<div class="ml-link" id="mlLink"><span class="field-label">MATLAB link</span>' +
-        '<span class="ml-state" id="mlState">Not connected</span>' +
+        '<span class="ml-state" id="mlState">Not connected (connects for Start/Stop/Export)</span>' +
         '<button class="btn sm" id="tConnect" title="Start, Stop, Export and Load connect by themselves">Connect</button>' +
         '<span class="vr" aria-hidden="true"></span>' +
         '<div class="target"><div class="btn-group">' +
@@ -325,7 +356,7 @@
     // ---------------------------------------------------------- render from state
     function render(st) {
         S.state = st;
-        renderStatus(st); renderTarget(st); renderSession(st); renderSide(st); renderBif(st); renderDock(st);
+        renderStatus(st); renderTarget(st); renderSession(st); renderGuard(st); renderSide(st); renderBif(st); renderDock(st);
     }
 
     function renderStatus(st) {
@@ -381,11 +412,14 @@
         // MATLAB link row (Trials): Connected · app RUNNING / Not connected / Connecting… m:ss / Busy / Offline
         var mls = $('mlState');
         if (mls) {
-            var bz = st.busy, keys = ((st.status || {}).issues || []).map(function (i) { return i.key; }), T0 = st.target || {};
-            var txt = (bz && bz.stage === 'Connecting…') ? 'Connecting… ' + (bz.started ? mmss(Date.now() / 1000 - bz.started) : '') :
+            // Andy 16:11: MATLAB only for logging, connected on demand. The run-control progress
+            // (with seconds) and the last link result show HERE, never on the status button.
+            var bz = st.busy, keys = ((st.status || {}).rc_issues || []).map(function (i) { return i.key; }), T0 = st.target || {};
+            var txt = bz ? (bz.stage || bz.verb || 'Working…') + ' ' + (bz.started ? mmss(Date.now() / 1000 - bz.started) : '') :
                 T0.connected ? 'Connected' + (T0.app ? ' · ' + T0.app + (T0.running ? ' RUNNING' : ' stopped') : '') :
                 keys.indexOf('speedgoat-busy') >= 0 ? 'Busy (another MATLAB session)' :
-                keys.indexOf('speedgoat-offline') >= 0 ? 'Offline' : 'Not connected';
+                keys.indexOf('speedgoat-offline') >= 0 ? 'Offline (last connect)' :
+                keys.indexOf('connect-failed') >= 0 ? 'Connect failed' : 'Not connected (connects for Start/Stop/Export)';
             if (mls.textContent !== txt) { mls.textContent = txt; }
         }
         var busy = st.busy, T = st.target, tablet = !st.local;
@@ -515,6 +549,25 @@
             inp.classList.toggle('send-pending', stt === 'pending' || stt === 'sending');
             inp.title = stt === 'error' ? (sv.status_msg[k] || 'Not sent') :
                 stt === 'pending' ? (sv.status_msg[k] || 'pending').replace(/^pending: /, 'Saved; ') : stt === 'sending' ? 'Sending…' : '';
+        });
+    }
+
+    function renderGuard(st) {
+        var gv = (st.session || {}).guard || {}, fs = $('advGuard');
+        if (!fs) { return; }
+        if (fs.hidden !== !gv.udp) { fs.hidden = !gv.udp; }
+        if (!gv.udp) { return; }
+        var ro = !gv.send || !!gv.frozen;
+        document.querySelectorAll('.guard-in').forEach(function (inp) {
+            var f = inp.getAttribute('data-g');
+            if (document.activeElement === inp || S.editing['g-' + f]) { return; }
+            inp.disabled = ro;
+            inp.classList.toggle('adv-stale', !!gv.frozen);
+            var t = guardFmt(f, (gv.values || {})[f]); if (inp.value !== t) { inp.value = t; }
+            var su = (gv.status || {})[f];
+            inp.classList.toggle('send-pending', su === 'sending' && !ro);
+            inp.classList.toggle('send-error', su === 'error' && !ro);
+            inp.title = gv.frozen ? (gv.msg || '') : (su === 'error' && !ro) ? ((gv.status_msg || {})[f] || 'Not sent') : '';
         });
     }
 
@@ -823,6 +876,21 @@
         onCommit($('sPart'), function (v) { commitField($('sPart'), 'sPart', '/api/console/sid', {sid: v}); });
         onCommit($('sMass'), function (v) { commitField($('sMass'), 'sMass', '/api/console/value', {key: 'weight', value: v}); });
 
+        document.querySelectorAll('.guard-in').forEach(function (inp) {
+            var f = inp.getAttribute('data-g');
+            onCommit(inp, function (v) {
+                if (inp.disabled) { return; }
+                var bad = guardCheck(f, v);
+                if (bad) { flash(inp, false, bad); if (typeof toast === 'function') { toast(bad, true); } return; }
+                S.editing['g-' + f] = true;
+                post('/api/console/guard', {field: f, value: Number(v)}).then(function (r) {
+                    S.editing['g-' + f] = false;
+                    if (!r.ok) { flash(inp, false, r.msg || 'Not sent'); if (typeof toast === 'function') { toast(r.msg || 'Not sent', true); } }
+                    else { inp.classList.add('send-pending'); }
+                    poll();
+                });
+            });
+        });
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (inp.getAttribute('data-ro') === '1') { return; }
             var k = inp.getAttribute('data-k');

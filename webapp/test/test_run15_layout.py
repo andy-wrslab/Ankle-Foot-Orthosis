@@ -47,7 +47,8 @@ def names_of(lay):
 
 
 def layouts():
-    con = json.load(open(os.path.join(ROUND1, "console_udp_layout.json"), encoding="utf-8"))
+    # the run-15 console layout, pinned (round1 moved on to run 16, '<44f')
+    con = json.load(open(os.path.join(FIX, "run15_console_udp_layout.json"), encoding="utf-8"))
     adv = json.load(open(os.path.join(ROUND1, "settings_adv_udp_layout.json"), encoding="utf-8"))
     r14 = json.load(open(os.path.join(FIX, "run14_console_udp_layout.json"), encoding="utf-8"))
     n = names_of(con)
@@ -67,10 +68,12 @@ def layouts():
     check("session: Advanced key -> echo column covers cols 18-28 exactly (spring not among them)",
           sorted(S.SessionSetup.ADV_ECHO_COL.values()) == sorted(n[18:29]) and "spring_stiffness" not in S.SessionSetup.ADV_ECHO_COL.values()
           and set(S.SessionSetup.ADV_ECHO_COL) == {sp["key"] for sp in S.SPECS if sp.get("adv")}, S.SessionSetup.ADV_ECHO_COL)
-    for f in ("console_udp_layout.json", "settings_adv_udp_layout.json", "settings_udp_layout.json"):
+    for f in ("settings_adv_udp_layout.json", "settings_udp_layout.json"):
         a = json.load(open(os.path.join(APP, "config", f), encoding="utf-8"))
         b = json.load(open(os.path.join(ROUND1, f), encoding="utf-8"))
         check(f"config/{f} = round1 copy", a == b)
+    cfg = names_of(json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8")))
+    check("config/console_udp_layout.json keeps the run-15 columns 0-30", cfg[:31] == n, cfg[:31])
 
 
 def receiver():

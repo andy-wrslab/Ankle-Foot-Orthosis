@@ -35,7 +35,7 @@ def js_cases():
         return
     harness = os.path.join(HERE, "js", "live_uplot_harness.js")
     engine = os.path.join(APP, "assets", "live_uplot.js")
-    for case in ("stall", "real", "early", "hold"):
+    for case in ("stall", "real", "early", "hold", "restart"):
         r = subprocess.run(["cscript", "//nologo", "//E:jscript", harness, engine, case], capture_output=True,
                            text=True, timeout=300, creationflags=0x08000000)
         lines = [x for x in (r.stdout or "").splitlines() if x.strip()]

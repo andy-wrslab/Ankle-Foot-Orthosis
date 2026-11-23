@@ -86,11 +86,21 @@ class FileLogRuns:
 
     def refresh(self):
         rc = self.ctx.runctl
-        if not (rc.status or {}).get("connected"):
-            return None, "Not connected: connect on Run control first (the run list is read from the target)."
         if self.ctx.jobs.running("rc"):
             return None, "Another run-control action is running."
-        return self.ctx.jobs.start("rc", "run control: list file log", self.refresh_job), "Reading the file log…"
+
+        def fn(job):
+            # on demand (Andy 16:11): connect for the list, disconnect right after
+            if hasattr(rc, "ensure_link"):
+                fail = rc.ensure_link(job, "list")
+                if fail is not None:
+                    return fail
+                try:
+                    return self.refresh_job(job)
+                finally:
+                    rc.release_link(job, "list")
+            return self.refresh_job(job)
+        return self.ctx.jobs.start("rc", "run control: list file log", fn), "Reading the file log…"
 
     def _export_index(self) -> Tuple[Dict[str, dict], Dict[str, dict]]:
         by_id, by_start = {}, {}

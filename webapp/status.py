@@ -88,6 +88,42 @@ def _imu_fault(ctx) -> str:
     return ""
 
 
+def cable_issues(ctx, notes: List[str]) -> List[Dict[str, Any]]:
+    """Run 16 (44-float echo): red 'Cable jam: torque cut' while jam_flag = 1 (the model latches
+    it until Motor OFF -> ON), amber 'Cable slack' while slack_flag = 1, both only while set NOW
+    (fresh echo). slack_count / slack_last_stride go to the popover notes. Flag changes are
+    logged (WARNING when set, INFO when cleared)."""
+    try:
+        e = ctx.training.latest(max_age_s=1.0) or {}
+    except Exception:
+        e = {}
+    out = []
+    if e.get("jam_flag") is None and e.get("slack_flag") is None:
+        return out
+    sess = ctx.session
+    prev = getattr(sess, "_cable_prev", None) or {}
+    now_f = {}
+    for k in ("jam_flag", "slack_flag"):
+        v = e.get(k)
+        now_f[k] = bool(isinstance(v, (int, float)) and v == v and v >= 0.5)
+        if now_f[k] != prev.get(k, False):
+            (_log.warning if now_f[k] else _log.info)("%s %s (slack_count %s, slack_last_stride %s)", k,
+                                                      "set" if now_f[k] else "cleared", e.get("slack_count"),
+                                                      e.get("slack_last_stride"))
+    sess._cable_prev = now_f
+    if now_f["jam_flag"]:
+        out.append({"level": "red", "key": "cable-jam", "text": "Cable jam: torque cut",
+                    "detail": "jam_flag = 1 (latched in the model)",
+                    "todo": "Check the cable, then switch Motor off and on to clear."})
+    if now_f["slack_flag"]:
+        out.append({"level": "amber", "key": "cable-slack", "text": "Cable slack",
+                    "detail": f"slack events {int(e.get('slack_count') or 0)}, last stride {int(e.get('slack_last_stride') or 0)}",
+                    "todo": "The cable went slack (torque below the slack threshold); it clears when torque is positive again."})
+    if e.get("slack_count") is not None:
+        notes.append(f"Cable slack events: {int(e.get('slack_count') or 0)} (last stride {int(e.get('slack_last_stride') or 0)})")
+    return out
+
+
 def _hm(t):
     return time.strftime("%H:%M:%S", time.localtime(t)) if t else "–"
 
@@ -164,45 +200,42 @@ def top_status(ctx) -> Dict[str, Any]:
     need_training = (bool(getattr(ctx.training, "enabled", True)) and
                      (expects_console or bool(tr_st.get("packets_ok"))))
 
-    # ---- base
-    job = ctx.jobs.running("rc")
-    action = None
-    if job is not None:
-        action = job.title.split(":")[-1].strip()
-    if action in BUSY:
-        base = {"state": "busy", "text": BUSY[action], "level": "busy"}
-    elif running:
+    # ---- base: live-relevant only (Andy 16:11). The MATLAB link and run-control jobs
+    # (Connecting / Starting / Exporting / status refresh) never show on this button: they show on
+    # the Trials 'MATLAB link' row and the Start / Stop / Export buttons.
+    if running:
         base = {"state": "ready", "text": "Ready", "level": "green"}
     elif connected:
-        base = {"state": "connected", "text": "Connected", "level": "neutral"}
+        base = {"state": "connected", "text": "No data", "level": "grey"}
     else:
-        base = {"state": "not-connected", "text": "Not connected", "level": "grey"}
+        base = {"state": "not-connected", "text": "No data", "level": "grey"}
 
     issues: List[Dict[str, Any]] = []
     notes: List[str] = []
     sg = startup_app_issue(ctx, live_now, tr_st, tr_age)
     if sg:
         issues.append(sg)
+    rc_issues: List[Dict[str, Any]] = []      # MATLAB link results: Trials row only, never the button
     off = getattr(ctx.runctl, "offline", None)
-    if base["state"] == "not-connected" and off:
+    if not connected and off:
         # the last Connect failed: say why (amber) until Disconnect or a successful connect
         addr = rc.get("target") or "192.168.7.5"
         kind = off.get("kind") or "offline"
         detail = (f"Connect failed at {time.strftime('%H:%M:%S', time.localtime(off['at']))}: "
                   f"{off.get('err') or 'no answer'}")
         if kind == "busy":
-            issues.append({"level": "amber", "key": "speedgoat-busy", "text": "Speedgoat busy", "detail": detail,
+            rc_issues.append({"level": "amber", "key": "speedgoat-busy", "text": "Speedgoat busy", "detail": detail,
                            "todo": "Another MATLAB session is connected to the Speedgoat (a load script or "
                                    "Simulink). Wait for it to disconnect, then press Connect again."})
         elif kind == "offline":
-            issues.append({"level": "amber", "key": "speedgoat-offline", "text": "Speedgoat offline", "detail": detail,
+            rc_issues.append({"level": "amber", "key": "speedgoat-offline", "text": "Speedgoat offline", "detail": detail,
                            "todo": f"No answer from the Speedgoat at {addr}. Check that it is switched on and "
                                    "booted (it may be off for charging) and that the Ethernet cable is in, "
                                    "then press Connect again."})
         else:
-            issues.append({"level": "amber", "key": "connect-failed", "text": "Connect failed", "detail": detail,
+            rc_issues.append({"level": "amber", "key": "connect-failed", "text": "Connect failed", "detail": detail,
                            "todo": "Read the error, fix what it names, then press Connect again."})
-    if base["state"] != "not-connected":
+    if running or connected:
         if running:
             for name, age, needed in (("live", live_age, True), ("console", tr_age, need_training)):
                 if name == "console" and sg:
@@ -217,6 +250,8 @@ def top_status(ctx) -> Dict[str, Any]:
                            "todo": "This page cannot set side or mass on an app another MATLAB session started. "
                                    "Press Stop, then Start (side and mass are sent right after Start)."})
         if running:
+            for it in cable_issues(ctx, notes):
+                issues.append(it)
             imu = _imu_fault(ctx)
             if imu:
                 issues.append({"level": "red", "key": "imu-fault", "text": "IMU fault", "detail": imu,
@@ -275,20 +310,10 @@ def top_status(ctx) -> Dict[str, Any]:
                 elif ph == "unknown":
                     # not actionable: a grey note in the popover only (the button can be green Ready)
                     notes.append("Bi-LSTM state unknown: needs the 15-float console packet")
-        seen = set()
-        for row in ctx.session.target_table():
-            if row["name"] == "side" or row["match"] is not False:
-                continue
-            label = SHORT.get(row["name"], row["label"])
-            if label in seen:
-                continue
-            seen.add(label)
-            issues.append({"level": "amber", "key": f"differs-{row['name']}", "text": f"{label} differs",
-                           "detail": f"entered {row['entered']}, target {row['target']} ({row['source']})",
-                           "todo": ("Press that button in the dock again to resend it." if row["name"] in ("motor", "assist", "k")
-                                    else "Press Enter in that field to send it again.")})
+        # no 'X differs' issues (Andy 16:15): the page shows the device's values; a pending edit
+        # is amber until the echo confirms it
     # the oldest silent stream first among the reds
-    prio = {"speedgoat-restarted": 0, "speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
+    prio = {"cable-jam": 1.2, "cable-slack": 5.5, "speedgoat-restarted": 0, "speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
             "bif-mass": 5, "imu-not-ready": 6, "calibrating": 7, "bif-unknown": 10}   # "... differs": 9
     # the wrong app running explains the rest (a dead drive is expected then): it outranks
     # every red, e.g. "Drive fault (STO)"
@@ -296,10 +321,10 @@ def top_status(ctx) -> Dict[str, Any]:
     issues.sort(key=lambda i: (0 if i["key"] in first else 1, 0 if i["level"] == "red" else 1,
                                prio.get(i["key"], 9), -(i.get("age_s") or 0)))
     out = dict(base)
-    if base["state"] != "busy" and issues:      # a run-control action in progress wins (it pauses data)
+    if issues:
         top = issues[0]
         out = {"state": top["key"], "text": top["text"], "level": top["level"]}
-    out.update(base_state=base["state"], issues=issues, notes=notes, connected=connected, running=running, model=model,
+    out.update(base_state=base["state"], issues=issues, rc_issues=rc_issues, notes=notes, connected=connected, running=running, model=model,
                streams={"live_age_s": live_age, "console_age_s": tr_age, "console_required": need_training},
                writes_enabled=ctx.session.writes_enabled, at=time.time())
     return out

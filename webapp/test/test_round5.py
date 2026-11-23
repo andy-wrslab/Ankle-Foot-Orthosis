@@ -188,10 +188,12 @@ def main():
     r["17_save_args"] = c.runctl.calls[-1][0]
     r["17_meta_run"] = c.runctl.calls[-1][1]["file_log_run"]
 
+    # Andy 16:11-16:15: the status button is live / device only (no MATLAB link or run-control
+    # states, never 'X differs': the page shows the device's values)
     expect = {
-        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "2b_adopt": (72.5, 1, 0), "4_nodata": ("No data 3.3 s", "red"),
-        "5_confirm": ("Confirm foot side", "amber"), "5b_adopt_side": ("Ready", "Side: RIGHT"), "6_connected": "Connected", "7_not_connected": "Not connected",
-        "8_busy": "Starting…", "9_afo_status": "Ready", "10_status": "Assist command differs",
+        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs the 15-float console packet"]), "2_mass": ("Ready", "green"), "2b_adopt": (72.5, 1, 0), "4_nodata": ("No data 3.3 s", "red"),
+        "5_confirm": ("Confirm foot side", "amber"), "5b_adopt_side": ("Ready", "Side: RIGHT"), "6_connected": "No data", "7_not_connected": "No data",
+        "8_busy": "No data 5.0 s", "9_afo_status": "Ready", "10_status": "Ready",
         "11_after_echo_lost": {"side": None, "weight": None}, "12_key": "StartDate",
     }
     fails = {k: (r.get(k), v) for k, v in expect.items() if (tuple(r[k]) if isinstance(r.get(k), list) else r.get(k)) != v}
