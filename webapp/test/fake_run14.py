@@ -27,7 +27,7 @@ ADV_DEFAULTS = [0.8, 1.5, 0.04, 0.08, 20.0, 10.0, 9.0, 10.0, 0.6, 0.8, 200.0]
 
 class FakeRun14:
     def __init__(self, settings_port=15434, console_port=15433, n_floats=18, side=-1.0, mass=0.0, mode=3.0, k=5.0,
-                 gyro=0.0, motor=0.0, assist=0.0, kk=1.0, seq=0.0):
+                 gyro=0.0, motor=0.0, assist=0.0, kk=1.0, seq=0.0, adv_port=None):
         self.addr = ("127.0.0.1", int(settings_port))
         self.console = ("127.0.0.1", int(console_port))
         self.n = n_floats
@@ -50,6 +50,49 @@ class FakeRun14:
         self.t0 = time.time()
         threading.Thread(target=self._rx_loop, daemon=True).start()
         threading.Thread(target=self._tx_loop, daemon=True).start()
+        self.adv_received = []
+        self.adv_rx = None
+        if adv_port is not None:                       # run 15: Advanced over 5435 ('<16f')
+            self.adv_rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.adv_rx.bind(("127.0.0.1", int(adv_port)))
+            self.adv_rx.settimeout(0.1)
+            threading.Thread(target=self._adv_loop, daemon=True).start()
+
+    def apply_adv(self, p):
+        """The model's 5435 rules: magic 4135 / version 1, each field kept unless valid, SV
+        min < max else both kept, [14] / [15] ignored."""
+        if len(p) != 16 or p[0] != 4135.0 or p[1] != 1.0:
+            return False
+        rules = {"sv_target_min": (0.2, 2.0, False), "sv_target_max": (0.2, 2.0, False),
+                 "target_step_up": (0, 0.5, False), "target_step_down": (0, 0.5, False),
+                 "step_up_window": (1, 60, True), "step_down_window": (1, 60, True),
+                 "high_assist_level": (0, 10, False), "high_assist_strides": (0, 200, True),
+                 "torque_p_gain": (0.05, 3, False), "torque_i_gain": (0, 5, False),
+                 "standing_still_cutoff": (50, 5000, False)}
+        new = dict(self.adv)
+        for i, f in enumerate(ADV_FIELDS):
+            v, (lo, hi, whole) = p[3 + i], rules[f]
+            if v == v and lo <= v <= hi and (not whole or v == int(v)):
+                new[f] = v
+        if not new["sv_target_min"] < new["sv_target_max"]:
+            new["sv_target_min"], new["sv_target_max"] = self.adv["sv_target_min"], self.adv["sv_target_max"]
+        self.adv, self.adv_seq = new, p[2]
+        return True
+
+    def _adv_loop(self):
+        while not self._stop.is_set():
+            try:
+                data, _ = self.adv_rx.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if len(data) != 64:
+                continue
+            p = struct.unpack("<16f", data)
+            with self.lock:
+                self.adv_received.append((time.time(), p))
+                self.apply_adv(p)
 
     def _rx_loop(self):
         while not self._stop.is_set():
@@ -118,7 +161,9 @@ class FakeRun14:
 
     def close(self):
         self._stop.set()
-        try:
-            self.rx.close()
-        except OSError:
-            pass
+        for sk in (self.rx, self.adv_rx):
+            try:
+                if sk is not None:
+                    sk.close()
+            except OSError:
+                pass

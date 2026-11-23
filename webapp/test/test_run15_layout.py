@@ -8,6 +8,9 @@ no target, a few packets on test ports only.
 - 31 floats: the Advanced values come from the echo (no getparam, nothing setparam'd), the
   page adopts them, spring stiffness never shows; nothing is sent on connect / refresh;
 - 18 floats: getparam for Advanced as on run 14.
+- (B) 5435: one '<16f' 64-byte packet per edit (magic 4135, v1, seq = adv_seq + 1, all 11
+  in-use values with only the edited one changed, [14] / [15] = 0), fast confirm from the
+  echo, max 3 retries in 1 s, frozen on a stall, range / whole-number / min < max checks.
 
     python test/test_run15_layout.py
 """
@@ -130,6 +133,15 @@ class Dev31(Dev):
         self.adv = dict(zip(ADV_FIELDS, ADV_DEFAULTS))
         self.adv_seq, self.spring = 3.0, 1.25
 
+    def recv(self, data, addr):
+        if len(data) == 64:                          # 5435 Advanced
+            from fake_run14 import FakeRun14
+            self.adv_packets = getattr(self, "adv_packets", []) + [struct.unpack("<16f", data)]
+            if self.cols31 == 31:
+                FakeRun14.apply_adv(self, self.adv_packets[-1])
+            return
+        super().recv(data, addr)
+
     def status(self):
         st = super().status()
         if self.on and self.cols31 == 31:
@@ -186,9 +198,145 @@ def session_31():
           == sorted(s18.ADV_ECHO_COL), s18.getparam_keys())
 
 
+def f32(x):
+    return struct.unpack("<f", struct.pack("<f", x))[0]
+
+
+def adv_link():
+    import udp_settings as U
+    from fake_run14 import ADV_FIELDS, ADV_DEFAULTS
+    row = dict(zip(ADV_FIELDS, ADV_DEFAULTS), adv_seq=7.0, spring_stiffness=1.25, settings_seq=3.0)
+    echo = {"row": row, "age": 0.01, "cols": 31}
+    sent = []
+    lk = U.AdvLink({"udp": {"send_host": "127.0.0.1", "adv_port": 15435}},
+                   lambda: (dict(echo["row"]), echo["age"], echo["cols"]),
+                   sender=lambda data, addr: sent.append((data, addr)), start_thread=False,
+                   layout_path=os.path.join(ROUND1, "settings_adv_udp_layout.json"))
+    check("5435 link: fields in the round1 layout order", list(lk.FIELDS) == ADV_FIELDS, lk.FIELDS)
+    lk.tick()
+    check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.6, (sent, lk.state))
+    r = lk.press("torque_p_gain", 0.9)
+    check("5435 press: accepted, sending", r["ok"] and r["state"] == "sending", r)
+    data, addr = sent[-1]
+    p = struct.unpack("<16f", data)
+    check("5435 packet: 64 bytes to adv_port", len(data) == 64 and addr == ("127.0.0.1", 15435), (len(data), addr))
+    check("5435 packet: magic 4135, version 1, seq = adv_seq 7 + 1", p[:3] == (4135.0, 1.0, 8.0), p[:3])
+    want = [f32(v) for v in ADV_DEFAULTS]
+    want[ADV_FIELDS.index("torque_p_gain")] = f32(0.9)
+    check("5435 packet: all 11 in-use values, only P gain changed", list(p[3:14]) == want, (p[3:14], want))
+    check("5435 packet: [14] reserved_spring and [15] reserved = 0", p[14:] == (0.0, 0.0), p[14:])
+    row.update(torque_p_gain=f32(0.9), adv_seq=8.0)
+    lk.tick()
+    check("5435: confirmed from the echo (value + adv_seq >= seq), no resend",
+          lk.result["torque_p_gain"]["state"] == "confirmed" and len(sent) == 1, (lk.result, len(sent)))
+    # no echo of the next press: 3 retries within 1 s, then "Not confirmed"
+    sent.clear()
+    lk.press("standing_still_cutoff", 300)
+    t0 = time.time()
+    while time.time() - t0 < 1.2:
+        lk.tick()
+        time.sleep(0.02)
+    i_cut = 3 + ADV_FIELDS.index("standing_still_cutoff")
+    check("5435: max 3 retries (4 packets) within 1 s, each with the same values",
+          len(sent) == 4 and all(struct.unpack("<16f", d)[i_cut] == 300.0 for d, a in sent),
+          (len(sent), [struct.unpack("<16f", d)[2] for d, a in sent]))
+    check("5435: then 'Not confirmed: no echo from model'", lk.result["standing_still_cutoff"]["state"] == "error"
+          and "Not confirmed" in lk.result["standing_still_cutoff"]["msg"], lk.result["standing_still_cutoff"])
+    # the layout's rules (also checked on the page): nothing sent when refused
+    sent.clear()
+    for f, bad in (("sv_target_min", 0.1), ("sv_target_max", 2.5), ("target_step_up", 0.6), ("step_up_window", 2.5),
+                   ("step_down_window", 61), ("high_assist_strides", 10.5), ("torque_p_gain", 0.01), ("torque_i_gain", 6),
+                   ("standing_still_cutoff", 40), ("sv_target_min", 1.5), ("sv_target_max", 0.8)):
+        r = lk.press(f, bad)
+        check(f"5435 refused before sending: {f} = {bad}", not r["ok"], r)
+    check("5435: nothing sent for refused values", not sent, sent)
+    r = lk.press("step_up_window", 25)
+    check("5435: a whole number in range is sent", r["ok"] and len(sent) == 1, r)
+    # stall: frozen, nothing sent; back: re-adopt, nothing sent
+    lk.pending.clear()
+    sent.clear()
+    echo["age"] = 2.0
+    lk.tick()
+    r = lk.press("torque_i_gain", 1.0)
+    check("5435 stall: frozen, press refused, nothing sent", lk.frozen and not r["ok"] and not sent, (lk.frozen, r, sent))
+    echo["age"] = 0.01
+    lk.tick()
+    check("5435 back: re-adopted and unfrozen, nothing sent", not lk.frozen and lk.state is not None and not sent,
+          (lk.frozen, sent))
+    # 18 floats (run 14): not active, never sends
+    echo["cols"] = 18
+    check("5435 link inactive on 18 floats", not lk.active())
+    lk.tick()
+    r = lk.press("torque_i_gain", 1.0)
+    check("5435 on 18 floats: nothing sent", not sent and not r["ok"], (r, sent))
+
+
+def session_send():
+    import udp_settings as U
+    dev, calls = Dev31(), []
+    dev.v.update(side=0.0, weight_kg=80.0, bif_mass_kg=80.0, settings_seq=3.0)
+    ctx, s = make_session(dev, calls)
+    ctx.adv_link = U.AdvLink({"udp": {"send_host": "127.0.0.1", "adv_port": 15435}}, s.echo_for_link,
+                             on_status=s.adv_link_status, on_adopt=s.adv_link_adopted, sender=dev.recv)
+    dev.on = True
+    time.sleep(0.4)
+    s.refresh_echo()
+    calls.clear()
+    msg = s.enter_value("i_gain", 1.1)
+    check("session 31 floats: Advanced edit goes over 5435 (no MATLAB)", "sending" in msg
+          and not [c for c in calls if c[0] == "matlab"], (msg, calls))
+    t0 = time.time()
+    while time.time() - t0 < 1.0 and (s.status.get("i_gain") or {}).get("state") != "confirmed":
+        time.sleep(0.02)
+    s.refresh_echo()
+    check("session: confirmed from the echo within 1 s; readback 1.1",
+          (s.status.get("i_gain") or {}).get("state") == "confirmed" and abs(s.readback.get("i_gain") - f32(1.1)) < 1e-6,
+          (s.status.get("i_gain"), s.readback.get("i_gain")))
+    pk = dev.adv_packets[-1]
+    check("session: one packet, seq = adv_seq 3 + 1, the other values = the device's", len(dev.adv_packets) == 1
+          and pk[2] == 4.0 and pk[3 + 9] == f32(1.1) and pk[3 + 8] == f32(0.6), dev.adv_packets)
+    msg = s.enter_value("sv_target_min", 1.6)
+    check("session: min >= max refused with the reason, nothing sent", "below the max" in msg and len(dev.adv_packets) == 1, msg)
+    from pages import console_api as CA
+    v = CA._adv_view(ctx)
+    check("page state: adv udp + send on, rules from the layout", v["udp"] and v["send"]
+          and v["rules"]["window_up"] == {"min": 1.0, "max": 60.0, "int": True} and v["rules"]["sv_target_min"]["min"] == 0.2, v)
+    ctx.adv_link.stop()
+    ctx.settings_link.stop()
+    js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
+    check("page: client-side range / whole number / min < max before sending", "function advCheck(k, v)" in js
+          and "r.int && f !== Math.round(f)" in js and "var bad = advCheck(k, v);" in js)
+    app = open(os.path.join(APP, "app.py"), encoding="utf-8").read()
+    check("app: AdvLink wired", "self.adv_link = AdvLink(" in app and "on_status=self.session.adv_link_status" in app)
+
+
+def fake_socket():
+    """Real UDP round trip with the fake run-15 device (0.5 s, test ports)."""
+    import udp_settings as U
+    from fake_run14 import FakeRun14, ADV_FIELDS
+    dev = FakeRun14(settings_port=15440, console_port=15442, n_floats=31, side=0.0, mass=70.0, adv_port=15441)
+
+    def echo():
+        with dev.lock:
+            return dict(dev.adv, adv_seq=dev.adv_seq), 0.01, 31
+    lk = U.AdvLink({"udp": {"send_host": "127.0.0.1", "adv_port": 15441}}, echo, start_thread=False)
+    lk.tick()
+    lk.press("high_assist_level", 7.5)
+    t0 = time.time()
+    while time.time() - t0 < 0.5 and lk.result.get("high_assist_level", {}).get("state") != "confirmed":
+        lk.tick()
+        time.sleep(0.02)
+    dev.close()
+    check("fake run-15 device over UDP: one 64-byte packet applied and confirmed", dev.adv["high_assist_level"] == 7.5
+          and lk.result["high_assist_level"]["state"] == "confirmed" and len(dev.adv_received) == 1, (dev.adv, lk.result))
+
+
 if __name__ == "__main__":
     layouts()
     receiver()
     session_31()
+    adv_link()
+    session_send()
+    fake_socket()
     print("FAILS:", FAILS)
     sys.exit(1 if FAILS else 0)

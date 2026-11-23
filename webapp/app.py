@@ -64,6 +64,11 @@ class AppContext:
         self.settings_link = SettingsLink(cfg, self.session.echo_for_link,
                                           view_only=bool((cfg.get("console") or {}).get("view_only", False)),
                                           on_status=self.session.link_status, on_adopt=self.session.link_adopted)
+        # run 15: the 11 Advanced values over UDP 5435, confirmed by the 31-float 5433 echo
+        from udp_settings import AdvLink
+        self.adv_link = AdvLink(cfg, self.session.echo_for_link,
+                                view_only=bool((cfg.get("console") or {}).get("view_only", False)),
+                                on_status=self.session.adv_link_status, on_adopt=self.session.adv_link_adopted)
         self.commands.frozen = self.session.link_frozen
         from filelog import FileLogRuns
         self.filelog = FileLogRuns(self)

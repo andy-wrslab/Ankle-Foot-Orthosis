@@ -525,6 +525,8 @@ class SessionSetup:
             if alk is None:
                 self.status[key] = {"state": "error", "msg": self.ADV_READONLY_MSG, "at": time.time()}
                 return f"{sp['label']}: {self.ADV_READONLY_MSG}"
+            with self.lock:
+                self.values[key] = float(value)
             r = alk.press(self.ADV_ECHO_COL[key], value)
             if not r.get("ok"):
                 self.status[key] = {"state": "error", "msg": r.get("msg") or "not sent", "at": time.time()}
@@ -627,6 +629,16 @@ class SessionSetup:
         e = self.echo() if echo is None else echo
         return e.get("adv_seq") is not None and all(e.get(c) is not None for c in self.ADV_ECHO_COL.values())
 
+    def adv_link_status(self, field: str, state: str, msg: str) -> None:
+        for k, f in self.ADV_ECHO_COL.items():
+            if f == field:
+                self.status[k] = {"state": state, "msg": msg, "at": time.time()}
+
+    def adv_link_adopted(self, st: Dict[str, float]) -> None:
+        """5435: the device's Advanced values were adopted (first echo / back after a stall);
+        refresh_echo shows them on the next poll. Nothing is sent."""
+        self.audit("adopted device Advanced settings", json.dumps(st))
+
     def adv_send_link(self):
         """The 5435 Advanced sender when the device speaks it, else None."""
         lk = getattr(self.ctx, "adv_link", None)
@@ -644,9 +656,10 @@ class SessionSetup:
             col = sp.get("udp") or (self.ECHO18_COL.get(k) if udp else None) or (self.ADV_ECHO_COL.get(k) if adv else None)
             if col and echo.get(col) is not None:
                 self._put(k, echo[col], "echo")
-                if adv and k in self.ADV_ECHO_COL:
+                if adv and k in self.ADV_ECHO_COL and (self.status.get(k) or {}).get("state") != "sending":
                     # run 15: the page adopts the device's Advanced values (nothing is sent); a
-                    # value held for "after Start" from a run-14 session is dropped, never setparam'd
+                    # value held for "after Start" from a run-14 session is dropped, never setparam'd;
+                    # while a 5435 press is sending, the page keeps the typed value
                     with self.lock:
                         self.values[k] = float(echo[col])
                         self.src[k] = "adopted31"

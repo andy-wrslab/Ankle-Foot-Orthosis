@@ -768,6 +768,22 @@
             toast(t, err); dockMsg(err ? m : '', err); poll();
         }).catch(function () { toast('App not reachable: foot side not sent', true); });
     }
+    // run 15 (5435): range / whole number per settings_adv_udp_layout.json, min < max for the
+    // SV target; '' = ok. Runs <= 14: the server checks.
+    function advCheck(k, v) {
+        var sv = (S.state || {}).session || {}, av = sv.adv || {}, r = (av.rules || {})[k];
+        if (!av.udp || !r) { return ''; }
+        var f = Number(v), lab = k.replace(/_/g, ' ');
+        if (String(v).trim() === '' || !isFinite(f)) { return lab + ': not a number'; }
+        if (f < r.min || f > r.max) { return lab + ': ' + f + ' is outside ' + r.min + '..' + r.max; }
+        if (r.int && f !== Math.round(f)) { return lab + ': must be a whole number (' + r.min + '..' + r.max + ')'; }
+        var rb = sv.readback || {};
+        if (k === 'sv_target_min' && rb.sv_target_max != null && f >= +rb.sv_target_max) {
+            return 'Min target speed must be below the max (' + (+rb.sv_target_max) + ')'; }
+        if (k === 'sv_target_max' && rb.sv_target_min != null && f <= +rb.sv_target_min) {
+            return 'Max target speed must be above the min (' + (+rb.sv_target_min) + ')'; }
+        return '';
+    }
     function commitField(el, key, url, body) {
         S.editing[key] = true;
         var ck = (body && (body.key || body.name)) || ({sMass: 'weight', kPct: 'k_percent'})[key] || key;
@@ -801,7 +817,11 @@
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (inp.readOnly) { return; }
             var k = inp.getAttribute('data-k');
-            onCommit(inp, function (v) { commitField(inp, 'adv-' + k, '/api/console/value', {key: k, value: v}); });
+            onCommit(inp, function (v) {
+                var bad = advCheck(k, v);           // run 15: the layout's ranges before sending
+                if (bad) { flash(inp, false, bad); if (typeof toast === 'function') { toast(bad, true); } return; }
+                commitField(inp, 'adv-' + k, '/api/console/value', {key: k, value: v});
+            });
         });
         // popovers
         var sb = $('statusBtn'), sp = $('statusPop'), ab = $('advBtn'), ap = $('advPop'), chip = $('sideChip');

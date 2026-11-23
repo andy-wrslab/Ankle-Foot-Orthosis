@@ -26,6 +26,13 @@ device"):
 * echo missing for > 0.75 s (link stall): FROZEN, nothing is sent, "No data from device:
   settings unchanged on the device"; when it returns, re-adopt, then unfreeze;
 * view-only console: never sends.
+
+Run 15 (Advanced over UDP 5435, AdvLink below): the same rules for the 11 Advanced
+values. Packet '<16f' magic 4135, version 1, seq, the 11 values (order of
+round1/settings_adv_udp_layout.json), [14] reserved_spring, [15] reserved (both sent 0,
+ignored by the model). Echo: 5433 grows to '<31f', cols 18-28 = the values in use, col 29
+adv_seq, col 30 spring_stiffness (read-only, ignored here). 31 floats = AdvLink active and
+no getparam for Advanced; 18 floats = run 14 (getparam / setparam for Advanced).
 """
 from __future__ import annotations
 
@@ -35,7 +42,10 @@ import socket
 import struct
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+import json
+import os
+import re
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 MAGIC, VERSION = 4134.0, 1.0
 PACKET = struct.Struct("<8f")
@@ -76,12 +86,34 @@ def same(field: str, a: Any, b: Any) -> bool:
 
 class SettingsLink:
     """One per app. echo_fn() -> (latest 5433 row dict or {}, its age in s or None, columns)."""
+    NAME = "5434"
+    MAGIC, VERSION = MAGIC, VERSION
+    PACKET = PACKET
+    FIELDS = FIELDS
+    ECHO_COL = ECHO_COL
+    SEQ_COL = "settings_seq"
+    ECHO_N = ECHO_N                       # active from this many echo columns on
+    PORT_KEY, PORT_DEFAULT = "session_port", 5434
+    COUNTER: Optional[str] = "gyro"       # sent as the echoed value (+ 1 on a press), never remembered
+    KEEP = {"side": -1.0, "mass": 0.0, "mode": 0.0, "k": -1.0}
+    TAIL: Tuple[float, ...] = ()          # packet slots after the fields
+    UNSET = {"side": -1.0, "mass": 0.0}   # adopted as "unset on the device" when not valid
+
+    def valid(self, field: str, v: Any) -> bool:
+        return valid(field, v)
+
+    def same(self, field: str, a: Any, b: Any) -> bool:
+        return same(field, a, b)
+
+    def check(self, field: str, value: Any) -> Optional[str]:
+        """Why a press of *field* = *value* is not sent, or None."""
+        return None if self.valid(field, value) else f"{field} {value!r} is not a valid value"
 
     def __init__(self, cfg: Dict[str, Any], echo_fn: Callable[[], tuple], view_only: bool = False,
                  on_status: Optional[Callable[[str, str, str], None]] = None, sender=None, start_thread: bool = True,
                  on_adopt: Optional[Callable[[Dict[str, float]], None]] = None):
         u = cfg.get("udp") or {}
-        self.addr = (str(u.get("send_host", "192.168.7.5")), int(u.get("session_port", 5434)))
+        self.addr = (str(u.get("send_host", "192.168.7.5")), int(u.get(self.PORT_KEY, self.PORT_DEFAULT)))
         self.echo_fn = echo_fn
         self.view_only = bool(view_only)
         self.on_status = on_status or (lambda field, state, msg: None)
@@ -98,7 +130,7 @@ class SettingsLink:
         self._sender = sender
         self._stop = threading.Event()
         if start_thread:
-            threading.Thread(target=self._loop, name="udp-settings", daemon=True).start()
+            threading.Thread(target=self._loop, name=f"udp-settings-{self.NAME}", daemon=True).start()
 
     # ------------------------------------------------------------ echo
     def _echo(self):
@@ -108,29 +140,35 @@ class SettingsLink:
             return {}, None, None
         return row or {}, age, cols
 
+    def _row_active(self, row: Dict[str, Any], cols) -> bool:
+        if cols is not None:
+            return cols >= self.ECHO_N
+        return row.get(self.SEQ_COL) is not None
+
     def active(self) -> bool:
-        """This profile is on: the 5433 echo has the 18-float run-14 layout."""
+        """This profile is on: the 5433 echo has at least ECHO_N columns (5434: 18 = run 14
+        and later; 5435: 31 = run 15)."""
         row, age, cols = self._echo()
-        return cols == ECHO_N or ("settings_seq" in row and row.get("settings_seq") is not None)
+        return self._row_active(row, cols)
 
     def _adopt(self, row: Dict[str, Any]) -> None:
-        st = {f: float(row[ECHO_COL[f]]) for f in FIELDS if row.get(ECHO_COL[f]) is not None}
-        for f in ("side", "mass"):
-            if f in st and not valid(f, st[f]):
-                st[f] = {"side": -1.0, "mass": 0.0}[f]          # unset on the device
+        st = {f: float(row[self.ECHO_COL[f]]) for f in self.FIELDS if row.get(self.ECHO_COL[f]) is not None}
+        for f, unset in self.UNSET.items():
+            if f in st and not self.valid(f, st[f]):
+                st[f] = unset                                   # unset on the device
         self.state = st
         try:
-            self.seq = max(self.seq, int(float(row.get("settings_seq") or 0)))
+            self.seq = max(self.seq, int(float(row.get(self.SEQ_COL) or 0)))
         except (TypeError, ValueError):
             pass
         self.adopted_at = time.time()
-        _log.info("adopted device settings %s (seq %d)", st, self.seq)
+        _log.info("%s: adopted device settings %s (seq %d)", self.NAME, st, self.seq)
 
     # ------------------------------------------------------------ send
     def _send(self, pkt) -> None:
         self.sent.append((time.time(), pkt))
         del self.sent[:-50]
-        data = PACKET.pack(*pkt)
+        data = self.PACKET.pack(*pkt)
         if self._sender is not None:
             self._sender(data, self.addr)
             return
@@ -140,8 +178,7 @@ class SettingsLink:
 
     def _packet(self, values: Dict[str, float]):
         self.seq += 1
-        return (MAGIC, VERSION, float(self.seq), values["side"], values["mass"], values["mode"], values["k"],
-                values["gyro"])
+        return (self.MAGIC, self.VERSION, float(self.seq)) + tuple(float(values[f]) for f in self.FIELDS) + self.TAIL
 
     def _values(self) -> Dict[str, float]:
         """The page's values (adopted from the device, then pressed) with every still-pending
@@ -149,17 +186,20 @@ class SettingsLink:
         mode 0, K -1). gyro_cal_request is ALWAYS the value echoed right now (col 15): a
         change re-runs the 5 s gyro bias, so a stale or remembered counter is never sent;
         only a pending Calibrate IMU press sends echoed + 1."""
-        v = {f: x for f, x in (self.state or {}).items() if f != "gyro" and valid(f, x)}
+        c = self.COUNTER
+        v = {f: x for f, x in (self.state or {}).items() if f != c and self.valid(f, x)}
         for f, p in self.pending.items():
-            if f != "gyro":
+            if f != c:
                 v[f] = p["value"]
-        for f, keep in (("side", -1.0), ("mass", 0.0), ("mode", 0.0), ("k", -1.0)):
-            v.setdefault(f, keep)
-        row, age, cols = self._echo()
-        g = row.get(ECHO_COL["gyro"])
-        if g is None:
-            raise RuntimeError("no echoed gyro_cal_request: not sending")
-        v["gyro"] = float(g) + (1.0 if "gyro" in self.pending else 0.0)
+        for f in self.FIELDS:
+            if f != c:
+                v.setdefault(f, self.KEEP.get(f, float("nan")))
+        if c is not None:
+            row, age, cols = self._echo()
+            g = row.get(self.ECHO_COL[c])
+            if g is None:
+                raise RuntimeError(f"no echoed {self.ECHO_COL[c]}: not sending")
+            v[c] = float(g) + (1.0 if c in self.pending else 0.0)
         return v
 
     def press(self, field: str, value: Any) -> Dict[str, Any]:
@@ -171,13 +211,14 @@ class SettingsLink:
                 return {"ok": False, "state": "error", "msg": FROZEN_MSG}
             if self.state is None:
                 return {"ok": False, "state": "error", "msg": "Waiting for the device state (5433 echo)"}
-            if not valid(field, value):
-                return {"ok": False, "state": "error", "msg": f"{field} {value!r} is not a valid value"}
-            if field == "gyro":
+            why = self.check(field, value)
+            if why:
+                return {"ok": False, "state": "error", "msg": why}
+            if field == self.COUNTER:
                 row, age, cols = self._echo()
-                if row.get(ECHO_COL["gyro"]) is None:
-                    return {"ok": False, "state": "error", "msg": "No echoed gyro_cal_request yet"}
-                value = float(row[ECHO_COL["gyro"]]) + 1.0          # echoed + 1, never remembered
+                if row.get(self.ECHO_COL[field]) is None:
+                    return {"ok": False, "state": "error", "msg": f"No echoed {self.ECHO_COL[field]} yet"}
+                value = float(row[self.ECHO_COL[field]]) + 1.0       # echoed + 1, never remembered
             self.pending[field] = {"value": float(value), "seqs": [], "t0": time.time(), "last": time.time(), "tries": 0}
             try:
                 v = self._values()
@@ -203,7 +244,8 @@ class SettingsLink:
             if self.state is None or self.frozen:
                 self._adopt(row)                    # base for the fields not given (no on_adopt)
                 self.frozen = False
-            sending = {f: float(v) for f, v in values.items() if f in ("side", "mass", "mode", "k") and valid(f, v)}
+            sending = {f: float(v) for f, v in values.items()
+                       if f in self.FIELDS and f != self.COUNTER and self.valid(f, v)}
             for f, v in sending.items():
                 self.state[f] = v
                 self.pending[f] = {"value": v, "seqs": [], "t0": time.time(), "last": time.time(), "tries": 0}
@@ -233,8 +275,8 @@ class SettingsLink:
             except RuntimeError:
                 return None
             pkt = self._packet(v)
-            for f in ("side", "mass", "mode", "k"):
-                if not valid(f, v[f]):
+            for f in self.FIELDS:
+                if f == self.COUNTER or not self.valid(f, v[f]):
                     continue
                 self.pending[f] = {"value": v[f], "seqs": [pkt[2]], "t0": time.time(), "last": time.time(), "tries": 0}
             self._send(pkt)
@@ -249,7 +291,7 @@ class SettingsLink:
             with self.lock:
                 if self.state is not None and not self.frozen:
                     self.frozen = True
-                    _log.warning("5433 echo stalled: settings frozen (nothing sent)")
+                    _log.warning("5433 echo stalled: %s settings frozen (nothing sent)", self.NAME)
                     for f in list(self.pending):
                         changes.append((f, "error", FROZEN_MSG))
                         self.result[f] = {"state": "error", "msg": FROZEN_MSG, "at": time.time()}
@@ -258,8 +300,11 @@ class SettingsLink:
                 self.on_status(f, st, m)
             return
         with self.lock:
-            if cols is not None and cols != ECHO_N and "settings_seq" not in row:
-                return                              # runs 12/13: not this profile
+            if not self._row_active(row, cols):
+                # not this profile (runs 12/13 for 5434, <= 14 for 5435): forget any adopted state
+                self.state, self.frozen = None, False
+                self.pending.clear()
+                return
             if self.state is None or self.frozen:
                 self._adopt(row)                    # first echo or back after a stall: adopt, then unfreeze
                 self.frozen = False
@@ -271,12 +316,12 @@ class SettingsLink:
             return
         with self.lock:
             try:
-                last_seq = float(row.get("settings_seq") or 0)
+                last_seq = float(row.get(self.SEQ_COL) or 0)
             except (TypeError, ValueError):
                 last_seq = 0.0
             now = time.time()
             for f, p in list(self.pending.items()):
-                if last_seq >= min(p["seqs"]) and same(f, row.get(ECHO_COL[f]), p["value"]):
+                if last_seq >= min(p["seqs"]) and self.same(f, row.get(self.ECHO_COL[f]), p["value"]):
                     self.pending.pop(f)
                     self.result[f] = {"state": "confirmed", "msg": "", "at": now}
                     changes.append((f, "confirmed", ""))
@@ -291,16 +336,16 @@ class SettingsLink:
                         vals = self._values()
                     except RuntimeError:
                         continue
-                    if f == "gyro":
-                        vals["gyro"] = p["value"]       # the retry repeats the same requested counter
+                    if f == self.COUNTER:
+                        vals[f] = p["value"]            # the retry repeats the same requested counter
                     pkt = self._packet(vals)
                     p["seqs"].append(pkt[2]); p["last"] = now; p["tries"] += 1
                     self._send(pkt)
             # keep the page's copy current for fields nobody is changing; an "unset" echo
             # (side -1 / mass 0 after Start) keeps the page's value for the resend after Start
-            for f in FIELDS:
-                if f not in self.pending and row.get(ECHO_COL[f]) is not None and valid(f, row[ECHO_COL[f]]):
-                    self.state[f] = float(row[ECHO_COL[f]])
+            for f in self.FIELDS:
+                if f not in self.pending and row.get(self.ECHO_COL[f]) is not None and self.valid(f, row[self.ECHO_COL[f]]):
+                    self.state[f] = float(row[self.ECHO_COL[f]])
         for f, s, m in changes:
             self.on_status(f, s, m)
 
@@ -309,7 +354,7 @@ class SettingsLink:
             try:
                 self.tick()
             except Exception:
-                _log.exception("udp settings tick failed")
+                _log.exception("udp settings %s tick failed", self.NAME)
             time.sleep(0.02)
 
     def stop(self):
@@ -320,3 +365,117 @@ class SettingsLink:
             return {"active": self.active(), "frozen": self.frozen, "msg": FROZEN_MSG if self.frozen else "",
                     "adopted": dict(self.state) if self.state else None, "seq": self.seq,
                     "pending": sorted(self.pending), "result": {k: dict(v) for k, v in self.result.items()}}
+
+
+# ---------------------------------------------------------------- run 15: Advanced (5435)
+ADV_LAYOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "settings_adv_udp_layout.json")
+# session key (session.SPECS, the Advanced popover) -> 5435 field / 5433 echo column name
+ADV_FIELD = {"sv_target_min": "sv_target_min", "sv_target_max": "sv_target_max",
+             "target_step_up": "target_step_up", "target_step_down": "target_step_down",
+             "window_up": "step_up_window", "window_down": "step_down_window",
+             "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
+             "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff"}
+_RANGE = re.compile(r"(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)")
+
+
+def load_adv_layout(path: str = ADV_LAYOUT) -> Tuple[List[str], Dict[str, Dict[str, Any]], Dict[str, Any]]:
+    """(the value fields in packet order, {field: {min, max, int}}, the layout) from
+    settings_adv_udp_layout.json: slots 3.. up to the reserved ones; the rule text gives the
+    range ("0.2..2.0", "0..0.5") and "whole number" = integers only."""
+    lay = json.load(open(path, encoding="utf-8"))
+    fields, rules = [], {}
+    for f in sorted(lay["fields"], key=lambda x: x["index"]):
+        if f["index"] < 3 or f["name"].startswith("reserved"):
+            continue
+        m = _RANGE.search(f.get("rule") or "")
+        if not m:
+            raise ValueError(f"{path}: no range in the rule of {f['name']!r}")
+        fields.append(f["name"])
+        rules[f["name"]] = {"min": float(m.group(1)), "max": float(m.group(2)),
+                            "int": "whole number" in (f.get("rule") or "")}
+    return fields, rules, lay
+
+
+class AdvLink(SettingsLink):
+    """Run 15: the 11 Advanced values over UDP 5435 with the 5434 rules (adopt from the echo,
+    send only on a press with the in-use values and one field changed, confirm from the echo
+    = value + adv_seq >= the packet's seq, 3 retries within 1 s, frozen on a stall). Active
+    with a 31-float 5433 echo; spring stiffness (col 30) is never read or sent."""
+    NAME = "5435"
+    MAGIC, VERSION = 4135.0, 1.0
+    PACKET = struct.Struct("<16f")
+    SEQ_COL = "adv_seq"
+    ECHO_N = 31
+    PORT_KEY, PORT_DEFAULT = "adv_port", 5435
+    COUNTER = None
+    KEEP: Dict[str, float] = {}                # NaN = keep (any invalid value keeps the one in use)
+    TAIL = (0.0, 0.0)                          # [14] reserved_spring, [15] reserved: ignored
+    UNSET: Dict[str, float] = {}
+
+    def __init__(self, cfg, echo_fn, layout_path: str = ADV_LAYOUT, **kw):
+        fields, rules, lay = load_adv_layout(layout_path)
+        assert struct.calcsize(lay["format"]) == self.PACKET.size and len(fields) + 5 == 16, lay["format"]
+        self.FIELDS = tuple(fields)
+        self.ECHO_COL = {f: f for f in fields}           # 5433 cols 18-28 carry the same names
+        self.RULES = rules
+        super().__init__(cfg, echo_fn, **kw)
+
+    def valid(self, field: str, v: Any) -> bool:
+        r = self.RULES.get(field)
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return False
+        if r is None or not math.isfinite(f) or not (r["min"] <= f <= r["max"]):
+            return False
+        return not r["int"] or f == int(f)
+
+    def same(self, field: str, a: Any, b: Any) -> bool:
+        try:
+            return abs(float(a) - float(b)) <= 1e-4 * max(1.0, abs(float(b)))
+        except (TypeError, ValueError):
+            return False
+
+    def in_use(self, field: str) -> Optional[float]:
+        if field in self.pending:
+            return self.pending[field]["value"]
+        v = (self.state or {}).get(field)
+        return v if v is not None and self.valid(field, v) else None
+
+    def check(self, field: str, value: Any) -> Optional[str]:
+        r = self.RULES.get(field)
+        if r is None:
+            return f"{field}: not an Advanced value"
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return "not a number"
+        if not math.isfinite(f) or not (r["min"] <= f <= r["max"]):
+            return f"{f:g} is outside {r['min']:g}..{r['max']:g}"
+        if r["int"] and f != int(f):
+            return f"must be a whole number ({r['min']:g}..{r['max']:g})"
+        # min < max, else the model keeps both: refused here instead of a silent keep
+        if field == "sv_target_min":
+            hi = self.in_use("sv_target_max")
+            if hi is not None and f >= hi:
+                return f"must be below the max target speed ({hi:g})"
+        if field == "sv_target_max":
+            lo = self.in_use("sv_target_min")
+            if lo is not None and f <= lo:
+                return f"must be above the min target speed ({lo:g})"
+        return None
+
+    def _packet(self, values: Dict[str, float]):
+        """seq = echoed adv_seq + 1 for a fresh press (nothing pending); retries and a press
+        while another is pending count on from the last seq sent."""
+        if not self.pending or all(not p["seqs"] for p in self.pending.values()):
+            row, age, cols = self._echo()
+            try:
+                self.seq = int(float(row.get(self.SEQ_COL)))
+            except (TypeError, ValueError):
+                pass
+        return super()._packet(values)
+
+    def rules_for_page(self) -> Dict[str, Dict[str, Any]]:
+        """{session key: {min, max, int}} for the page's own check before sending."""
+        return {k: dict(self.RULES[f]) for k, f in ADV_FIELD.items() if f in self.RULES}
