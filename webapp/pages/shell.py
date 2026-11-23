@@ -10,11 +10,11 @@ Home and Run control are gone (merged into the top bar and the status popover).
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 import dash
 from dash import dcc, html
-from dash_extensions import EventSource
 from flask import Response, jsonify, request
 
 from state import snapshots, MAX_CLIENTS
@@ -24,6 +24,7 @@ from pages.common import is_local
 NAV = [("live", "Live"), ("trials", "Trials"), ("signals", "Signals"), ("teensy", "Teensy")]
 _SSE_IDLE_TIMEOUT = 0.5
 _clients = {"n": 0}
+_clients_lock = threading.Lock()
 
 
 def serve_layout(ctx):
@@ -31,7 +32,10 @@ def serve_layout(ctx):
         local = is_local()
         return html.Div(className="app", id="app", **{"data-local": "1" if local else "0"}, children=[
             dcc.Location(id="url"),
-            html.Div(EventSource(id="es", url="/events"), style={"display": "none"}),
+            # live snapshots: assets/sse.js keeps ONE EventSource per tab open and writes
+            # each message into this store (the dash_extensions EventSource reconnected
+            # on every render: ~21 /events connections per second per tab)
+            dcc.Store(id="es", data=None),
             html.Div(id="chrome-top", style={"display": "contents"}),     # top bar, popovers, banner (JS)
             html.Main(className="page live", id="page-live", **{"data-page": "live"}, children=live.layout(ctx)),
             html.Main(className="page", id="page-trials", hidden=True, **{"data-page": "trials"},
@@ -64,12 +68,23 @@ def build_app(ctx) -> dash.Dash:
 
     @server.route("/events")
     def sse_stream():  # type: ignore
-        if _clients["n"] >= MAX_CLIENTS:
-            return Response("Too many clients", status=503)
-        _clients["n"] += 1
+        with _clients_lock:
+            if _clients["n"] >= MAX_CLIENTS:
+                return Response("Too many clients", status=503, headers={"Retry-After": "2"})
+            _clients["n"] += 1
+        released = threading.Event()
+
+        def release():
+            # once, from whichever comes first: the generator closing (GeneratorExit
+            # when a write to a gone client fails) or the response being closed
+            if not released.is_set():
+                released.set()
+                with _clients_lock:
+                    _clients["n"] -= 1
 
         def generate():
             try:
+                yield "retry: 2000\n\n"
                 last = snapshots.seq
                 while not ctx.stopping.is_set():
                     seq, text = snapshots.wait_next(last, _SSE_IDLE_TIMEOUT)
@@ -79,9 +94,16 @@ def build_app(ctx) -> dash.Dash:
                     last = seq
                     yield f"data:{text}\n\n"
             finally:
-                _clients["n"] -= 1
+                release()
 
-        return Response(generate(), mimetype="text/event-stream")
+        resp = Response(generate(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+        resp.call_on_close(release)
+        return resp
+
+    @server.route("/api/sse/clients")
+    def api_sse_clients():  # type: ignore
+        return jsonify({"clients": _clients["n"], "max": MAX_CLIENTS})
 
     @server.route("/api/status")
     def api_status():  # type: ignore

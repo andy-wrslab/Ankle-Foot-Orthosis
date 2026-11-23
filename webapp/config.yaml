@@ -127,6 +127,13 @@ training:
   listen_host: "0.0.0.0"
   layout: "config/console_udp_layout.json"   # port, format and columns come from here
 
+target:
+  # Model profile (model_profile.py): auto | AFO | AFO_r1. The loaded app always wins
+  # when it is a known profile (its block paths are the real ones); this value is used
+  # while the loaded app is unknown (not connected). AFO_r1 adds "Mass with AFO +
+  # backpack" (BIF_mass_kg), side built -1, the Bi-LSTM state and the after-Start checklist.
+  model: auto
+
 session:
   # Target access hold (2026-11-19): session values are saved and shown as pending,
   # never written to the Speedgoat, until this is set to true on purpose.

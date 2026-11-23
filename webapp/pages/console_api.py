@@ -39,7 +39,7 @@ def _fmt(key: str, v) -> str:
         return {0: "Left", 1: "Right", -1: "Unset"}.get(int(round(f)), f"{f:g}")
     if key == "mode":
         return {1: "RL", 2: "ILC", 3: "Fixed K"}.get(int(round(f)), f"{f:g}")
-    if key == "weight":
+    if key in ("weight", "bif_mass"):
         return f"{f:g} kg"
     if key == "k_percent":
         return f"{f:.1f} %"
@@ -52,7 +52,11 @@ def settings_rows(ctx) -> Dict[str, Any]:
     table = {r["name"]: r for r in sess.target_table()}
     console_live = bool(sess.echo())
     rows = []
-    for key, label in (("side", "Foot side"), ("weight", "Body mass"), ("mode", "Assistance mode"), ("k_percent", "K")):
+    main = [("side", "Foot side"), ("weight", "Body mass"), ("bif_mass", "Mass (Bi-LSTM)"),
+            ("mode", "Assistance mode"), ("k_percent", "K")]
+    for key, label in main:
+        if key not in table:          # not in this model profile (bif_mass in AFO)
+            continue
         r = table.get(key, {})
         st = (sess.status.get(key) or {}).get("state")
         if r.get("match") is True:
@@ -139,7 +143,7 @@ def rig_view(ctx) -> Dict[str, Any]:
         "file_log": rc.get("filelog") or "–",
         "main_udp": {"rate": round(live.get("rate_hz") or 0), "bad": int(lh.get("bad_length", 0) or 0) +
                      int(lh.get("bad_time", 0) or 0) + int(lh.get("errors", 0) or 0)},
-        "console_udp": {"enabled": bool(getattr(ctx.training, "enabled", False)), "rate": round(tr.get("rate_hz") or 0),
+        "console_udp": {"enabled": bool(getattr(ctx.training, "enabled", False)), "rate": round(tr.get("rate_hz") or 0), "columns": tr.get("columns"),
                         "lost": int(tr.get("lost_packets") or 0),
                         "rejected": int(tr.get("bad_length") or 0) + int(tr.get("non_finite_packets") or 0)
                         + int(tr.get("bad_value") or 0)},
@@ -148,6 +152,17 @@ def rig_view(ctx) -> Dict[str, Any]:
                 + f" · {int(latest.get('imu_bad_count') or 0)} bad packets"),
         "updated": time.strftime("%H:%M:%S"),
     }
+
+
+def _imu_cal_view(ctx) -> Dict[str, Any]:
+    ic = getattr(ctx, "imu_cal", None)
+    if ic is None:
+        return {"visible": False}
+    try:
+        ic.probe()
+    except Exception:
+        pass
+    return ic.view()
 
 
 def console_state(ctx) -> Dict[str, Any]:
@@ -164,6 +179,10 @@ def console_state(ctx) -> Dict[str, Any]:
         st = dict(st, state="busy", text="Sending…", level="busy")
     rc = ctx.runctl.status or {}
     values = {sp["key"]: sess.values.get(sp["key"]) for sp in SPECS}
+    prof = sess.profile()
+    bif = sess.bif_view()
+    running = bool(st.get("running"))
+    chk = sess.checklist(bif) if running else None
     return {
         "at": time.time(), "local": is_local(), "status": st, "busy": busy,
         "view_only": bool((ctx.cfg.get("console") or {}).get("view_only", False)),
@@ -174,8 +193,12 @@ def console_state(ctx) -> Dict[str, Any]:
                     "status": {k: (v or {}).get("state") for k, v in sess.status.items()},
                     "status_msg": {k: (v or {}).get("msg") for k, v in sess.status.items()},
                     "writes_enabled": sess.writes_enabled},
+        "model": {"name": sess.model(), "label": prof["label"], "bif": bool(prof.get("bif")),
+                  "loaded": rc.get("app") or None},
+        "bif": bif, "checklist": chk,
         "side": side_view(ctx), "settings": settings_rows(ctx), "commands": commands_view(ctx),
         "rig": rig_view(ctx),
+        "imu_cal": _imu_cal_view(ctx),
     }
 
 
@@ -197,7 +220,7 @@ def register(server, ctx) -> None:
     def api_console_value():  # type: ignore
         b = body()
         key, value = str(b.get("key", "")), b.get("value")
-        if key not in {sp["key"] for sp in SPECS} or key == "side":
+        if key not in {sp["key"] for sp in SPECS} or key in ("side", "bif_mass"):     # bif_mass follows weight
             return jsonify({"ok": False, "msg": "unknown setting"}), 400
         if any(sp["key"] == key and sp.get("readonly") for sp in SPECS):
             return jsonify({"ok": False, "msg": "read-only"}), 403
@@ -231,6 +254,14 @@ def register(server, ctx) -> None:
     @server.route("/api/console/pulse", methods=["POST"])
     def api_console_pulse():  # type: ignore
         r = ctx.commands.pulse(str(body().get("name", "")))
+        return jsonify(r), (200 if r.get("ok") else 409)
+
+    @server.route("/api/console/imucal", methods=["POST"])
+    def api_console_imucal():  # type: ignore
+        ic = getattr(ctx, "imu_cal", None)
+        if ic is None:
+            return jsonify({"ok": False, "msg": "not available"}), 409
+        r = ic.press()
         return jsonify(r), (200 if r.get("ok") else 409)
 
     @server.route("/api/console/unknown-off", methods=["POST"])

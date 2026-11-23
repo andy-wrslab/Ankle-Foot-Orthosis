@@ -100,6 +100,21 @@ class SignalBuffer:
                             "age_s": round(now - self.last_wall.get(ch, now), 1)})
             return sorted(out, key=lambda c: c["name"].lower())
 
+    def latest(self, names, max_age_s=2.0):
+        """Last value of each named channel received within max_age_s (wall clock)."""
+        with self.lock:
+            now = time.time()
+            vals, ages = {}, {}
+            for n in names:
+                lst = self.chunks.get(n)
+                if not lst or now - self.last_wall.get(n, 0) > max_age_s:
+                    continue
+                v = float(lst[-1][1][-1])
+                if np.isfinite(v):
+                    vals[n] = v
+                    ages[n] = round(now - self.last_wall[n], 2)
+            return {"values": vals, "age_s": ages}
+
     def data(self, names, window_s, max_points=1500):
         with self.lock:
             newest = max((self.last_t[n] for n in names if n in self.last_t), default=None)
@@ -276,6 +291,8 @@ def worker_main(req_q, resp_q, paths, log_dir, snap_req_q=None, snap_resp_q=None
                     out["channels"] = buf.channels()
                 elif kind == "data":
                     out = buf.data(args[0], float(args[1]))
+                elif kind == "latest":
+                    out = buf.latest(args[0], float(args[1]) if len(args) > 1 else 2.0)
                 else:
                     out = {"err": "unknown"}
                 snap_resp_q.put((rid, json.dumps(out)))

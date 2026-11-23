@@ -97,7 +97,8 @@
           '<span class="spacer"></span>' +
           '<div class="session-bar" id="sessionBar">' +
             '<label class="tb-field" title="Participant ID (used in export file names)"><span>ID</span><input class="input" id="sPart" autocomplete="off"></label>' +
-            '<label class="tb-field" title="Body mass"><span>Mass</span><input class="input mono" id="sMass" autocomplete="off"><span>kg</span></label>' +
+            '<label class="tb-field" title="Body mass (kg). AFO_r1: also sets the Bi-LSTM mass (BIF_mass_kg). More than 20 kg."><span>Mass</span><input class="input mono" id="sMass" autocomplete="off" aria-label="Body mass (kg)"><span>kg</span></label>' +
+
             '<button class="side-chip" id="sideChip" aria-haspopup="dialog" aria-expanded="false" title="Foot side on the target">–</button>' +
             '<span class="vr sb-sep" aria-hidden="true"></span>' +
             '<button class="btn sm" id="advBtn" aria-haspopup="dialog" aria-expanded="false">Advanced</button>' +
@@ -131,7 +132,8 @@
           '<div class="side-confirm" id="sideConfirm" hidden><p><b id="scTitle"></b><br><span class="hint">This reverses the actuation direction. Only switch when the AFO is on that leg.</span></p>' +
           '<div class="side-act"><button class="btn" id="scCancel">Cancel</button><button class="btn primary" id="scOk"></button></div></div>' +
         '</div>' +
-        '<div class="sys-banner" id="sideBanner" hidden></div>';
+        '<div class="sys-banner" id="sideBanner" hidden></div>' +
+        '<div class="sys-banner info" id="bifBanner" hidden></div>';
     }
 
     function dockHTML() {
@@ -151,7 +153,8 @@
         '<button class="btn sm" id="unknownOff" hidden>Set unknown to OFF</button>' +
         '<span class="spacer"></span>' +
         '<div class="actions">' +
-          '<button class="btn act" id="bCal" title="30 s pressure calibration: walk normally until it finishes">Calibrate pressure</button>' +
+          '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
+          '<button class="btn act" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
           '<button class="btn act" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
         '</div>';
     }
@@ -227,11 +230,15 @@
 
     // ---------------------------------------------------------- snapshot hook (SSE)
     function driveOf(sw) {
+        // CiA-402 state from the statusword mask; bit 10 (target reached) and the other
+        // manufacturer bits are ignored (0x0660 is "switch-on disabled", like 0x0260)
         if (typeof sw !== 'number' || !isFinite(sw)) { return null; }
+        sw = sw >>> 0;
         if (sw & 0x0008) { return 'fault'; }
-        if (sw === 0x0637) { return 'on'; }
-        if (sw === 0x0237) { return 'ready'; }
-        if (sw === 0x0260) { return 'disabled'; }
+        var s = sw & 0x006F;
+        if (s === 0x0027) { return 'on'; }                      // operation enabled
+        if (s === 0x0021 || s === 0x0023) { return 'ready'; }   // ready to switch on / switched on
+        if ((sw & 0x004F) === 0x0040) { return 'disabled'; }    // switch-on disabled
         return 'other';
     }
     window._afoOnSnapshot = function (p) {
@@ -256,7 +263,7 @@
     // ---------------------------------------------------------- render from state
     function render(st) {
         S.state = st;
-        renderStatus(st); renderTarget(st); renderSession(st); renderSide(st); renderDock(st);
+        renderStatus(st); renderTarget(st); renderSession(st); renderSide(st); renderBif(st); renderDock(st);
         var hint = $('liveSrc');
         if (hint) { var t = 'UDP only · ' + st.rig.main_udp.rate + ' packets/s'; if (hint.textContent !== t) { hint.textContent = t; } }
     }
@@ -286,6 +293,9 @@
                   ['Console UDP', R.console_udp.enabled ? '<span class="mono">' + R.console_udp.rate + '</span>&nbsp;packets/s · ' + R.console_udp.lost + ' lost' +
                       (R.console_udp.rejected ? ' · ' + R.console_udp.rejected + ' rejected' : '') : 'off'],
                   ['Drive statusword', '<span class="mono">' + esc(R.statusword) + '</span>'], ['IMU', esc(R.imu)]];
+        if (st.model) { kv.splice(1, 0, ['Model profile', esc(st.model.label)]); }
+        if (st.bif) { kv.push(['Bi-LSTM', esc(st.bif.text.replace(/^Bi-LSTM: /, '')) + (st.bif.state_text ? ' · ' + esc(st.bif.state_text) : '') +
+            (st.bif.source ? ' <span class="hint">(' + esc(st.bif.source) + ')</span>' : '')]); }
         var kvh = kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd>' + x[1] + '</dd>'; }).join('');
         var k = $('rigKv'); if (k && k.innerHTML !== kvh) { k.innerHTML = kvh; }
         if ($('rigTime')) { $('rigTime').textContent = 'Updated ' + R.updated; }
@@ -314,10 +324,12 @@
             return;
         }
         c.disabled = false;
-        var sideOk = st.side.state === 'ok';
         if (st.view_only) { return; }
-        s.disabled = !T.connected || T.running || !sideOk;
-        s.title = !T.connected ? 'Connect first' : T.running ? 'Running' : !sideOk ? 'Confirm the foot side first' : 'Reload AFO and start';
+        // Start is never locked by the foot side: Start reloads the build defaults, and the
+        // confirmed side and mass are sent right after it; Motor/Assist wait for the readback
+        s.disabled = !T.connected || T.running;
+        s.title = !T.connected ? 'Connect first' : T.running ? 'Running' :
+            'Reload the app and start; the confirmed foot side and mass are sent right after Start';
         p.disabled = !T.running || !T.connected;
         p.title = !T.connected ? 'Connect first' : !T.running ? 'Stopped' : 'Stop the app (about 1.5 min: the target imports its file log)';
     }
@@ -328,6 +340,16 @@
         if (part && document.activeElement !== part && !S.editing.sPart) { var v = sv.sid || ''; if (part.value !== v) { part.value = v; } }
         if (mass && document.activeElement !== mass && !S.editing.sMass) {
             var w = sv.values.weight; var t = w == null ? '' : String(+w); if (mass.value !== t) { mass.value = t; }
+        }
+        var gw = $('sGearWrap'), gear = $('sGear'), isBif = !!(st.model && st.model.bif);
+        if (gw && gw.hidden === isBif) { gw.hidden = !isBif; setTimeout(topbarHeight, 0); }
+        if (gear && isBif && document.activeElement !== gear && !S.editing.sGear) {
+            var g = sv.values.bif_mass; var gt = g == null ? '' : String(+g); if (gear.value !== gt) { gear.value = gt; }
+            var gs = sv.status.bif_mass, rb = sv.readback ? sv.readback.bif_mass : null;
+            var low = rb != null && +rb <= 20;
+            gear.classList.toggle('send-error', gs === 'pending' || gs === 'error' || low);
+            gear.title = (gs === 'pending' || gs === 'error') ? (sv.status_msg.bif_mass || 'Not sent') :
+                low ? 'Target has ' + (+rb) + ' kg: the Bi-LSTM gives no assist until this is more than 20 kg' : '';
         }
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (document.activeElement === inp || S.editing['adv-' + inp.getAttribute('data-k')]) { return; }
@@ -356,7 +378,7 @@
             html = '<span>' + (sd.after_start ? 'Start reset the target to its build defaults. <b>Confirm the foot side for ' + sid +
                 '</b> to send the session values again.' : '<b>Confirm the foot side for ' + sid + '.</b> The AFO direction depends on it.') +
                 '</span><span class="spacer"></span><button class="btn" data-pick="LEFT">Left foot</button><button class="btn" data-pick="RIGHT">Right foot</button>' +
-                '<span class="lock-note">Start, Motor and Assist are disabled until confirmed.</span>';
+                '<span class="lock-note">Motor and Assist stay locked until the target reports this side.</span>';
         } else if (sd.state === 'mismatch') {
             cls = 'alarm';
             html = '<span><b>Foot side differs.</b> This app has ' + esc(sd.app) + ', the target reports ' + esc(sd.target) +
@@ -375,6 +397,25 @@
             setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
         }
         document.querySelectorAll('.side-opt').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-side') === sd.app ? 'true' : 'false'); });
+    }
+
+    function renderBif(st) {
+        var ban = $('bifBanner'); if (!ban) { return; }
+        var html = '', chk = st.checklist, bif = st.bif;
+        if (chk && !chk.all_done) {
+            html = '<span><b>After Start</b></span><ol class="checklist">' + chk.items.map(function (i) {
+                var mark = i.done === true ? '\u2713' : i.done === false ? '\u25CB' : '?';
+                return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '"><span class="ck" aria-hidden="true">' + mark + '</span>' +
+                    esc(i.text) + (i.detail ? ' <span class="hint">' + esc(i.detail) + '</span>' : '') + '</li>';
+            }).join('') + '</ol><span class="spacer"></span>' + (bif ? '<span class="bif-txt">' + esc(bif.text) + '</span>' : '');
+        } else if (bif && st.target.running && bif.phase !== 'valid' && bif.phase !== 'unknown') {
+            html = '<span class="bif-txt">' + esc(bif.text) + '</span>';
+        }
+        var key = html;
+        if (ban.getAttribute('data-key') !== key) {
+            ban.setAttribute('data-key', key); ban.innerHTML = html; ban.hidden = !html;
+            setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
+        }
     }
 
     function setPill(btn, value, pending, mismatch) {
@@ -402,8 +443,23 @@
         setPill(kb, T.k.value, T.k.pending, T.k.mismatch);
         var fault = S.drive === 'fault';
         var sw = mb.getAttribute('data-sw');
-        mb.disabled = (fault && T.motor.value !== 1) || (!sideOk && T.motor.value !== 1);
-        mb.title = fault ? 'Drive fault: clear STO first' + (sw ? ' (' + sw + ')' : '') :
+        // AFO_r1: the statusword cannot tell "STO engaged" from "fault latched after STO was
+        // released" (both 0x0628). Motor OFF -> ON makes the model's Drive Enable Logic send
+        // the fault-reset pulses, so Motor stays clickable (neutral grey) with Assist off and
+        // the side confirmed; it was disabled before, which made the fault impossible to clear.
+        var isR1 = !!(st.model && st.model.bif);
+        var faultReset = fault && isR1 && T.motor.value !== 1 && T.assist.value !== 1 && sideOk;
+        mb.disabled = (fault && T.motor.value !== 1 && !faultReset) || (!sideOk && T.motor.value !== 1);
+        // stays RED (fault colour from data-drive) but clickable; after a press that did not clear
+        // the fault within 2 s, say so (STO is probably still engaged)
+        var notCleared = faultReset && S.motorFaultPressAt && Date.now() - S.motorFaultPressAt > 2000;
+        if (!fault) { S.motorFaultPressAt = null; }
+        if (notCleared && !S.motorFaultNoted) { S.motorFaultNoted = true; dockMsg('Fault not cleared: is STO released?', true);
+            if (typeof toast === 'function') { toast('Fault not cleared: is STO released?', true); } }
+        mb.title = notCleared ? 'Fault not cleared: is STO released? Release STO, then press Motor again' + (sw ? ' (' + sw + ')' : '') :
+            faultReset ? 'Drive fault' + (sw ? ' (' + sw + ')' : '') + ': release STO, then press Motor to clear it' :
+            (fault && isR1 && T.assist.value === 1 && T.motor.value !== 1) ? 'Drive fault: switch Assist off, then press Motor to clear it' :
+            fault ? 'Drive fault: clear STO first' + (sw ? ' (' + sw + ')' : '') :
             (!sideOk && T.motor.value !== 1) ? 'Confirm the foot side first' : (sw ? 'Drive statusword ' + sw : 'No drive data');
         ab.disabled = !sideOk && T.assist.value !== 1;
         ab.title = ab.disabled ? 'Confirm the foot side first' : '';
@@ -427,8 +483,19 @@
         var cal = $('bCal'), left = st.commands.calibrate_busy_s || 0;
         if (left > 0) { cal.classList.add('busy'); cal.disabled = true; cal.textContent = 'Calibrating… ' + Math.ceil(left) + ' s';
             cal.title = 'Walk normally until the 30 s calibration finishes'; }
-        else if (cal.classList.contains('busy')) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate pressure';
-            cal.title = '30 s pressure calibration: walk normally until it finishes'; }
+        else if (cal.classList.contains('busy')) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate FSR';
+            cal.title = '30 s FSR (insole pressure) calibration: walk normally until it finishes'; }
+        // Calibrate IMU (AFO_r1): enabled only when the loaded app has Gyro_Cal_Request and Assist or Motor is off
+        var ib = $('bImuCal'), ic = st.imu_cal || {};
+        if (ib) {
+            ib.hidden = !ic.visible;
+            var busy = ic.state === 'busy';
+            ib.classList.toggle('busy', busy);
+            ib.disabled = busy || !ic.enabled;
+            ib.textContent = ic.state === 'idle' ? 'Calibrate IMU' : ic.text;
+            ib.title = busy ? 'Hold still until the IMU is ready' : (ic.enabled ? 'Resets the IMU front end; the wearer holds still for 5 s' :
+                (ic.reason || ''));
+        }
     }
 
     function dockMsg(t, isErr) {
@@ -463,6 +530,7 @@
         }
         onCommit($('sPart'), function (v) { commitField($('sPart'), 'sPart', '/api/console/sid', {sid: v}); });
         onCommit($('sMass'), function (v) { commitField($('sMass'), 'sMass', '/api/console/value', {key: 'weight', value: v}); });
+
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (inp.readOnly) { return; }
             var k = inp.getAttribute('data-k');
@@ -517,6 +585,7 @@
     function bindDock() {
         [['bMotor', 'motor'], ['bAssist', 'assist'], ['bK', 'k']].forEach(function (x) {
             $(x[0]).addEventListener('click', function () {
+                if (x[1] === 'motor' && S.drive === 'fault') { S.motorFaultPressAt = Date.now(); S.motorFaultNoted = false; }
                 post('/api/console/toggle', {name: x[1]}).then(function (r) {
                     dockMsg(r.ok ? '' : r.msg, !r.ok);
                     if (!r.ok && /unknown/i.test(r.msg || '')) { $('unknownOff').hidden = false; }
@@ -565,6 +634,9 @@
         kp.addEventListener('blur', function () { if (kp.value !== start && kp.value.trim() !== '') { sendK(kp.value.trim(), false); } });
         $('bCal').addEventListener('click', function () {
             post('/api/console/pulse', {name: 'calibrate'}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); poll(); });
+        });
+        $('bImuCal').addEventListener('click', function () {
+            post('/api/console/imucal', {}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); poll(); });
         });
         $('bResetSV').addEventListener('click', function () {
             var b = $('bResetSV');
@@ -667,6 +739,11 @@
 
     // ---------------------------------------------------------- Signals
     var FAV = ['Uc', 'assistance', 'assistance_level', 'SV_target', 'median_SV', 'Total Desired torque', 'Actual Torque'];
+    // AFO_r1 group (logged in AFO_r1.slx: Bi-LSTM Estimator 1-5, Drive Enable Logic 2-3, IMU Check 2-3)
+    var R1_GROUP = ['estimated_ankle_moment', 'bif_valid', 'bif_stance', 'bif_bias_ready', 'bif_dbg(1)', 'bif_dbg(8)',
+                    'drive_enabled', 'drive_state', 'imu_ok', 'imu_bad_count'];
+    var R1_FAV = ['estimated_ankle_moment', 'bif_valid'];
+    function isR1() { return !!(S.state && S.state.model && S.state.model.bif); }
     function loadSignals() {
         getJSON('/api/signals/status').then(function (st) { S.sig = st; renderSignals(); }).catch(function () {});
     }
@@ -674,18 +751,24 @@
         var st = S.sig || {}, ul = $('sigul'); if (!ul) { return; }
         var names = (st.channels || []).map(function (c) { return c.name; });
         if (S.sigChecked === null && names.length) {
-            S.sigChecked = FAV.filter(function (n) { return names.indexOf(n) >= 0; }).slice(0, 2);
+            S.sigChecked = (isR1() ? R1_FAV : FAV).filter(function (n) { return names.indexOf(n) >= 0; }).slice(0, 2);
             if (!S.sigChecked.length) { S.sigChecked = names.slice(0, 2); }
             setProps('sig-pick', {data: S.sigChecked});
         }
         var q = (($('sigq') || {}).value || '').toLowerCase();
-        var key = names.join('|') + '#' + q + '#' + (S.sigChecked || []).join('|');
+        var r1 = isR1(), grp = r1 ? R1_GROUP.filter(function (n) { return names.indexOf(n) >= 0; }) : [];
+        var key = names.join('|') + '#' + q + '#' + (S.sigChecked || []).join('|') + '#' + r1;
         if (ul.getAttribute('data-key') !== key) {
             ul.setAttribute('data-key', key);
-            ul.innerHTML = names.filter(function (n) { return !q || n.toLowerCase().indexOf(q) >= 0; }).map(function (n) {
+            var li = function (n) {
                 return '<li><label><input type="checkbox" data-n="' + esc(n) + '"' + ((S.sigChecked || []).indexOf(n) >= 0 ? ' checked' : '') +
                     '><span class="mono">' + esc(n) + '</span></label></li>';
-            }).join('') || '<li class="hint" style="padding:8px 12px">' + (st.on ? 'No signals yet' : 'Stream is off') + '</li>';
+            };
+            var hit = function (n) { return !q || n.toLowerCase().indexOf(q) >= 0; };
+            var gh = grp.filter(hit), rest = names.filter(function (n) { return grp.indexOf(n) < 0 && hit(n); });
+            ul.innerHTML = (gh.length ? '<li class="sig-group">AFO_r1 · Bi-LSTM, drive, IMU</li>' + gh.map(li).join('') +
+                (rest.length ? '<li class="sig-group">All signals</li>' : '') : '') + rest.map(li).join('') ||
+                '<li class="hint" style="padding:8px 12px">' + (st.on ? 'No signals yet' : 'Stream is off') + '</li>';
             ul.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
                 cb.addEventListener('change', function () {
                     var n = cb.getAttribute('data-n'), arr = (S.sigChecked || []).filter(function (x) { return x !== n; });

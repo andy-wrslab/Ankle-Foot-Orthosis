@@ -56,6 +56,8 @@ class AppContext:
                                      send_control_packet, send_param_packet, readback)
         from session import SessionSetup
         self.session = SessionSetup(self)
+        from imu_cal import ImuCal
+        self.imu_cal = ImuCal(self)
         self.commands.guard = self.session.guard    # Motor/Assist blocked on a side problem
         from filelog import FileLogRuns
         self.filelog = FileLogRuns(self)

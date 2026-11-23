@@ -140,7 +140,7 @@ def register(app: dash.Dash, ctx) -> None:
         ),
         Output("torque", "figure"), Output("gait", "figure"), Output("press", "figure"), Output("imu", "figure"),
         Output("link-session", "data"),
-        Input("es", "message"), Input("window-sec", "data"),
+        Input("es", "data"), Input("window-sec", "data"),
         State("hold-torque", "data"), State("hold-gait", "data"), State("hold-press", "data"),
         State("hold-imu", "data"),
         prevent_initial_call=True,

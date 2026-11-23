@@ -115,6 +115,29 @@ o.hover=document.querySelectorAll('#torque .hoverlayer .legend, #torque .hoverla
 return o;})()"""
 
 
+HOVER_TARGET_JS = """(function(){
+  var g = document.querySelector('#torque .js-plotly-plot') || document.getElementById('torque');
+  var r = g.querySelector('.nsewdrag').getBoundingClientRect();
+  var xa = g._fullLayout.xaxis, ya = g._fullLayout.yaxis;
+  var x0 = Math.min(xa.range[0], xa.range[1]), x1 = Math.max(xa.range[0], xa.range[1]);
+  var y0 = Math.min(ya.range[0], ya.range[1]), y1 = Math.max(ya.range[0], ya.range[1]);
+  var lo = x0 + 0.1 * (x1 - x0), hi = x1 - 0.1 * (x1 - x0);
+  var tr = (g.data || [])[0] || {}, xs = tr.x || [], ys = tr.y || [];
+  function ok(i) { var y = ys[i]; return y !== null && y !== undefined && isFinite(y) && y >= y0 && y <= y1; }
+  // the middle of a finite, on-scale run (>= 40 samples each side), so a small
+  // pointer move still has a point under it
+  var K = 40;
+  for (var i = xs.length - 1 - K; i >= K; i--) {
+    var x = +xs[i];
+    if (x < lo || x > hi || !ok(i)) continue;
+    var good = true;
+    for (var j = i - K; j <= i + K && good; j++) { good = ok(j); }
+    if (good) { return [r.left + xa.l2p(x), r.top + ya.l2p(ys[i])]; }
+  }
+  return [r.left + r.width * 0.6, r.top + r.height * 0.5];
+})()"""
+
+
 def mouse(c, x, y):
     c.call("Input.dispatchMouseEvent", type="mouseMoved", x=x, y=y)
 
@@ -179,7 +202,9 @@ def main():
                 # ---- 2 hover hold on Torque (page 1, 10 s window)
                 c.js("document.getElementById('window-10-btn').click(); var s=document.querySelector('.swipe-container'); s.scrollTo({left: 0, behavior: 'instant'}); 1")
                 c.pump(2)
-                box = c.js("(function(){var r=document.querySelector('#torque .nsewdrag').getBoundingClientRect();return [r.left+r.width*0.6, r.top+r.height*0.5];})()")
+                # hover over a real point: the sender cycles torque through NaN and off-scale
+                # phases, and "x unified" (correctly) shows no label over a gap
+                box = c.js(HOVER_TARGET_JS)
                 before = c.js(REV_JS)
                 mouse(c, box[0], box[1])
                 c.pump(0.8)

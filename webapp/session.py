@@ -29,17 +29,24 @@ import os
 import re
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+import model_profile as mp
 
 _log = logging.getLogger("afo.session")
 
 # key, label, kind, limits, console-UDP (5433) echo column, model block|param, build default.
 # "adv" = Advanced popover (confirmed by getparam only). Block names from AFO.slx
-# (all top-level Constants/Gains; the same names exist in AFO_r1).
+# (all top-level Constants/Gains; the same names exist in AFO_r1, checked 2026-11-19).
+# "models": only in these model profiles. A '/' in a block name is escaped in the path.
 SPECS = [
     {"key": "side", "label": "Foot side", "kind": "side", "udp": "side", "block": "Left 0/Right 1|Value", "default": 0},
     {"key": "weight", "label": "Body mass", "kind": "number", "min": 20, "max": 200, "udp": "weight_kg",
      "block": "weight|Gain", "block_r1": "weight|Value", "default": 55, "unit": "kg"},
+    # AFO_r1: BIF_mass_kg follows Body mass (Andy, Nov 23: "only use body mass"); no field of its own
+    {"key": "bif_mass", "label": "Mass (Bi-LSTM)", "kind": "number", "min": mp.BIF_MASS_MIN,
+     "min_exclusive": True, "max": 250, "block": "BIF_mass_kg|Value", "models": ["AFO_r1"], "default": 0,
+     "unit": "kg", "follows": "weight", "hint": "= body mass; 20 kg or less = Bi-LSTM gives no assist"},
     {"key": "mode", "label": "Assistance mode", "kind": "mode", "udp": "assist_mode", "block": "Constant4|Value",
      "default": 3},
     {"key": "k_percent", "label": "K", "kind": "number", "min": 0, "max": 10, "udp": "fixed_k_pct",
@@ -75,11 +82,18 @@ SPECS = [
 ]
 
 
+def spec_in(sp, model: str) -> bool:
+    return not sp.get("models") or model in sp["models"]
+
+
 def _model_paths(model: str) -> Dict[str, str]:
     out = {}
     for sp in SPECS:
+        if not spec_in(sp, model):
+            continue
         blk = sp.get("block_r1") if model == "AFO_r1" and sp.get("block_r1") else sp["block"]
-        out[sp["key"]] = f"{model}/{blk}"
+        name, prm = blk.rsplit("|", 1)
+        out[sp["key"]] = f"{mp.block_path(model, name)}|{prm}"
     return out
 
 
@@ -92,7 +106,7 @@ SID_RE = re.compile(r"^S\d{1,4}$")
 ECHO_MODEL = "AFO_r1"        # the model that sends the training UDP echo
 ECHO_MAX_AGE_S = 0.5      # console packet every 10 ms; older than this -> rows grey
 SHORT = {"side": "Foot side", "weight": "Mass", "mode": "Mode", "k_percent": "K", "sv_target_min": "SV target",
-         "sv_target_max": "SV target", "motor": "Motor command", "assist": "Assist command", "k": "K command"}
+         "sv_target_max": "SV target", "bif_mass": "Mass (Bi-LSTM)", "motor": "Motor command", "assist": "Assist command", "k": "K command"}
 
 
 def _num(v) -> Optional[float]:
@@ -131,6 +145,8 @@ class SessionSetup:
         self.echo_port: Optional[int] = None
         self.side_confirmed: Optional[Dict[str, Any]] = None
         self.after_start = False      # SPEC: every Start ends in the Confirm state
+        self.started_at: Optional[float] = None     # last Start in this app session (after-Start checklist)
+        self.configured_model = mp.configured_model(ctx.cfg)
         self.profiles: Dict[str, Dict[str, Any]] = {}
         self.events: list = []        # start/stop times of this app session (for exports)
         self._load()
@@ -166,8 +182,20 @@ class SessionSetup:
         return next(s for s in SPECS if s["key"] == key)
 
     def model(self) -> str:
-        app = (self.ctx.runctl.status or {}).get("app") or "AFO"
-        return app if app in self.models else "AFO"
+        """Loaded app when it is a known profile, else config target.model, else AFO."""
+        app = (self.ctx.runctl.status or {}).get("app")
+        if app in self.models:
+            return app
+        cm = self.configured_model
+        return cm if cm in self.models else mp.DEFAULT_MODEL
+
+    def profile(self) -> Dict[str, Any]:
+        return mp.PROFILES.get(self.model(), mp.PROFILES[mp.DEFAULT_MODEL])
+
+    def specs(self) -> List[Dict[str, Any]]:
+        """The settings of the current model profile."""
+        m = self.model()
+        return [sp for sp in SPECS if spec_in(sp, m)]
 
     def target_path(self, key):
         p = self.models[self.model()].get(key)
@@ -218,18 +246,40 @@ class SessionSetup:
             return "Mode must be RL or Fixed K."
         if sp.get("readonly"):
             return f"{sp['label']} is read-only here."
+        if not spec_in(sp, self.model()):
+            return f"{sp['label']}: not in model {self.model()}"
+        if sp.get("min_exclusive") and v <= sp["min"]:
+            return f"{sp['label']}: must be more than {sp['min']:g} {sp.get('unit', '')}".rstrip()
         if sp["kind"] == "number" and not (sp.get("min", -1e12) <= v <= sp.get("max", 1e12)):
             return f"{sp['label']}: {v:g} is outside {sp.get('min')}..{sp.get('max')}"
+        if key == "weight" and self.profile().get("bif") and v <= mp.BIF_MASS_MIN:
+            return f"Body mass must be more than {mp.BIF_MASS_MIN:g} kg (the Bi-LSTM gives no assist at or below it)."
         # SV target band: 0.8-1.5 m/s for healthy participants, min 0.5 for patients (Andy 12:53)
         lo = v if key == "sv_target_min" else self.values.get("sv_target_min")
         hi = v if key == "sv_target_max" else self.values.get("sv_target_max")
         if key in ("sv_target_min", "sv_target_max") and lo is not None and hi is not None and float(lo) >= float(hi):
             return f"Min target speed ({float(lo):g}) must be below max target speed ({float(hi):g})."
+        follow = key == "weight" and self.profile().get("bif")
         with self.lock:
             self.values[key] = v
+            if follow:
+                self.values["bif_mass"] = v          # BIF_mass_kg = body mass
             self._save()
         self.audit("enter", f"{key}={v:g}")
-        return self._send(key, v)
+        msg = self._send(key, v)
+        if follow:
+            self._send_after("bif_mass", v)
+        return msg
+
+    def _send_after(self, key: str, value: float) -> None:
+        """Send *key* once the current session job (one MATLAB engine) has finished."""
+        def later():
+            t_end = time.time() + 40
+            time.sleep(0.2)
+            while self.ctx.jobs.running("session") and time.time() < t_end:
+                time.sleep(0.2)
+            self._send(key, value)
+        threading.Thread(target=later, name=f"send-{key}", daemon=True).start()
 
     def confirm_side(self, side: str, typed_sid: str) -> str:
         side = (side or "").upper()
@@ -265,6 +315,11 @@ class SessionSetup:
         if not self._connected():
             self.status[key] = {"state": "pending", "msg": "pending: sent on Connect", "at": time.time()}
             return f"{sp['label']} saved; will be sent on Connect"
+        rc = self.ctx.runctl.status or {}
+        if rc.get("loaded") is False and not rc.get("running"):
+            # Stop unloads the app: nothing can take a setparam until Start reloads it
+            self.status[key] = {"state": "pending", "msg": "pending: sent after Start", "at": time.time()}
+            return f"{sp['label']} saved; will be sent right after Start"
         blk, prm = tp
 
         def run(job):
@@ -300,7 +355,7 @@ class SessionSetup:
         """Echo first (no MATLAB); getparam for every value without a fresh echo."""
         echo = self.echo()
         self.echo_port = echo.get("_port")
-        for sp in SPECS:
+        for sp in self.specs():
             k = sp["key"]
             col = sp.get("udp")
             if col and echo.get(col) is not None:
@@ -311,7 +366,7 @@ class SessionSetup:
                 self.readback_src.pop(k, None)
         if not self._connected() or self.ctx.jobs.running("rc") or self.ctx.jobs.running("session"):
             return
-        need = [sp["key"] for sp in SPECS if self.readback_src.get(sp["key"]) != "echo"]
+        need = [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
         paths = {k: "|".join(self.target_path(k)) for k in need if self.target_path(k)}
         if not paths:
             return
@@ -333,7 +388,7 @@ class SessionSetup:
         """'Settings on the target': name, entered, target value, source (echo/getparam), match."""
         now = time.time()
         rows = []
-        for sp in SPECS:
+        for sp in self.specs():
             k = sp["key"]
             src = self.readback_src.get(k)
             tgt = self.readback.get(k)
@@ -362,12 +417,19 @@ class SessionSetup:
         """After Connect: send pending values. After Start: re-apply everything entered."""
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
-            # Start reloads the build defaults: the side is never re-sent silently;
-            # the operator confirms it again (the other values are re-applied)
+            # Start reloads the build defaults (AFO_r1: side -1), so the side can only be set
+            # after Start: Start is never locked by the side, and a side the operator confirmed
+            # for this S-ID is sent right after Start, then read back. Motor and Assist stay
+            # locked until the target reports it (side_problem).
             with self.lock:
-                self.side_confirmed = None
                 self.after_start = True
-        order = ["side"] + [sp["key"] for sp in SPECS if sp["key"] != "side"]
+                self.readback.pop("side", None)
+                self.readback_src.pop("side", None)
+                self.started_at = time.time()
+        if self.profile().get("bif") and self.values.get("weight") is not None:
+            with self.lock:
+                self.values["bif_mass"] = self.values["weight"]      # BIF_mass_kg follows body mass
+        order = ["side"] + [sp["key"] for sp in self.specs() if sp["key"] != "side"]
         for k in order:
             if self.values.get(k) is None:
                 continue
@@ -406,7 +468,7 @@ class SessionSetup:
             rbi = None
         if rbi == -1:
             # AFO_r1 compiles the side as -1 (unset): the drive cannot enable until it is set
-            return "Side not set: motor disabled. Confirm the foot side in the top bar."
+            return "Foot side unset, motor locked until set. Confirm the foot side in the top bar."
         if rbi != int(want):
             return SIDE_WARNING + f" Target: {SIDE_NAMES.get(rbi, rb)}, profile: {SIDE_NAMES[int(want)]}."
         return None
@@ -420,7 +482,7 @@ class SessionSetup:
         except (TypeError, ValueError):
             rbi = None
         if rbi == -1:
-            return {"text": "Side not set: motor disabled", "state": "unset"}
+            return {"text": "Foot side unset, motor locked until set", "state": "unset"}
         if self.side_problem() is None:
             return {"text": f"Side: {SIDE_NAMES[int(want)]}", "state": "ok"}
         if rbi in (0, 1) and want is not None and rbi != int(want):
@@ -445,9 +507,51 @@ class SessionSetup:
                 "target": dict(self.ctx.runctl.status or {}), "run_events": list(self.events),
                 "commands": self.ctx.commands.view()}
 
+    # ---------------------------------------------------------- Bi-LSTM (AFO_r1)
+    def bif_view(self) -> Optional[Dict[str, Any]]:
+        """Bi-LSTM phase: console packet cols 12-14 when present (15-float packet),
+        else the MATLAB Signals stream (bif_bias_ready, bif_valid, bif_dbg(1)/(8))."""
+        if not self.profile().get("bif"):
+            return None
+        echo = self.echo()
+        if echo.get("bif_valid") is not None or echo.get("bif_bias_ready") is not None:
+            return mp.bif_status(echo, "console")
+        sig: Dict[str, Any] = {}
+        ml = getattr(self.ctx, "matlab", None)
+        if ml is not None and hasattr(ml, "snapshot"):
+            try:
+                got = ml.snapshot("latest", ["bif_bias_ready", "bif_valid", mp.DBG_STATE, mp.DBG_PROGRESS],
+                                  2.0, timeout=0.3) or {}
+            except Exception:
+                got = {}
+            vals = got.get("values") or {}
+            sig = {"bif_bias_ready": vals.get("bif_bias_ready"), "bif_valid": vals.get("bif_valid"),
+                   "state": vals.get(mp.DBG_STATE), "bif_cal_progress": vals.get(mp.DBG_PROGRESS)}
+        if any(v is not None for v in sig.values()):
+            return mp.bif_status(sig, "signals")
+        return mp.bif_status({}, None)
+
+    def checklist(self, bif: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """After-Start checklist for AFO_r1 (every Start resets side and BIF mass)."""
+        if not self.profile().get("bif"):
+            return None
+        if bif is None:
+            bif = self.bif_view() or {}
+        mass = _num(self.readback.get("bif_mass"))
+        done = {
+            "side": self.side_problem() is None,
+            "bif_mass": mass is not None and mass > mp.BIF_MASS_MIN,
+            "bias": None if bif.get("bias_ready") is None else bif["bias_ready"] >= 0.5,
+            "walk": None if bif.get("valid") is None else bif["valid"] >= 0.5,
+        }
+        detail = {"bif_mass": None if mass is None else f"Bi-LSTM mass on target {mass:g} kg",
+                  "walk": f"{bif['progress_pct']} %" if bif.get("progress_pct") is not None else None}
+        items = [{"key": k, "text": t, "done": done[k], "detail": detail.get(k)} for k, t in mp.CHECKLIST]
+        return {"items": items, "all_done": all(i["done"] for i in items), "started_at": self.started_at}
+
     def view(self) -> Dict[str, Any]:
         rows = []
-        for sp in SPECS:
+        for sp in self.specs():
             k = sp["key"]
             rows.append({"key": k, "label": sp["label"], "value": self.values.get(k),
                          "readback": self.readback.get(k), "readback_source": self.readback_src.get(k),
@@ -455,5 +559,6 @@ class SessionSetup:
                          "status": self.status.get(k, {})})
         return {"sid": self.sid, "rows": rows, "side_problem": self.side_problem(), "side_chip": self.side_chip(),
                 "side_confirmed": self.side_confirmed, "readback_at": self.readback_at, "model": self.model(),
+                "profile": self.profile(),
                 "writes_enabled": self.writes_enabled, "profiles": sorted(self.profiles),
                 "echo_active": bool(self.echo()), "target_table": self.target_table()}

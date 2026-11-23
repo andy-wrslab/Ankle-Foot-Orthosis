@@ -15,17 +15,19 @@ Problems on top of it, priority red > amber > base:
   red    "Foot side differs" target side != confirmed side
   amber  "Confirm foot side" side not confirmed / not verified / unset (-1)
   amber  "Mass differs" etc. an echoed / read-back value != the entered value
+  amber  "Set mass" AFO_r1: BIF_mass_kg (= body mass) read back <= 20 kg (Bi-LSTM gives no assist)
 The drive (statusword / STO) is deliberately not part of this status.
 
 The console stream (UDP 5433) is required when it is enabled and has been
-seen in this app session, or the loaded model is AFO_r1.
+seen in this app session, or the loaded model's profile expects it (AFO_r1).
 """
 from __future__ import annotations
 
 import time
 from typing import Any, Dict, List
 
-from session import SHORT
+import model_profile as mp
+from session import SHORT, _num
 
 NO_DATA_S = 0.5          # SPEC: no 5431 packet for > 0.5 s -> "No data"
 BUSY = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Starting…", "stop": "Stopping…",
@@ -60,8 +62,9 @@ def top_status(ctx) -> Dict[str, Any]:
     running = bool(rc.get("running")) if connected else live_now
 
     model = ctx.session.model() if connected and rc.get("app") else None
+    expects_console = bool(mp.PROFILES.get(model or "", {}).get("console_expected"))
     need_training = (bool(getattr(ctx.training, "enabled", True)) and
-                     (model == "AFO_r1" or bool(tr_st.get("packets_ok"))))
+                     (expects_console or bool(tr_st.get("packets_ok"))))
 
     # ---- base
     job = ctx.jobs.running("rc")
@@ -91,6 +94,12 @@ def top_status(ctx) -> Dict[str, Any]:
         elif chip["state"] in ("warn", "unset"):
             issues.append({"level": "amber", "key": "confirm-side", "text": "Confirm foot side",
                            "detail": ctx.session.side_problem() or chip["text"]})
+        if ctx.session.profile().get("bif"):
+            m = _num(ctx.session.readback.get("bif_mass"))
+            if m is not None and m <= mp.BIF_MASS_MIN:
+                issues.append({"level": "amber", "key": "bif-mass", "text": "Set mass",
+                               "detail": f"BIF_mass_kg on the target is {m:g} kg: the Bi-LSTM gives no assist "
+                                         f"at {mp.BIF_MASS_MIN:g} kg or less"})
         seen = set()
         for row in ctx.session.target_table():
             if row["name"] == "side" or row["match"] is not False:

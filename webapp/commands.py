@@ -234,7 +234,7 @@ class CommandState:
     CALIBRATE_LOCK_S = 30.0
 
     def pulse(self, name: str) -> Dict[str, Any]:
-        """Calibrate pressure / Reset SV: exactly two packets, the full last-sent
+        """Calibrate FSR (pressure) / Reset SV: exactly two packets, the full last-sent
         state with the field = 1, then ~200 ms later the same state with it = 0.
         Calibrate locks for 30 s (repeat presses refused)."""
         if name not in ("calibrate", "reset"):

@@ -45,6 +45,6 @@ class SnapshotBroadcaster:
 snapshots = SnapshotBroadcaster()
 
 # Limit concurrent SSE clients
-MAX_CLIENTS = 5
+MAX_CLIENTS = 8
 _active_clients = 0
 _client_lock = threading.Lock()

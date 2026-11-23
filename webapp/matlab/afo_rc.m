@@ -245,7 +245,7 @@ end
 try, s.filelog = char(string(tg.FileLog.LoggingService)); catch, end
 if s.running
     try
-        s.ethercat_state = double(getsignal(tg, 'AFO/EtherCAT Initialization/EtherCAT Get State', 1));
+        s.ethercat_state = double(getsignal(tg, [s.app '/EtherCAT Initialization/EtherCAT Get State'], 1));
     catch
     end
 end

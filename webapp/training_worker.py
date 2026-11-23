@@ -5,7 +5,10 @@ make_afo_r1): '<12f' = 48 bytes every 10 ms to OMEN :5433. Col 0 t_model (same
 clock as main bus 5431 col 0), 1 side (-1 unset / 0 L / 1 R), 2 weight_kg,
 3 assist_mode (1 RL, 2 ILC, 3 fixed K), 4 fixed_k_pct, 5-9 cmd_motor,
 cmd_assist, cmd_k, cmd_calibrate_pressure, cmd_reset_sv, 10 imu_ok,
-11 imu_bad_count.
+11 imu_bad_count. Optional tail (AFO_r1, if added): 3 more floats, cols 12-14 =
+bif_valid, bif_cal_progress (BIF_Dbg element 8, 0..1), bif_bias_ready
+(layout key "optional_columns" overrides the names). A 48-byte packet leaves
+them unset (NaN in the history, absent from "latest"); a 60-byte one fills them.
 
 The packet has no version or counter column, so every packet is checked by:
 exact length; every value finite; side in {-1, 0, 1}; assist_mode in {1, 2, 3};
@@ -41,11 +44,22 @@ RESTART_JUMP_S = 5.0
 RESTART_RUN = 20          # or 20 packets in a row (0.2 s) older than the last time: a new timeline
 
 
+DEFAULT_TAIL = ["bif_valid", "bif_cal_progress", "bif_bias_ready"]
+
+
 def load_layout(path):
     lay = json.load(open(path, encoding="utf-8"))
     cols = sorted(lay["columns"], key=lambda c: c.get("i", c.get("column")))
     names = [c.get("n", c.get("name")) for c in cols]
     return lay, names
+
+
+def tail_struct(fmt: struct.Struct, tail):
+    """Struct for the base packet plus the optional float tail (None if the base is not '<Nf')."""
+    f = fmt.format if isinstance(fmt.format, str) else fmt.format.decode()
+    if not tail or not (f.startswith("<") and f.endswith("f") and f[1:-1].isdigit()):
+        return None
+    return struct.Struct(f"<{int(f[1:-1]) + len(tail)}f")
 
 
 def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> None:
@@ -62,6 +76,13 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     period = float(lay.get("period_ms", 10)) / 1000.0
     n = len(names)
     assert fmt.size == 4 * n, "layout format and columns disagree"
+    tail = [t for t in (lay.get("optional_columns") or DEFAULT_TAIL) if t not in names]
+    fmt_ext = tail_struct(fmt, tail)
+    if fmt_ext is None:
+        tail = []
+    names = names + tail                 # history rows always carry the tail (NaN when absent)
+    n_all = len(names)
+    pad = (float("nan"),) * len(tail)
     idx = {nm: i for i, nm in enumerate(names)}
     i_time = idx.get("t_model", 0)
     versioned = "layout_version" in idx and "packet_counter" in idx
@@ -70,7 +91,8 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
 
     st = {"packets_ok": 0, "bad_length": 0, "bad_version": 0, "non_finite_packets": 0, "bad_value": 0,
           "counter_gaps": 0, "lost_packets": 0, "dup_or_reordered": 0, "model_restarts": 0, "last_counter": None,
-          "last_t_model": None, "back_run": 0, "last_rx": 0.0, "bind_error": None, "non_finite_by_col": {}, "bad_value_by_col": {}}
+          "last_t_model": None, "back_run": 0, "last_rx": 0.0, "bind_error": None, "non_finite_by_col": {}, "bad_value_by_col": {},
+          "columns": None, "packets_ext": 0}
     latest = {}
     hist_t = deque()
     hist = deque()
@@ -83,13 +105,13 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             last_log[key] = now
             log.warning(msg)
 
-    def accept(row) -> bool:
+    def accept(row, n_used) -> bool:
         if versioned:
             if row[idx["layout_version"]] != version:
                 st["bad_version"] += 1
                 rl("ver", f"packet with layout_version {row[idx['layout_version']]} dropped")
                 return False
-        bad = [i for i, v in enumerate(row) if not math.isfinite(v)]
+        bad = [i for i, v in enumerate(row[:n_used]) if not math.isfinite(v)]
         if bad:
             st["non_finite_packets"] += 1
             for i in bad:
@@ -152,7 +174,8 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             st["bind_error"] = None
             sock.settimeout(0.5)
             buf = bytearray(65536)
-            log.info("listening for console packets on %s:%d (%s, %d columns)", host, port, lay["format"], n)
+            log.info("listening for console packets on %s:%d (%s, %d columns%s)", host, port, lay["format"], n,
+                     f", or {n_all} with {', '.join(tail)}" if tail else "")
             try:
                 while not stop_evt.is_set():
                     try:
@@ -161,16 +184,23 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
                         continue
                     except ConnectionResetError:
                         continue
-                    if nbytes != fmt.size:
+                    if nbytes == fmt.size:
+                        row, n_used = fmt.unpack_from(buf) + pad, n
+                    elif fmt_ext is not None and nbytes == fmt_ext.size:
+                        row, n_used = fmt_ext.unpack_from(buf), n_all
+                    else:
                         st["bad_length"] += 1
-                        rl("len", f"console packet of {nbytes} bytes dropped (expected {fmt.size})")
+                        rl("len", f"console packet of {nbytes} bytes dropped (expected {fmt.size}"
+                                  + (f" or {fmt_ext.size}" if fmt_ext is not None else "") + ")")
                         continue
-                    row = fmt.unpack_from(buf)
-                    if not accept(row):
+                    if not accept(row, n_used):
                         continue
                     st["packets_ok"] += 1
+                    st["columns"] = n_used
+                    if n_used > n:
+                        st["packets_ext"] += 1
                     st["last_rx"] = time.time()
-                    vals = {names[i]: row[i] for i in range(n)}
+                    vals = {names[i]: row[i] for i in range(n_used)}
                     with lock:
                         latest.clear()
                         latest.update(vals)

@@ -183,6 +183,14 @@ body {
 .sys-banner .spacer { flex: 1; }
 .sys-banner.caution { background: var(--caution-weak); color: var(--caution); }
 .sys-banner.alarm   { background: var(--alarm-weak);   color: var(--alarm); }
+/* AFO_r1: after-Start checklist + Bi-LSTM phase */
+.sys-banner.info { background: var(--caution-weak); color: var(--caution); flex-wrap: wrap; }
+.sys-banner .checklist { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin: 0; padding: 0; list-style: none; }
+.sys-banner .checklist li { display: inline-flex; align-items: center; gap: 6px; }
+.sys-banner .checklist li.done { opacity: .7; }
+.sys-banner .checklist .ck { font-weight: 700; width: 1em; text-align: center; }
+.sys-banner .bif-txt { font-weight: 600; }
+.siglist .sig-group { padding: 6px 12px 2px; font-size: var(--fs-12); font-weight: 600; opacity: .7; list-style: none; }
 .sys-banner .btn { height: var(--btn-sm); font-size: var(--fs-12); padding: 0 12px; }
 .lock-note { font-size: var(--fs-12); color: var(--text-3); }
 
@@ -254,7 +262,7 @@ button.drive-badge:hover { filter: brightness(.96); }
 .tb-field { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-12); color: var(--text-3); }
 .tb-field .input { height: 28px; padding: 0 8px; font-size: var(--fs-12); }
 .tb-field #sPart { width: 56px; }
-.tb-field #sMass { width: 44px; text-align: right; }
+.tb-field #sMass, .tb-field #sGear { width: 44px; text-align: right; }
 .input.sent-flash { border-color: var(--accent); transition: border-color 600ms var(--ease); }
 .input.send-error { border-color: var(--alarm); }
 .adv-pop.top { position: fixed; top: calc(var(--topbar-real, var(--topbar-h)) + 4px); left: auto; right: var(--gutter); }
