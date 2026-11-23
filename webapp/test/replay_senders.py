@@ -10,6 +10,9 @@
   0 = LEFT), weight 55, mode 3 (fixed K), K 5 %, commands motor/assist/k = 0/0/1 (cmds= overrides).
 Never sends to the Speedgoat or to any control port.
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _lowprio  # noqa: E402,F401  (below normal priority)
 import json
 import math
 import os

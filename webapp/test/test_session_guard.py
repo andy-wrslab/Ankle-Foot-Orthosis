@@ -68,6 +68,7 @@ def main():
     r["8_k_change_big_confirm"] = s.check_change("k_percent", 8)
     r["9_readback_sources"] = s.view()["rows"]
     print(json.dumps(r, indent=1, default=str))
+    os.makedirs(os.path.join(APP, "test", "e2e"), exist_ok=True)
     json.dump(r, open(os.path.join(APP, "test", "e2e", "session_guard_results.json"), "w"), indent=1, default=str)
 
 

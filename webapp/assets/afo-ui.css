@@ -14,8 +14,9 @@
    Offline-safe: put Inter (variable, woff2) and JetBrains Mono woff2 in
    assets/fonts/. If they are missing the stacks fall back to Segoe UI
    and Consolas, which every Windows PC has.                           */
-@font-face { font-family: "Inter"; src: url("fonts/InterVariable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
-@font-face { font-family: "JetBrains Mono"; src: url("fonts/JetBrainsMono-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+/* Fonts: Inter / JetBrains Mono files are not on the OMEN yet (downloading them needs Andy's
+   OK), so no @font-face here (it only produced 404s). The stacks below fall back to Segoe UI /
+   Cascadia Mono / Consolas; a locally installed Inter or JetBrains Mono is still used. */
 
 :root {
   /* Neutrals (warm, very low chroma) */
@@ -78,7 +79,7 @@
   --r-ctl: 6px; --r-card: 8px; --r-pill: 999px;
 
   /* Sizes */
-  --topbar-h: 48px;
+  --topbar-h: 56px;      /* Andy Nov 23: slightly thicker top bar */
   --dock-h:   64px;
   --btn-sm: 28px; --btn-md: 32px; --btn-lg: 40px;
 
@@ -112,6 +113,9 @@ body {
 /* ---------- Top bar ------------------------------------------------- */
 .topbar {
   display: flex; align-items: center; gap: var(--sp-6);
+  /* the bar sits in #chrome-top (display: contents), so `.app > .topbar` never matched:
+     the height is set here */
+  height: var(--topbar-h); flex: none;
   padding: 0 var(--gutter); background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -168,6 +172,13 @@ body {
 .side-act { display: flex; justify-content: flex-end; gap: var(--sp-2); }
 .side-chip.unset    { box-shadow: inset 0 0 0 1px var(--caution); color: var(--caution); background: var(--caution-weak); font-weight: 600; }
 .side-chip.mismatch { box-shadow: inset 0 0 0 1px var(--alarm);   color: var(--alarm);   background: var(--alarm-weak);   font-weight: 600; }
+.side-chip.pending  { box-shadow: inset 0 0 0 1px var(--border, #E2DFD9); color: var(--text-2); font-weight: 500; }
+/* transient message for actions whose dock is not on screen (side press on any page) */
+.toast { position: fixed; top: calc(var(--topbar-real, 48px) + 8px); right: 16px; z-index: 50; max-width: 420px;
+         padding: 8px 12px; border-radius: 8px; background: var(--surface, #fff); color: var(--text, #1D1F21);
+         box-shadow: 0 2px 10px rgba(0,0,0,.15); font-size: var(--fs-12, 12px); }
+.toast.err { color: var(--alarm); box-shadow: inset 0 0 0 1px var(--alarm), 0 2px 10px rgba(0,0,0,.15); }
+.toast[hidden] { display: none; }
 .lock-note { font-size: var(--fs-12); color: var(--text-3); }
 /* Auto-send status for Home fields */
 .sent { font-size: var(--fs-12); color: var(--text-3); }
@@ -477,8 +488,9 @@ button.drive-badge:hover { filter: brightness(.96); }
    the status button's right edge <= window - gutter at every width. */
 @media (max-width: 1400px) { .topbar { gap: var(--sp-4); } }
 @media (max-width: 1180px) { .topbar { gap: var(--sp-3); } .topbar .vr { display: none; } .nav a { padding: 0 var(--sp-2); } }
-@media (max-width: 980px)  { .app > .topbar { height: auto; flex-wrap: wrap; padding-block: var(--sp-2); row-gap: var(--sp-2); }
-  .nav { order: 9; flex: 1 1 100%; overflow-x: auto; } .topbar .spacer { display: none; } .session-bar { margin-left: auto; }
+@media (max-width: 1100px) { .topbar { height: auto; min-height: var(--topbar-h); flex-wrap: wrap; padding-block: var(--sp-2); row-gap: var(--sp-2); }
+  .nav { order: 9; flex: 1 1 100%; flex-wrap: wrap; overflow: visible; }
+  .meta .mt-label, .meta .num { display: none; } .topbar .spacer { display: none; } .session-bar { margin-left: auto; }
   .app > .dock { height: auto; min-height: var(--dock-h); flex-wrap: wrap; padding-block: var(--sp-2); row-gap: var(--sp-2); }
   .btn-toggle { min-width: 96px; } }
 
@@ -487,3 +499,75 @@ button.drive-badge:hover { filter: brightness(.96); }
 .js-plotly-plot .plotly .modebar { display: none !important; }
 .dash-graph { height: 100%; }
 ._dash-loading, ._dash-loading-callback { display: none; }   /* no spinner flicker at 20 Hz */
+
+/* state tag after the top-bar Mass field: pending / sending / ✓ / not set */
+.tb-state { font-size: var(--fs-12, 12px); padding: 0 6px; border-radius: 10px; white-space: nowrap; }
+.tb-state.pending { color: var(--caution); background: var(--caution-weak); }
+.tb-state.ok { color: var(--ok, #2E7D4F); }
+.tb-state.err { color: var(--alarm); background: var(--alarm-weak); }
+
+/* Live > Sensors (Nov 23): one card per sensor group in a scrolling grid */
+/* the grid rows set every card's height (a card min-height taller than its row made the
+   wide FSR card spill under the next row) */
+.sensor-grid { flex: 1 1 0; min-height: 0; overflow-y: auto; display: grid; gap: var(--gap);
+               grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(220px, 1fr); }
+.sensor-grid[hidden] { display: none; }
+.sensor-grid .plot-card { min-height: 0; }
+.sensor-grid .plot-card.wide { grid-column: 1 / -1; }
+@media (max-width: 900px) { .sensor-grid { grid-template-columns: minmax(0, 1fr); } }
+.sensor-grid .card-head { flex-wrap: wrap; height: auto; min-height: 40px; row-gap: 2px; }
+.legend.lg-vals { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; }
+.lg { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; padding: 1px 2px;
+      font: inherit; font-size: var(--fs-12, 12px); color: var(--text-2); cursor: pointer; border-radius: 4px; }
+.lg:hover { background: var(--surface-2); }
+.lg i { display: inline-block; width: 12px; height: 2px; background: currentColor; }
+.lg .lg-v { font-weight: 600; color: var(--text); min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+.lg.off { opacity: .45; }
+.lg.off .lg-n { text-decoration: line-through; }
+
+/* narrow screens (down to 360 px): every group wraps instead of running off the edge */
+@media (max-width: 640px) {
+  .topbar { gap: var(--sp-2); }
+  .session-bar, .target, .meta { flex-wrap: wrap; row-gap: var(--sp-2); }
+  .session-bar { margin-left: 0; }
+  .tb-field #sPart { width: 56px; }
+}
+
+/* status popover: every open item with what to do, then the after-Start list */
+.open-items { list-style: none; margin: 0; padding: var(--sp-2) var(--sp-4); display: flex; flex-direction: column; gap: 6px; }
+.open-items li { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid var(--border); font-size: var(--fs-12, 12px); }
+.open-items li.red { border-left-color: var(--alarm); }
+.open-items li.amber { border-left-color: var(--caution); }
+.open-items li b { font-weight: 600; color: var(--text); }
+.open-items li .todo { color: var(--text-2); }
+.open-items li.none { border-left-color: var(--ok, #2E7D4F); color: var(--text-2); }
+.open-items li.note { border-left-color: var(--border); color: var(--text-3, #73767B); }
+ul.pop-checklist { list-style: none; margin: 0; padding: var(--sp-2) var(--sp-4); display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; font-size: var(--fs-12, 12px); }
+ul.pop-checklist li { display: flex; gap: 6px; align-items: baseline; }
+ul.pop-checklist .ck { width: 1em; text-align: center; font-weight: 700; }
+ul.pop-checklist li.done { color: var(--text-2); }
+/* narrow screens: the dock's Motor / Assist / K / Mode row wraps too (it was 586 px wide) */
+@media (max-width: 640px) {
+  .dock .controls { flex-wrap: wrap; row-gap: var(--sp-2); min-width: 0; }
+  .dock, .dock .actions { flex-wrap: wrap; row-gap: var(--sp-2); }
+  .btn-toggle { min-width: 0; }
+}
+
+/* Trials: how many runs the target keeps (FileLogMaxRuns) */
+.runs-limit { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: var(--sp-2) var(--sp-4); font-size: var(--fs-12, 12px);
+              color: var(--text-2); border-bottom: 1px solid var(--border); }
+.runs-limit .warn { color: var(--caution); font-weight: 600; }
+.runs-limit.near { background: var(--caution-weak); }
+
+/* popovers never run past the window bottom: they scroll inside */
+.popover { max-height: calc(100vh - var(--topbar-real, var(--topbar-h)) - 16px); overflow-y: auto; }
+/* Rig status: the same two columns as "Settings on the target" */
+#rigKv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; padding: var(--sp-2) var(--sp-4) var(--sp-3);
+         font-size: var(--fs-12, 12px); }
+#rigKv dt { color: var(--text-2); margin: 0; }
+#rigKv dd { margin: 0; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* long status texts never push the bar wider: ellipsis, full text in the tooltip / popover */
+.status-btn .sb-txt { display: inline-block; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+@media (max-width: 1400px) { .status-btn .sb-txt { max-width: 220px; } }
+@media (max-width: 640px)  { .status-btn .sb-txt { max-width: 150px; } }

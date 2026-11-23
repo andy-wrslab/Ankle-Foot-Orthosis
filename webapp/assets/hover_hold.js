@@ -5,7 +5,7 @@
 // shows the label and holds; a tap outside releases. Safety: 20 s without
 // pointer movement releases too. Each graph <id> has a dcc.Store "hold-<id>".
 (function () {
-    var HELD = ['torque', 'gait', 'press', 'imu', 'tr-assist', 'tr-uc',
+    var HELD = ['torque', 'gait', 'press', 'acc', 'gyro', 'imu', 'ori', 'ankle', 'ankvel', 'tr-assist', 'tr-uc',
                 'sig-g0', 'sig-g1', 'sig-g2', 'sig-g3', 'sig-g4', 'sig-g5'];
     var MAX_HOLD_MS = 20000;
     window._afoHold = window._afoHold || {};

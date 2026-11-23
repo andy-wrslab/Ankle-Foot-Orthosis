@@ -102,7 +102,7 @@ def make(params, app="AFO_r1", motor=0, assist=0):
     ctx.commands = Cmd(motor, assist)
     ctx.matlab = FakeTarget(params)
     ctx.session = S.SessionSetup(ctx)
-    ctx.imu_cal = ImuCal(ctx, hold_s=0.6, ready_timeout_s=1.0)
+    ctx.imu_cal = ImuCal(ctx, hold_s=0.6, ready_timeout_s=1.0, hold_no_signal_s=0.9)
     return ctx
 
 
@@ -129,6 +129,7 @@ def main():
     ic = ctx.imu_cal
     ic.probe(force=True)
     check("Motor off: enabled", ic.view()["enabled"], ic.view())
+    ctx.matlab.stream = {"bif_bias_ready": 1.0, "bif_valid": 0.0}   # a bias signal exists at the press
     r = ic.press()
     check("press: ok", r["ok"], r)
     check("press: setparam value + 1", ctx.matlab.sets == [(path, 4.0)], ctx.matlab.sets)
@@ -153,7 +154,24 @@ def main():
     ic.press()
     time.sleep(0.7)
     v = ic.view()
+    check("no Signals: still holding (longer countdown)", v["text"].startswith("Hold still"), v)
+    time.sleep(0.3)
+    v = ic.view()
     check("no Signals: IMU ready (assumed)", v["text"] == "IMU ready (assumed)", v)
+
+    # 4b) the countdown length is fixed at the confirmation and counted from it (no bias signal: 0.9 s here,
+    #     6 s live): still holding just before, done just after, even if a bias signal appears meanwhile
+    ctx = make({path: 0.0})
+    ic = ctx.imu_cal
+    ic.probe(force=True)
+    ic.press()
+    t_conf = ic.pressed_at
+    check("hold length fixed at confirmation (no bias signal)", ic.hold_len == 0.9, ic.hold_len)
+    ctx.matlab.stream = {"bif_bias_ready": 1.0}        # a signal appearing later must not shorten it
+    time.sleep(max(0.0, t_conf + 0.75 - time.time()))
+    check("still holding at 0.75 s", ic.view()["text"].startswith("Hold still"), ic.view())
+    time.sleep(max(0.0, t_conf + 0.95 - time.time()))
+    check("done after 0.9 s", not ic.view()["text"].startswith("Hold still"), ic.view())
 
     # 5) bias never comes back -> not ready message
     ctx = make({path: 0.0})

@@ -30,6 +30,7 @@ import model_profile as mp
 from session import SHORT, _num
 
 NO_DATA_S = 0.5          # SPEC: no 5431 packet for > 0.5 s -> "No data"
+IMU_ROSE_S = 10.0        # imu_bad_count rising within this window -> "IMU fault"
 BUSY = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Starting…", "stop": "Stopping…",
         "load": "Loading…", "save": "Exporting…"}
 
@@ -49,6 +50,40 @@ def _age(sup, status: Dict[str, Any]):
         return round(float(a) + max(0.0, late), 1)
     except Exception:
         return float(a)
+
+
+def _imu_fault(ctx) -> str:
+    """'' when the IMU looks fine, else why not: console imu_ok = 0, imu_bad_count rose in
+    the last 10 s, or the main bus IMU columns invalid (health group 'bad')."""
+    why = []
+    tr = {}
+    try:
+        tr = ctx.training.latest(max_age_s=1.0) or {}
+    except Exception:
+        tr = {}
+    ok = tr.get("imu_ok")
+    if isinstance(ok, (int, float)) and ok == ok and ok < 0.5:
+        why.append("imu_ok = 0 (console)")
+    cnt = tr.get("imu_bad_count")
+    now = time.monotonic()
+    hist = getattr(ctx.session, "_imu_hist", None)
+    if hist is None:
+        hist = ctx.session._imu_hist = []       # (monotonic time, imu_bad_count), per app session
+    if isinstance(cnt, (int, float)) and cnt == cnt:
+        _imu_hist = hist
+        _imu_hist.append((now, float(cnt)))
+        while _imu_hist and now - _imu_hist[0][0] > IMU_ROSE_S:
+            _imu_hist.pop(0)
+        first = min(c for _, c in _imu_hist)
+        if cnt > first:
+            why.append(f"imu_bad_count rose by {int(cnt - first)} in the last {IMU_ROSE_S:.0f} s")
+    try:
+        g = ((ctx.live.get_status().get("health") or {}).get("groups") or {}).get("imu") or {}
+        if g.get("state") == "bad":
+            why.append(f"bus IMU values invalid ({g.get('recent_bad', 0)} of {g.get('recent_total', 0)} in 10 s)")
+    except Exception:
+        pass
+    return "; ".join(why)
 
 
 def top_status(ctx) -> Dict[str, Any]:
@@ -81,25 +116,68 @@ def top_status(ctx) -> Dict[str, Any]:
         base = {"state": "not-connected", "text": "Not connected", "level": "grey"}
 
     issues: List[Dict[str, Any]] = []
+    notes: List[str] = []
     if base["state"] != "not-connected":
         if running:
             for name, age, needed in (("live", live_age, True), ("console", tr_age, need_training)):
                 if needed and (age is None or age >= NO_DATA_S):
                     issues.append({"level": "red", "key": "no-data", "stream": name, "age_s": age,
-                                   "text": "No data" if age is None else f"No data {age:.1f} s"})
+                                   "text": "No data" if age is None else f"No data {age:.1f} s",
+                                   "todo": f"The {'main bus 5431' if name == 'live' else 'console 5433'} stream "
+                                           "is silent: check the Speedgoat app and the network link."})
+        if getattr(ctx.session, "app_elsewhere", None) and running:
+            issues.append({"level": "amber", "key": "app-elsewhere", "text": ctx.session.ELSEWHERE_MSG,
+                           "todo": "This page cannot set side or mass on an app another MATLAB session started. "
+                                   "Press Stop, then Start (side and mass are sent right after Start)."})
+        if running:
+            imu = _imu_fault(ctx)
+            if imu:
+                issues.append({"level": "red", "key": "imu-fault", "text": "IMU fault", "detail": imu,
+                               "todo": "Check the IMU cable at the Teensy and replug it; the IMU re-syncs within about 1 s."})
         chip = ctx.session.side_chip()
         if chip["state"] == "bad":
             issues.append({"level": "red", "key": "side-differs", "text": "Foot side differs",
-                           "detail": ctx.session.side_problem()})
+                           "detail": ctx.session.side_problem(),
+                           "todo": "Pick the correct foot in the side chip (top bar); Motor and Assist stay off."})
+        elif chip["state"] == "pending":
+            issues.append({"level": "amber", "key": "side-pending", "text": "Foot side pending",
+                           "detail": chip["text"], "todo": "It is sent and read back on Connect / right after Start."})
         elif chip["state"] in ("warn", "unset"):
             issues.append({"level": "amber", "key": "confirm-side", "text": "Confirm foot side",
-                           "detail": ctx.session.side_problem() or chip["text"]})
+                           "detail": ctx.session.side_problem() or chip["text"],
+                           "todo": "Click the side chip in the top bar and confirm Left or Right."})
         if ctx.session.profile().get("bif"):
             m = _num(ctx.session.readback.get("bif_mass"))
             if m is not None and m <= mp.BIF_MASS_MIN:
                 issues.append({"level": "amber", "key": "bif-mass", "text": "Set mass",
                                "detail": f"BIF_mass_kg on the target is {m:g} kg: the Bi-LSTM gives no assist "
-                                         f"at {mp.BIF_MASS_MIN:g} kg or less"})
+                                         f"at {mp.BIF_MASS_MIN:g} kg or less",
+                               "todo": "Type the body mass in Mass (top bar) and press Enter."})
+            if running:
+                # drive fault (fault bit 0x0008, e.g. 0x0628 with STO): red
+                sw = (ctx.live.readback() or {}).get("statusword") if hasattr(ctx.live, "readback") else None
+                if isinstance(sw, (int, float)) and sw == sw and int(sw) & 0x0008:
+                    issues.append({"level": "red", "key": "drive-fault", "text": "Drive fault (STO)",
+                                   "detail": f"statusword 0x{int(sw):04X}",
+                                   "todo": "Release STO, then press Motor once: the model sends the fault reset."})
+                # Bi-LSTM phase (console 15-float tail or the Signals stream)
+                try:
+                    b = ctx.session.bif_view() or {}
+                except Exception:
+                    b = {}
+                ph = b.get("phase")
+                if ph == "bias":
+                    issues.append({"level": "amber", "key": "imu-not-ready", "text": "IMU not ready",
+                                   "detail": b.get("text"), "todo": "The wearer holds still for 5 s."})
+                elif ph == "walk":
+                    pct = b.get("progress_pct")
+                    n = int(round(30 * pct / 100.0)) if pct is not None else None
+                    issues.append({"level": "amber", "key": "calibrating",
+                                   "text": f"Calibrating {n}/30 s" if n is not None else "Calibration walk",
+                                   "detail": b.get("text"), "todo": "Walk normally for about 30 s."})
+                elif ph == "unknown":
+                    # not actionable: a grey note in the popover only (the button can be green Ready)
+                    notes.append("Bi-LSTM state unknown: needs Signals or the 15-float console packet")
         seen = set()
         for row in ctx.session.target_table():
             if row["name"] == "side" or row["match"] is not False:
@@ -109,15 +187,18 @@ def top_status(ctx) -> Dict[str, Any]:
                 continue
             seen.add(label)
             issues.append({"level": "amber", "key": f"differs-{row['name']}", "text": f"{label} differs",
-                           "detail": f"entered {row['entered']}, target {row['target']} ({row['source']})"})
+                           "detail": f"entered {row['entered']}, target {row['target']} ({row['source']})",
+                           "todo": ("Press that button in the dock again to resend it." if row["name"] in ("motor", "assist", "k")
+                                    else "Press Enter in that field to send it again.")})
     # the oldest silent stream first among the reds
-    issues.sort(key=lambda i: (0 if i["level"] == "red" else 1, 0 if i["key"] == "no-data" else 1,
-                               -(i.get("age_s") or 0)))
+    prio = {"no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
+            "bif-mass": 5, "imu-not-ready": 6, "calibrating": 7, "bif-unknown": 10}   # "... differs": 9
+    issues.sort(key=lambda i: (0 if i["level"] == "red" else 1, prio.get(i["key"], 9), -(i.get("age_s") or 0)))
     out = dict(base)
     if base["state"] != "busy" and issues:      # a run-control action in progress wins (it pauses data)
         top = issues[0]
         out = {"state": top["key"], "text": top["text"], "level": top["level"]}
-    out.update(base_state=base["state"], issues=issues, connected=connected, running=running, model=model,
+    out.update(base_state=base["state"], issues=issues, notes=notes, connected=connected, running=running, model=model,
                streams={"live_age_s": live_age, "console_age_s": tr_age, "console_required": need_training},
                writes_enabled=ctx.session.writes_enabled, at=time.time())
     return out

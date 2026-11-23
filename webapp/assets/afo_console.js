@@ -25,6 +25,15 @@
     function local() { var a = $('app'); return a && a.getAttribute('data-local') === '1'; }
 
     // ---------------------------------------------------------- two-step confirm
+    // every action button shows its busy state in the click handler itself (< 100 ms),
+    // before the server call; a state poll does not undo it until the server reports
+    function busyNow(btn, text, ms) {
+        if (!btn) { return; }
+        btn.classList.add('busy'); btn.disabled = true; btn.textContent = text;
+        btn._busyUntil = Date.now() + (ms || 3000);
+    }
+    function busyHeld(btn) { return !!(btn && btn._busyUntil && Date.now() < btn._busyUntil); }
+    function mmss(sec) { sec = Math.max(0, Math.floor(sec)); return Math.floor(sec / 60) + ':' + ('0' + (sec % 60)).slice(-2); }
     function confirmable(btn, label, confirmText, action) {
         var tm = null;
         btn.addEventListener('click', function () {
@@ -97,7 +106,8 @@
           '<span class="spacer"></span>' +
           '<div class="session-bar" id="sessionBar">' +
             '<label class="tb-field" title="Participant ID (used in export file names)"><span>ID</span><input class="input" id="sPart" autocomplete="off"></label>' +
-            '<label class="tb-field" title="Body mass (kg). AFO_r1: also sets the Bi-LSTM mass (BIF_mass_kg). More than 20 kg."><span>Mass</span><input class="input mono" id="sMass" autocomplete="off" aria-label="Body mass (kg)"><span>kg</span></label>' +
+            '<label class="tb-field" title="Body mass (kg). AFO_r1: also sets the Bi-LSTM mass (BIF_mass_kg). More than 20 kg."><span>Mass</span><input class="input mono" id="sMass" autocomplete="off" aria-label="Body mass (kg)"><span>kg</span>' +
+              '<span class="tb-state" id="sMassState" hidden></span></label>' +
 
             '<button class="side-chip" id="sideChip" aria-haspopup="dialog" aria-expanded="false" title="Foot side on the target">–</button>' +
             '<span class="vr sb-sep" aria-hidden="true"></span>' +
@@ -118,6 +128,10 @@
         '<div class="popover" id="statusPop" role="dialog" aria-label="Rig status" hidden>' +
           '<div class="pop-head"><span class="card-title">Settings on the target</span><span class="spacer"></span><span class="hint" id="echoTime"></span></div>' +
           '<table class="echo-table" id="echoTable"><thead><tr><th>Setting</th><th class="r">Entered</th><th class="r">Target uses</th></tr></thead><tbody></tbody></table>' +
+          '<div class="pop-head sub"><span class="card-title">Open items</span></div>' +
+          '<ul class="open-items" id="openItems"></ul>' +
+          '<div class="pop-head sub" id="afterStartHead" hidden><span class="card-title">After Start</span><span class="spacer"></span><span class="hint" id="bifLine"></span></div>' +
+          '<ul class="pop-checklist" id="afterStart" hidden></ul>' +
           '<div class="pop-head sub"><span class="card-title">Rig status</span><span class="spacer"></span><span class="hint" id="rigTime"></span></div>' +
           '<dl class="kv" id="rigKv"></dl>' +
         '</div>' +
@@ -132,8 +146,7 @@
           '<div class="side-confirm" id="sideConfirm" hidden><p><b id="scTitle"></b><br><span class="hint">This reverses the actuation direction. Only switch when the AFO is on that leg.</span></p>' +
           '<div class="side-act"><button class="btn" id="scCancel">Cancel</button><button class="btn primary" id="scOk"></button></div></div>' +
         '</div>' +
-        '<div class="sys-banner" id="sideBanner" hidden></div>' +
-        '<div class="sys-banner info" id="bifBanner" hidden></div>';
+        '';
     }
 
     function dockHTML() {
@@ -164,6 +177,7 @@
         '<div class="toolbar"><h1 class="page-title">Trials</h1><span class="tb-right"><span class="hint" id="runsHint">All runs in the Speedgoat file log, newest first</span>' +
         '<button class="btn sm" id="runsRefresh">Refresh</button></span></div>' +
         '<section class="card flush">' +
+          '<div class="runs-limit" id="runsLimit" hidden></div>' +
           '<table class="table runs" id="runTable"><thead><tr><th>Run</th><th>Started</th><th class="r">Duration</th><th class="r">Size</th><th>Participant</th><th>Status</th></tr></thead><tbody></tbody></table>' +
           '<div class="export-bar">' +
             '<label class="field-label" for="expName">Export file name</label>' +
@@ -181,6 +195,7 @@
         if (PAGES.indexOf(page) < 0) { page = 'live'; }
         S.page = page; window._afoPage = page;
         PAGES.forEach(function (p) { var el = $('page-' + p); if (el) { el.hidden = p !== page; } });
+        resizeSoon($('page-' + page));
         var dock = $('dock'); if (dock) { dock.hidden = page !== 'live'; }
         document.querySelectorAll('#nav a').forEach(function (a) {
             if (a.getAttribute('data-nav') === page) { a.setAttribute('aria-current', 'page'); } else { a.removeAttribute('aria-current'); }
@@ -193,6 +208,7 @@
         setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 60);
         if (page === 'trials') { loadRuns(); }
         if (page === 'signals') { loadSignals(); }
+        if (S.state) { renderSide(S.state); }
     }
     window.addEventListener('popstate', function () {
         var p = (location.pathname || '/').replace(/^\/+|\/+$/g, '') || 'live';
@@ -200,12 +216,44 @@
     });
 
     // ---------------------------------------------------------- Live toolbar
+    // Plotly graphs drawn while hidden get a default width; size them to their card in
+    // the same frame they become visible (no half-width flash), and once more next frame
+    function resizePlots(root) {
+        if (!root || !window.Plotly || !window.Plotly.Plots) { return; }
+        var gds = root.querySelectorAll('.js-plotly-plot');
+        for (var i = 0; i < gds.length; i++) {
+            if (gds[i].offsetParent === null) { continue; }
+            // relayout(autosize) sizes from the card at once; Plots.resize waits ~100 ms
+            try { if (gds[i]._fullLayout) { window.Plotly.relayout(gds[i], {autosize: true}); } } catch (e) { /* not drawn yet */ }
+        }
+    }
+    function resizeSoon(root) {
+        resizePlots(root);
+        if (window.requestAnimationFrame) { window.requestAnimationFrame(function () { resizePlots(root); }); }
+    }
+    window._afoResizePlots = resizeSoon;
+    // legend chips (Sensors): a click hides / shows that trace; drawn on the next frame
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('.lg[data-g]') : null;
+        if (!b) { return; }
+        var g = b.getAttribute('data-g'), k = b.getAttribute('data-k');
+        var H = window._afoHidden = window._afoHidden || {};
+        H[g] = H[g] || {};
+        H[g][k] = !H[g][k];
+        b.setAttribute('aria-pressed', H[g][k] ? 'false' : 'true');
+        b.classList.toggle('off', !!H[g][k]);
+        var V = window._afoVisDirty = window._afoVisDirty || {};
+        V[g] = true;
+        if (window._afoRequestRender) { window._afoRequestRender(); }
+    });
     function setLiveSub(sub) {
         S.liveSub = sub; window._afoLiveSub = sub;
         [['pgGait', 'gait'], ['pgSensors', 'sensors'], ['pgTraining', 'training']].forEach(function (x) {
             var b = $(x[0]); if (b) { b.setAttribute('aria-pressed', x[1] === sub ? 'true' : 'false'); }
         });
         document.querySelectorAll('#page-live [data-live]').forEach(function (c) { c.hidden = c.getAttribute('data-live') !== sub; });
+        resizeSoon($('page-live'));
+        if (window._afoRequestRender) { window._afoRequestRender(); }
         if ($('liveWin')) { $('liveWin').hidden = sub === 'training'; }
         if ($('trWin')) { $('trWin').hidden = sub !== 'training'; }
         setProps('live-sub', {data: sub});
@@ -278,9 +326,21 @@
         if (txt.innerHTML !== html) { txt.innerHTML = html; }
         b.title = (s.issues || []).map(function (i) { return i.text + (i.detail ? ': ' + i.detail : ''); }).join('\n') ||
             'Connection, data streams and the settings the target reports back';
+        // popover: every open item (most important first) with what to do
+        var oi = $('openItems');
+        if (oi) {
+            var items = (s.issues || []), oh = items.length ? items.map(function (i) {
+                return '<li class="' + esc(i.level) + '"><b>' + esc(i.text) + '</b>' +
+                    (i.todo ? '<span class="todo">' + esc(i.todo) + '</span>' : '') +
+                    (i.detail ? '<span class="todo hint">' + esc(i.detail) + '</span>' : '') + '</li>';
+            }).join('') : '<li class="none">Nothing open</li>';
+            oh += (s.notes || []).map(function (n) { return '<li class="note">' + esc(n) + '</li>'; }).join('');
+            if (oi.innerHTML !== oh) { oi.innerHTML = oh; }
+        }
         // popover: settings table + rig status
         var rows = st.settings.rows.map(function (r) {
-            return '<tr class="' + r.state + '" data-k="' + r.key + '"' + (r.differs && r.differs.length ? ' title="Differs: ' + esc(r.differs.join(', ')) + '"' : '') +
+            return '<tr class="' + r.state + '" data-k="' + r.key + '"' + (r.differs && r.differs.length ? ' title="Differs: ' + esc(r.differs.join(', ')) + '"' :
+                r.title ? ' title="' + esc(r.title) + '"' : '') +
                 '><td>' + esc(r.label) + '</td><td class="r mono">' + esc(r.entered) + '</td><td class="r mono">' + esc(r.target) + '</td></tr>';
         }).join('');
         var tb = document.querySelector('#echoTable tbody'); if (tb && tb.innerHTML !== rows) { tb.innerHTML = rows; }
@@ -289,12 +349,13 @@
         var R = st.rig;
         var kv = [['Target', esc(R.target)], ['Application', esc(R.application)], ['TET', '<span class="mono">' + esc(R.tet) + '</span>'],
                   ['EtherCAT', esc(R.ethercat)], ['File log', esc(R.file_log)],
-                  ['Main UDP', '<span class="mono">' + R.main_udp.rate + '</span>&nbsp;packets/s · ' + R.main_udp.bad + ' bad'],
+                  ['Main UDP', '<span class="mono">' + R.main_udp.rate + '</span>&nbsp;packets/s · ' + R.main_udp.bad + ' bad' +
+                      ' · ' + (R.main_udp.lost || 0) + ' lost'],
                   ['Console UDP', R.console_udp.enabled ? '<span class="mono">' + R.console_udp.rate + '</span>&nbsp;packets/s · ' + R.console_udp.lost + ' lost' +
                       (R.console_udp.rejected ? ' · ' + R.console_udp.rejected + ' rejected' : '') : 'off'],
                   ['Drive statusword', '<span class="mono">' + esc(R.statusword) + '</span>'], ['IMU', esc(R.imu)]];
         if (st.model) { kv.splice(1, 0, ['Model profile', esc(st.model.label)]); }
-        if (st.bif) { kv.push(['Bi-LSTM', esc(st.bif.text.replace(/^Bi-LSTM: /, '')) + (st.bif.state_text ? ' · ' + esc(st.bif.state_text) : '') +
+        if (st.bif && st.bif.phase !== 'unknown') { kv.push(['Bi-LSTM', esc(st.bif.text.replace(/^Bi-LSTM: /, '')) + (st.bif.state_text ? ' · ' + esc(st.bif.state_text) : '') +
             (st.bif.source ? ' <span class="hint">(' + esc(st.bif.source) + ')</span>' : '')]); }
         var kvh = kv.map(function (x) { return '<dt>' + x[0] + '</dt><dd>' + x[1] + '</dd>'; }).join('');
         var k = $('rigKv'); if (k && k.innerHTML !== kvh) { k.innerHTML = kvh; }
@@ -319,10 +380,15 @@
         }
         if (busy) {
             var acting = {connect: c, disconnect: c, start: s, stop: p}[busy.action];
-            [c, s, p].forEach(function (b) { b.disabled = true; });
-            if (acting) { acting.classList.add('busy'); acting.textContent = busy.verb; acting.title = busy.msg; }
+            [c, s, p].forEach(function (b) { b.disabled = true; b._busyUntil = 0; });
+            if (acting) {
+                acting.classList.add('busy');
+                var el = busy.started ? ' ' + mmss(Date.now() / 1000 - busy.started) : '';
+                acting.textContent = (busy.stage || busy.verb) + el; acting.title = busy.msg;
+            }
             return;
         }
+        if (busyHeld(c) || busyHeld(s) || busyHeld(p)) { return; }   // pressed: wait for the server's busy state
         c.disabled = false;
         if (st.view_only) { return; }
         // Start is never locked by the foot side: Start reloads the build defaults, and the
@@ -340,6 +406,20 @@
         if (part && document.activeElement !== part && !S.editing.sPart) { var v = sv.sid || ''; if (part.value !== v) { part.value = v; } }
         if (mass && document.activeElement !== mass && !S.editing.sMass) {
             var w = sv.values.weight; var t = w == null ? '' : String(+w); if (mass.value !== t) { mass.value = t; }
+        }
+        // Mass: visible state right after Enter (pending / sending / set / not set)
+        var ms = $('sMassState');
+        if (ms) {
+            var mst = sv.status.weight, mmsg = sv.status_msg.weight || '', rbw = sv.readback ? sv.readback.weight : null;
+            var mt = '', mc = '';
+            if (mst === 'pending') { mt = /after Start/.test(mmsg) ? 'after Start' : /disabled/.test(mmsg) ? 'not sent' : 'on Connect'; mc = 'pending'; }
+            else if (mst === 'sending') { mt = 'sending…'; mc = 'pending'; }
+            else if (mst === 'error') { mt = 'not set'; mc = 'err'; }
+            else if (sv.values.weight != null && rbw != null && Math.abs(+rbw - +sv.values.weight) < 1e-3) { mt = '✓'; mc = 'ok'; }
+            if (ms.textContent !== mt) { ms.textContent = mt; }
+            ms.className = 'tb-state ' + mc; ms.hidden = !mt;
+            ms.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'error' ? (mmsg || 'Not set') :
+                mt === '✓' ? 'The target uses this body mass' : '';
         }
         var gw = $('sGearWrap'), gear = $('sGear'), isBif = !!(st.model && st.model.bif);
         if (gw && gw.hidden === isBif) { gw.hidden = !isBif; setTimeout(topbarHeight, 0); }
@@ -365,14 +445,29 @@
     function renderSide(st) {
         var chip = $('sideChip'), ban = $('sideBanner');
         if (!chip) { return; }
-        var sd = st.side, motorOn = st.commands.toggles.motor.value === 1;
+        var sd = st.side, motorOn = st.commands.toggles.motor.value === 1, onLive = S.page === 'live';
         chip.textContent = sd.chip;
-        chip.className = 'side-chip' + (sd.state === 'confirm' ? ' unset' : sd.state === 'mismatch' ? ' mismatch' : '');
+        // the attention style of "? CONFIRM FOOT" only on Live; elsewhere the chip stays quiet
+        chip.className = 'side-chip' + (sd.state === 'confirm' && onLive ? ' unset' : sd.state === 'mismatch' ? ' mismatch' :
+            sd.state === 'pending' ? ' pending' : '');
         chip.disabled = motorOn;
         chip.title = motorOn ? 'Locked while Motor is on' : 'Foot side on the target';
+        if (!ban) {
+            document.querySelectorAll('.side-opt').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-side') === sd.app ? 'true' : 'false'); });
+            return;
+        }
         var sid = esc(st.session.sid || 'this participant'), html = '', cls = '';
-        if (!st.session.sid) {
+        if (sd.state !== 'mismatch' && !onLive) {
+            // Trials / Signals / Teensy: no foot-side banner (the quiet chip stays in the top bar)
+        } else if (!st.session.sid) {
             cls = 'caution'; html = '<span><b>Set the participant ID</b> in the top bar, then confirm the foot side.</span>';
+        } else if (sd.state === 'pending') {
+            cls = 'info';
+            html = '<span><b>' + esc((sd.app || '').charAt(0) + (sd.app || '').slice(1).toLowerCase()) + ' foot saved for ' + sid + '.</b> ' +
+                (/disabled/.test(sd.msg || '') ? 'Target writes are off, so it is not sent.' :
+                 /after Start/.test(sd.msg || '') ? 'The app is stopped: it is sent right after Start and then read back.' :
+                 'Not connected: it is sent to the target on Connect and then read back.') +
+                '</span><span class="spacer"></span><span class="lock-note">Motor and Assist stay locked until the target reports this side.</span>';
         } else if (sd.state === 'confirm') {
             cls = 'caution';
             html = '<span>' + (sd.after_start ? 'Start reset the target to its build defaults. <b>Confirm the foot side for ' + sid +
@@ -400,6 +495,20 @@
     }
 
     function renderBif(st) {
+        var list = $('afterStart'), head = $('afterStartHead'), line = $('bifLine');
+        if (list && head) {
+            var chk2 = st.checklist, bif2 = st.bif, h2 = '';
+            if (chk2) {
+                h2 = chk2.items.map(function (i) {
+                    var mark = i.done === true ? '\u2713' : i.done === false ? '\u25CB' : '?';
+                    return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '"><span class="ck" aria-hidden="true">' + mark + '</span>' +
+                        esc(i.text) + (i.detail ? ' <span class="hint">' + esc(i.detail) + '</span>' : '') + '</li>';
+                }).join('');
+            }
+            if (list.innerHTML !== h2) { list.innerHTML = h2; }
+            list.hidden = !h2; head.hidden = !h2;
+            if (line) { var lt = bif2 && bif2.phase !== 'unknown' ? bif2.text : ''; if (line.textContent !== lt) { line.textContent = lt; } }
+        }
         var ban = $('bifBanner'); if (!ban) { return; }
         var html = '', chk = st.checklist, bif = st.bif;
         if (chk && !chk.all_done) {
@@ -483,11 +592,11 @@
         var cal = $('bCal'), left = st.commands.calibrate_busy_s || 0;
         if (left > 0) { cal.classList.add('busy'); cal.disabled = true; cal.textContent = 'Calibrating… ' + Math.ceil(left) + ' s';
             cal.title = 'Walk normally until the 30 s calibration finishes'; }
-        else if (cal.classList.contains('busy')) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate FSR';
+        else if (cal.classList.contains('busy') && !busyHeld(cal)) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate FSR';
             cal.title = '30 s FSR (insole pressure) calibration: walk normally until it finishes'; }
         // Calibrate IMU (AFO_r1): enabled only when the loaded app has Gyro_Cal_Request and Assist or Motor is off
         var ib = $('bImuCal'), ic = st.imu_cal || {};
-        if (ib) {
+        if (ib && !(busyHeld(ib) && ic.state === 'idle')) {
             ib.hidden = !ic.visible;
             var busy = ic.state === 'busy';
             ib.classList.toggle('busy', busy);
@@ -505,10 +614,24 @@
     }
 
     // ---------------------------------------------------------- actions
+    function toast(t, isErr) {
+        var el = $('afoToast');
+        if (!el) { el = document.createElement('div'); el.id = 'afoToast'; el.className = 'toast'; el.setAttribute('role', 'status');
+                   el.setAttribute('aria-live', 'polite'); document.body.appendChild(el); }
+        el.textContent = t || ''; el.className = 'toast' + (isErr ? ' err' : ''); el.hidden = !t;
+        clearTimeout(S.toastT); if (t) { S.toastT = setTimeout(function () { el.hidden = true; }, 6000); }
+    }
     function sendSide(side) {
+        var name = side.charAt(0) + side.slice(1).toLowerCase();
+        toast(name + ' foot: sending…', false);
         post('/api/console/side', {side: side}).then(function (r) {
-            closeSidePop(); dockMsg(r.msg, r._status >= 400); poll();
-        });
+            closeSidePop();
+            var err = !r.ok || r._status >= 400;
+            var t = err ? (r.msg || 'Foot side not accepted') :
+                r.state === 'pending' ? name + ' foot saved for ' + ((S.state || {}).session || {}).sid + ': ' + (r.msg || 'sent on Connect') :
+                (r.msg || name + ' foot sent');
+            toast(t, err); dockMsg(r.msg, err); poll();
+        }).catch(function () { toast('App not reachable: foot side not sent', true); });
     }
     function commitField(el, key, url, body) {
         S.editing[key] = true;
@@ -516,6 +639,7 @@
             S.editing[key] = false;
             var ok = r.ok && (r.state === 'sending' || r.state === 'confirmed' || r.state === undefined);
             flash(el, ok, r.needs_confirm || r.msg || 'Not sent');
+            if (typeof toast === 'function') { toast(r.needs_confirm || r.msg || (ok ? 'Saved' : 'Not sent'), !ok); }
             if (r.state === 'pending') { flash(el, false, r.msg); }
             poll();
         });
@@ -567,13 +691,16 @@
         // target controls (OMEN only): Connect | Start (two-step) | Stop (two-step)
         $('tConnect').addEventListener('click', function () {
             var T = (S.state || {}).target || {};
-            post('/api/run/' + (T.connected ? 'disconnect' : 'connect')).then(function (r) { if (r.err) { dockMsg(r.err, true); } poll(); });
+            busyNow($('tConnect'), T.connected ? 'Disconnecting…' : 'Connecting…');
+            post('/api/run/' + (T.connected ? 'disconnect' : 'connect')).then(function (r) { if (r.err) { dockMsg(r.err, true); $('tConnect')._busyUntil = 0; } poll(); });
         });
         confirmable($('tStart'), function () { return 'Start'; }, function () {
             var app = ((S.state || {}).side || {}).app; return 'Start · ' + (app || '?') + ' foot?';
-        }, function () { post('/api/run/start').then(function (r) { if (r.err) { dockMsg(r.err, true); } poll(); }); });
+        }, function () { busyNow($('tStart'), 'Starting…');
+            post('/api/run/start').then(function (r) { if (r.err) { dockMsg(r.err, true); $('tStart')._busyUntil = 0; } poll(); }); });
         confirmable($('tStop'), function () { return 'Stop'; }, 'Confirm stop?', function () {
-            post('/api/run/stop').then(function (r) { if (r.err) { dockMsg(r.err, true); } poll(); });
+            busyNow($('tStop'), 'Stopping…');
+            post('/api/run/stop').then(function (r) { if (r.err) { dockMsg(r.err, true); $('tStop')._busyUntil = 0; } poll(); });
         });
     }
     function closeSidePop() { var p = $('sidePop'); if (p) { p.hidden = true; } var c = $('sideChip'); if (c) { c.setAttribute('aria-expanded', 'false'); } }
@@ -633,16 +760,24 @@
         }
         kp.addEventListener('blur', function () { if (kp.value !== start && kp.value.trim() !== '') { sendK(kp.value.trim(), false); } });
         $('bCal').addEventListener('click', function () {
-            post('/api/console/pulse', {name: 'calibrate'}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); poll(); });
+            busyNow($('bCal'), 'Calibrating… 30 s', 2500);
+            post('/api/console/pulse', {name: 'calibrate'}).then(function (r) {
+                dockMsg(r.ok ? '' : r.msg, !r.ok);
+                if (!r.ok) { $('bCal')._busyUntil = 0; }
+                poll();
+            });
         });
         $('bImuCal').addEventListener('click', function () {
-            post('/api/console/imucal', {}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); poll(); });
+            busyNow($('bImuCal'), 'Calibrate IMU: sending…', 2500);
+            post('/api/console/imucal', {}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); if (!r.ok) { $('bImuCal')._busyUntil = 0; } poll(); });
         });
         $('bResetSV').addEventListener('click', function () {
             var b = $('bResetSV');
+            b.textContent = 'Resetting…'; b.classList.add('busy');
             post('/api/console/pulse', {name: 'reset'}).then(function (r) {
+                b.classList.remove('busy');
                 if (r.ok) { b.textContent = 'Reset ✓'; setTimeout(function () { b.textContent = 'Reset SV'; }, 1500); }
-                else { dockMsg(r.msg, true); }
+                else { b.textContent = 'Reset SV'; dockMsg(r.msg, true); }
                 poll();
             });
         });
@@ -664,6 +799,19 @@
     function renderRuns() {
         var tb = document.querySelector('#runTable tbody'); if (!tb) { return; }
         var d = S.runs || {runs: []}, rs = d.runs || [];
+        var lim = $('runsLimit');
+        if (lim) {
+            var lh = '';
+            if (rs.length && d.max_runs) {
+                lh = '<span>' + d.n_runs + '/' + d.max_runs + ' runs on target · the oldest is deleted at ' + d.max_runs + '</span>';
+                if (d.near_limit) {
+                    lh += '<span class="warn">Export before the next run: the oldest unexported run will be deleted (' +
+                        d.unexported + ' not exported)</span>';
+                }
+            }
+            if (lim.innerHTML !== lh) { lim.innerHTML = lh; }
+            lim.hidden = !lh; lim.classList.toggle('near', !!d.near_limit);
+        }
         if (!rs.length) {
             tb.innerHTML = '<tr><td colspan="6" class="hint">' + (d.connected ? 'No runs in the file log yet. Press Refresh after Stop.' :
                 'Not connected: the run list is read from the Speedgoat. Connect in the top bar, then Refresh.') +

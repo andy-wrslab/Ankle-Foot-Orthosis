@@ -4,7 +4,7 @@ no target; target writes stay disabled. config target.model = AFO_r1.
 
 Checks at 1920x1080 and 1280x800: the "w/ gear" mass field is shown and the
 top bar fits (no horizontal scroll), the side chip shows the built side -1 as
-unset, the after-Start checklist banner shows 4 items, the gear mass is
+unset, the status popover lists the 4 after-Start items (no banners: Andy Nov 23), the gear mass is
 validated (> 20 kg), and no UDP packet goes out on load. Screenshots in
 test/e2e/r1/. Exit 1 on any failure.
 """
@@ -31,13 +31,16 @@ PROBE = r"""
 (function(){
   var tb = document.getElementById('topbar').getBoundingClientRect();
   var sb = document.getElementById('statusBtn').getBoundingClientRect();
-  var gw = document.getElementById('sGearWrap'), ban = document.getElementById('bifBanner');
+  var gw = document.getElementById('sGearWrap'), lst = document.getElementById('afterStart');
   return {topbar_w: Math.round(tb.width), topbar_h: Math.round(tb.height), window_w: window.innerWidth,
           status_right: Math.round(sb.right), hscroll: document.documentElement.scrollWidth > window.innerWidth,
           gear_shown: !!gw && !gw.hidden && gw.getBoundingClientRect().width > 0,
           chip: document.getElementById('sideChip').textContent,
-          banner_shown: !!ban && !ban.hidden, banner_text: ban ? ban.textContent : '',
-          checklist_items: ban ? ban.querySelectorAll('.checklist li').length : 0};
+          banners: !!(document.getElementById('bifBanner') || document.getElementById('sideBanner') ||
+                      document.querySelector('.sys-banner:not([hidden])')),
+          status_text: (document.getElementById('statusTxt') || {}).textContent,
+          open_items: [].slice.call(document.querySelectorAll('#openItems li b')).map(function(b){ return b.textContent; }),
+          checklist_items: lst ? lst.querySelectorAll('li').length : 0};
 })()
 """
 
@@ -110,8 +113,10 @@ def main():
                         "settings": [(r["key"], r["entered"], r["target"]) for r in st["settings"]["rows"]]}
         if (st.get("model") or {}).get("name") != "AFO_r1":
             fail.append("model_not_r1")
-        if "bif_mass" not in [r["key"] for r in st["settings"]["rows"]]:
-            fail.append("no_bif_mass_row")
+        keys = [r["key"] for r in st["settings"]["rows"]]
+        wrow = next((r for r in st["settings"]["rows"] if r["key"] == "weight"), {})
+        if "bif_mass" in keys or "BIF_mass_kg" not in (wrow.get("title") or ""):
+            fail.append("one_body_mass_row")
         for (w, h) in ((1920, 1080), (1280, 800)):
             b = Browser(19311, w, h)
             c = b.c
@@ -124,6 +129,10 @@ def main():
                 fail.append(f"topbar_overflow_{w}")
             if p["gear_shown"]:
                 fail.append(f"gear_field_still_shown_{w}")
+            if p["banners"]:
+                fail.append(f"banner_present_{w}")
+            if p["status_text"] != "Confirm foot side" or "Confirm foot side" not in p["open_items"]:
+                fail.append(f"status_button_{w}")
             if p["checklist_items"] != 4:
                 fail.append(f"checklist_{w}")
             if "CONFIRM" not in p["chip"].upper():

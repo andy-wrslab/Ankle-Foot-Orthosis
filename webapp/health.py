@@ -14,7 +14,7 @@ from collections import deque
 from typing import Deque, Dict, Tuple
 
 GROUPS = ("sync", "imu", "fsr", "drive")
-PACKET_KINDS = ("bad_length", "bad_time", "stale_time", "time_jump", "errors")
+PACKET_KINDS = ("bad_length", "bad_time", "stale_time", "time_jump", "errors", "lost")
 
 
 class DataHealth:
@@ -51,6 +51,12 @@ class DataHealth:
                 bucket[group][0] += bad
                 bucket[group][1] += total
             self._packets["ok"] += 1
+
+    def count_lost(self, n: int) -> None:
+        """Packets never received (model-time gaps); not charged to a lamp group."""
+        if n > 0:
+            with self._lock:
+                self._packets["lost"] = self._packets.get("lost", 0) + int(n)
 
     def count_packet(self, kind: str) -> None:
         """Count a packet-level problem; it is charged to the sync group."""

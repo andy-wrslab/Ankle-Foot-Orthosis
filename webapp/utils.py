@@ -36,3 +36,26 @@ def is_host_reachable(host: str) -> bool:
         return result.returncode == 0
     except Exception:
         return False
+
+
+def raise_priority(log=None) -> str:
+    """Run this receiver process at HIGH priority on Windows (the 1 kHz / 100 Hz UDP
+    readers must not be starved by the browser, MATLAB or a test run). A process
+    started by a test or soak tool (which lowers itself to BELOW_NORMAL; the child
+    inherits it) stays low, so a test app never competes with the real one."""
+    try:
+        import os
+        import psutil
+        p = psutil.Process()
+        if os.name != "nt":
+            return "skipped (not Windows)"
+        if p.nice() in (psutil.BELOW_NORMAL_PRIORITY_CLASS, psutil.IDLE_PRIORITY_CLASS):
+            msg = "kept low priority (started by a test tool)"
+        else:
+            p.nice(psutil.HIGH_PRIORITY_CLASS)
+            msg = "priority HIGH"
+    except Exception as exc:  # psutil missing / access denied: run as is
+        msg = f"priority unchanged ({exc})"
+    if log is not None:
+        log.info("receiver process: %s", msg)
+    return msg

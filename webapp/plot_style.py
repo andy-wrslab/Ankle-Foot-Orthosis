@@ -7,7 +7,8 @@ Usage in dash_app.py:
 
 Rules
 - No Plotly legend, no axis titles: the card head shows title, unit and legend.
-- x axis is time relative to now ("-10 s ... 0"), y gridlines only.
+- x axis is absolute model time in seconds (the last 10 s / 2 s, ticks scroll
+  with the data, Andy Nov 23), y gridlines only.
 - Plots never animate: no `transition`, keep `uirevision` constant so a
   20 Hz update never resets zoom/pan or re-lays out the axes.
 - Fixed y ranges per signal (autorange makes the plot jump every update).
@@ -144,3 +145,33 @@ TRAINING_PLOTS = [
 
 def training_plots() -> list:
     return [dict(p, y_range=pad_range(*p["y"]), margin=MARGIN) for p in TRAINING_PLOTS]
+
+
+# ---- Live > Sensors (Nov 23): every sensor column of the main bus 5431 -------------
+# FSR names by insole position (configs/gpr_default.yaml on WRSLAB). NOT yet
+# confirmed by Andy (Met 1/3/5 order, which heel is medial): change only here.
+FSR_NAMES = ["Hallux", "Heel 1", "Met 1", "Met 5", "Arch", "Toes", "Heel 2", "Met 3"]   # FSR1..FSR8 = cols 3..10
+
+# eight clearly different hues (FSR traces), readable on the light card
+CATEGORICAL = ["#1F6F78", "#C2702E", "#6E5BA8", "#2E7D4F", "#B5446E", "#4C6EB5", "#8A7A2E", "#3F3F46"]
+XYZ = ["#1F6F78", "#C2702E", "#6E5BA8"]
+
+# id, title, unit, source in the snapshot ("press" k / "imu" k / "ankle" / "ankle_vel"),
+# trace names, y range, decimals. imu k = imu_(k+1) = 5431 col 11+k.
+SENSOR_CARDS = [
+    {"id": "press", "title": "FSR", "unit": "counts", "src": [("press", k) for k in range(8)],
+     "names": [f"{n} (FSR{i + 1})" for i, n in enumerate(FSR_NAMES)], "y": (0, 1000), "dec": 0,
+     "colors": CATEGORICAL, "wide": True},
+    {"id": "acc", "title": "Raw acceleration", "unit": "g", "src": [("imu", 9), ("imu", 10), ("imu", 11)],
+     "names": ["ax", "ay", "az"], "y": (-4, 4), "dec": 2, "colors": XYZ},
+    {"id": "gyro", "title": "Gyro", "unit": "rad/s", "src": [("imu", 6), ("imu", 7), ("imu", 8)],
+     "names": ["gx", "gy", "gz"], "y": (-8, 8), "dec": 2, "colors": XYZ},
+    {"id": "imu", "title": "Linear acceleration (gravity removed)", "unit": "g",
+     "src": [("imu", 0), ("imu", 1), ("imu", 2)], "names": ["x", "y", "z"], "y": (-3, 3), "dec": 2, "colors": XYZ},
+    {"id": "ori", "title": "Orientation", "unit": "rad", "src": [("imu", 3), ("imu", 4), ("imu", 5)],
+     "names": ["yaw", "pitch", "roll"], "y": (-3.5, 3.5), "dec": 2, "colors": XYZ},
+    {"id": "ankle", "title": "Ankle angle", "unit": "deg", "src": [("ankle", None)], "names": ["Angle"],
+     "y": (-40, 40), "dec": 1, "colors": ["#1D1F21"]},
+    {"id": "ankvel", "title": "Ankle velocity (computed)", "unit": "deg/s", "src": [("ankle_vel", None)],
+     "names": ["Velocity"], "y": (-400, 400), "dec": 0, "colors": ["#1D1F21"]},
+]

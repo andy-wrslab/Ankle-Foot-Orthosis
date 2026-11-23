@@ -1,0 +1,36 @@
+time,sid,action,detail
+2026-11-23 10:06:46,S00,side confirmed,LEFT
+2026-11-23 10:06:46,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:49,S00,side confirmed,LEFT
+2026-11-23 10:06:49,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:51,S00,side confirmed,LEFT
+2026-11-23 10:06:51,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:52,S00,side confirmed,LEFT
+2026-11-23 10:06:52,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:52,S00,side confirmed,LEFT
+2026-11-23 10:06:52,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:52,S00,side confirmed,LEFT
+2026-11-23 10:06:52,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:57,S00,side confirmed,LEFT
+2026-11-23 10:06:57,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:06:59,S00,side confirmed,LEFT
+2026-11-23 10:06:59,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": false, ""err"": ""Unable to set 'Value' parameter value on target computer 'TargetPC1': No application is loaded on target computer.""}"
+2026-11-23 10:13:29,S00,side confirmed,LEFT
+2026-11-23 10:13:32,S00,side confirmed,LEFT
+2026-11-23 10:13:32,S00,side confirmed,LEFT
+2026-11-23 10:13:32,S00,side confirmed,LEFT
+2026-11-23 10:13:32,S00,side confirmed,LEFT
+2026-11-23 10:13:35,S00,side confirmed,LEFT
+2026-11-23 10:13:57,S00,re-apply after connect,side=0
+2026-11-23 10:14:42,S00,re-apply after start,side=0
+2026-11-23 10:14:42,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": true, ""readback"": 0, ""requested"": 0}"
+2026-11-23 10:14:42,S00,re-apply after start,weight=70
+2026-11-23 10:14:42,S00,set,"weight=70 (AFO_r1/weight|Value) -> {""ok"": true, ""readback"": 70, ""requested"": 70}"
+2026-11-23 10:14:42,S00,re-apply after start,bif_mass=70
+2026-11-23 10:14:42,S00,set,"bif_mass=70 (AFO_r1/BIF_mass_kg|Value) -> {""ok"": true, ""readback"": 70, ""requested"": 70}"
+2026-11-23 10:21:00,S00,re-apply after start,side=0
+2026-11-23 10:21:01,S00,set,"side=0 (AFO_r1/Left 0//Right 1|Value) -> {""ok"": true, ""readback"": 0, ""requested"": 0}"
+2026-11-23 10:21:01,S00,re-apply after start,weight=70
+2026-11-23 10:21:01,S00,set,"weight=70 (AFO_r1/weight|Value) -> {""ok"": true, ""readback"": 70, ""requested"": 70}"
+2026-11-23 10:21:01,S00,re-apply after start,bif_mass=70
+2026-11-23 10:21:01,S00,set,"bif_mass=70 (AFO_r1/BIF_mass_kg|Value) -> {""ok"": true, ""readback"": 70, ""requested"": 70}"

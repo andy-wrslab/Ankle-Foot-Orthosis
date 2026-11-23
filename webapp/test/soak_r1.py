@@ -25,6 +25,9 @@ any bad/dropped packet, packets/s below 95 % of nominal, or a page's UI update
 rate below 80 % of its median in any minute after warm-up, any /events 503, or
 more than 1 new /events connection in any minute after the first.
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _lowprio  # noqa: E402,F401  (below normal priority)
 import json
 import math
 import multiprocessing as mp

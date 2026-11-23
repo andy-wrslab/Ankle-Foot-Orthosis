@@ -77,7 +77,9 @@ class FileLogRuns:
                 rows = res.get("rows") or []
                 if isinstance(rows, dict):
                     rows = [rows]
-                self.cache = {"rows": rows, "columns": list(res.get("columns") or []), "at": time.time(), "err": None}
+                mr = res.get("max_runs")
+                self.cache = {"rows": rows, "columns": list(res.get("columns") or []), "at": time.time(), "err": None,
+                              "max_runs": int(mr) if isinstance(mr, (int, float)) and mr > 0 else None}
             else:
                 self.cache = dict(self.cache, err=res.get("err"), at=time.time())
         return res
@@ -164,8 +166,15 @@ class FileLogRuns:
         for x in out:
             x.pop("_t0", None)
         out.sort(key=lambda x: x["row"] or 0, reverse=True)      # newest first
+        # the target keeps FileLogMaxRuns runs (read from the target when possible, else
+        # config trials.file_log_max_runs, default 20) and deletes the oldest beyond that
+        max_runs = cache.get("max_runs") or int(((self.ctx.cfg.get("trials") or {}).get("file_log_max_runs") or 20))
+        n = len(out)
+        unexported = sum(1 for x in out if not x["exported"] and not x["recording"])
         return {"runs": out, "at": cache["at"], "err": cache["err"], "key_column": key,
-                "connected": bool(st.get("connected"))}
+                "connected": bool(st.get("connected")), "n_runs": n, "max_runs": max_runs,
+                "unexported": unexported, "near_limit": bool(n >= max_runs - 2 and unexported > 0),
+                "max_runs_source": "target" if cache.get("max_runs") else "config"}
 
     # ------------------------------------------------------------ export
     def default_name(self, run: Dict[str, Any]) -> Dict[str, Any]:

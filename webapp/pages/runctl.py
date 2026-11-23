@@ -51,7 +51,13 @@ class RunControl:
     def run_action(self, action: str, *args, _meta=None):
         def fn(job):
             job.export_meta = _meta
+            stage = {"connect": "Connecting…", "disconnect": "Disconnecting…", "start": "Loading / starting…",
+                     "stop": "Stopping…", "load": "Loading…", "save": "Exporting…"}.get(action)
+            if stage and hasattr(job, "meta"):
+                job.meta["stage"] = stage
             res = self.call(job, action, *args)
+            if action in ("connect", "start") and res.get("ok") and hasattr(job, "meta"):
+                job.meta["stage"] = "Sending side, mass…"
             ok = bool(res.get("ok"))
             if action == "stop" and not ok:
                 self.banner = res.get("err", "failed to stop")
@@ -76,6 +82,8 @@ class RunControl:
                     self.ctx.session.after_connect_or_start(action)
                 except Exception as exc:
                     job.add(f"session re-apply failed: {exc}")
+            if action == "disconnect" and ok and hasattr(self.ctx, "session"):
+                self.ctx.session.clear_readback()
             if action == "stop" and ok and hasattr(self.ctx, "session"):
                 self.ctx.session.note_stop()
             if action == "stop" and ok and hasattr(self.ctx, "filelog"):

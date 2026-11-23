@@ -112,17 +112,33 @@ def replay_checks():
     f12, f15 = struct.Struct("<12f"), struct.Struct("<15f")
     t = [200.0]
 
-    def burst(n=60, tail=None, **kw):
-        for _ in range(n):
-            t[0] = round(t[0] + 0.01, 4)
-            r = dict(t_model=t[0], side=-1.0, weight_kg=55.0, assist_mode=3.0, fixed_k_pct=5.0, cmd_motor=0.0,
-                     cmd_assist=0.0, cmd_k=0.0, cmd_calibrate_pressure=0.0, cmd_reset_sv=0.0, imu_ok=1.0,
-                     imu_bad_count=0.0)
-            r.update(kw)
-            vals = [r[nm] for nm in names]
-            s.sendto(f15.pack(*vals, *tail) if tail else f12.pack(*vals), ("127.0.0.1", PORT))
+    # A background sender keeps the current row going at 100 Hz between bursts, so the
+    # console echo stays fresh (< 0.5 s) while the checks run (the old version stopped
+    # sending and slept 0.6 s, which made the echo checks flaky).
+    import threading
+    cur = {"kw": None, "tail": None}
+    lock = threading.Lock()
+    halt = threading.Event()
+
+    def keep():
+        while not halt.is_set():
+            with lock:
+                kw, tail = cur["kw"], cur["tail"]
+                if kw is not None:
+                    t[0] = round(t[0] + 0.01, 4)
+                    r = dict(t_model=t[0], side=-1.0, weight_kg=55.0, assist_mode=3.0, fixed_k_pct=5.0, cmd_motor=0.0,
+                             cmd_assist=0.0, cmd_k=0.0, cmd_calibrate_pressure=0.0, cmd_reset_sv=0.0, imu_ok=1.0,
+                             imu_bad_count=0.0)
+                    r.update(kw)
+                    vals = [r[nm] for nm in names]
+                    s.sendto(f15.pack(*vals, *tail) if tail else f12.pack(*vals), ("127.0.0.1", PORT))
             time.sleep(0.01)
-        time.sleep(0.6)       # heartbeat
+    threading.Thread(target=keep, daemon=True).start()
+
+    def burst(n=60, tail=None, **kw):
+        with lock:
+            cur["kw"], cur["tail"] = dict(kw), tail
+        time.sleep(n * 0.01 + 0.6)       # n packets of the new row, then a heartbeat
 
     run = {"connected": True, "running": True, "app": "AFO_r1"}
     ctx = make_ctx(sup, run)
@@ -204,6 +220,8 @@ def replay_checks():
     s.sendto(b"\x00" * 52, ("127.0.0.1", PORT))
     time.sleep(0.8)
     check("52-byte packet rejected", sup.get_status().get("bad_length") == 1, sup.get_status().get("bad_length"))
+    halt.set()
+    time.sleep(0.05)
     sup.shutdown()
 
 

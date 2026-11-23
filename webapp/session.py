@@ -146,6 +146,9 @@ class SessionSetup:
         self.side_confirmed: Optional[Dict[str, Any]] = None
         self.after_start = False      # SPEC: every Start ends in the Confirm state
         self.started_at: Optional[float] = None     # last Start in this app session (after-Start checklist)
+        # set when setparam/getparam says "No application is loaded" while the target runs:
+        # the app was loaded by another MATLAB session, so this page cannot tune it
+        self.app_elsewhere: Optional[float] = None
         self.configured_model = mp.configured_model(ctx.cfg)
         self.profiles: Dict[str, Dict[str, Any]] = {}
         self.events: list = []        # start/stop times of this app session (for exports)
@@ -316,8 +319,9 @@ class SessionSetup:
             self.status[key] = {"state": "pending", "msg": "pending: sent on Connect", "at": time.time()}
             return f"{sp['label']} saved; will be sent on Connect"
         rc = self.ctx.runctl.status or {}
-        if rc.get("loaded") is False and not rc.get("running"):
-            # Stop unloads the app: nothing can take a setparam until Start reloads it
+        if not rc.get("running"):
+            # app stopped (unloaded, or still loaded with ReloadOnStop): Start resets every
+            # tunable to the build value, so the value is held and sent right after Start
             self.status[key] = {"state": "pending", "msg": "pending: sent after Start", "at": time.time()}
             return f"{sp['label']} saved; will be sent right after Start"
         blk, prm = tp
@@ -326,9 +330,8 @@ class SessionSetup:
             out = json.loads(self.ctx.matlab.call("afo_session", "set", blk, prm, float(value), timeout=30))
             job.add(json.dumps(out))
             ok = bool(out.get("ok"))
-            self.status[key] = {"state": "confirmed" if ok else "error",
-                                "msg": "" if ok else (out.get("err") or f"read back {out.get('readback')}"),
-                                "at": time.time()}
+            msg = "" if ok else self._note_error(key, out.get("err") or f"read back {out.get('readback')}")
+            self.status[key] = {"state": "confirmed" if ok else "error", "msg": msg, "at": time.time()}
             if ok:
                 self._put(key, out.get("readback"), "getparam")
             self.audit("set", f"{key}={value:g} ({blk}|{prm}) -> {json.dumps(out)[:200]}")
@@ -336,6 +339,24 @@ class SessionSetup:
         self.status[key] = {"state": "sending", "msg": "", "at": time.time()}
         self.ctx.jobs.start("session", f"set {key}", run)
         return f"{sp['label']}: sending…"
+
+    ELSEWHERE_MSG = "App started elsewhere: press Stop then Start to take control"
+
+    def clear_readback(self) -> None:
+        """Forget every read-back value (Connect, Disconnect, Start): only fresh values count."""
+        with self.lock:
+            self.readback.clear()
+            self.readback_src.clear()
+            self.readback_t.clear()
+            self.readback_at = None
+            self.app_elsewhere = None
+
+    def _note_error(self, key: str, err: str) -> str:
+        """Map a setparam/getparam error; 'No application is loaded' while running -> app elsewhere."""
+        if "No application is loaded" in (err or "") and (self.ctx.runctl.status or {}).get("running"):
+            self.app_elsewhere = time.time()
+            return self.ELSEWHERE_MSG
+        return err
 
     def _put(self, key: str, value, src: str) -> None:
         self.readback[key] = value
@@ -379,8 +400,17 @@ class SessionSetup:
                     vals = [vals]
                 for k, pth in paths.items():
                     hit = next((v for v in vals if v.get("path") == pth), None)
-                    if hit and hit.get("value") not in (None, []):
+                    if hit and hit.get("value") not in (None, []) and not hit.get("err"):
                         self._put(k, hit["value"], "getparam")
+                    elif hit and self.readback_src.get(k) != "echo":
+                        # the getparam failed: drop the old value instead of showing it as current
+                        self.readback.pop(k, None)
+                        self.readback_src.pop(k, None)
+                        self.readback_t.pop(k, None)
+                        if hit.get("err"):
+                            m = self._note_error(k, hit["err"])
+                            if m == self.ELSEWHERE_MSG:
+                                self.status[k] = {"state": "error", "msg": m, "at": time.time()}
             return out
         self.ctx.jobs.start("session", "read session params", run)
 
@@ -415,6 +445,7 @@ class SessionSetup:
 
     def after_connect_or_start(self, event: str) -> None:
         """After Connect: send pending values. After Start: re-apply everything entered."""
+        self.clear_readback()               # Connect / Start: only values read from now on count
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
             # Start reloads the build defaults (AFO_r1: side -1), so the side can only be set
@@ -474,13 +505,26 @@ class SessionSetup:
         return None
 
     def side_chip(self) -> Dict[str, str]:
-        """Low-prominence side chip: text + state (ok / unset / warn / bad)."""
+        """Low-prominence side chip: text + state (ok / pending / unset / warn / bad)."""
         rb = self.readback.get("side")
         want = self.values.get("side")
         try:
             rbi = None if rb is None else int(round(float(rb)))
         except (TypeError, ValueError):
             rbi = None
+        # confirmed for this S-ID but not on the target yet (no connection, or being sent):
+        # a pending side, sent by setparam on Connect and then read back
+        c = self.side_confirmed
+        sst = self.status.get("side") or {}
+        if (want is not None and c and c.get("sid") == self.sid and c.get("side") == int(want)
+                and sst.get("state") in ("pending", "sending") and rbi not in (0, 1)):
+            name = SIDE_NAMES[int(want)].capitalize()
+            if sst["state"] == "sending":
+                return {"text": f"{name} · sending…", "state": "pending"}
+            m = sst.get("msg") or ""
+            tail = ("target writes off" if "disabled" in m else "sent after Start" if "after Start" in m
+                    else "sent on Connect")
+            return {"text": f"{name} · pending, {tail}", "state": "pending"}
         if rbi == -1:
             return {"text": "Foot side unset, motor locked until set", "state": "unset"}
         if self.side_problem() is None:

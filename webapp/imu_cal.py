@@ -20,21 +20,24 @@ from typing import Any, Dict, Optional
 
 BLOCK, PARAM = "Gyro_Cal_Request", "Value"
 HOLD_S = 5.0          # wearer holds still
+HOLD_NO_SIGNAL_S = 6.0  # without bif_bias_ready (no Signals, 12-float console): a plain 6 s countdown
 READY_TIMEOUT_S = 20.0  # bias-ready must be back by then (with Signals)
 PROBE_EVERY_S = 10.0
 
 
 class ImuCal:
-    def __init__(self, ctx, hold_s: float = HOLD_S, ready_timeout_s: float = READY_TIMEOUT_S) -> None:
+    def __init__(self, ctx, hold_s: float = HOLD_S, ready_timeout_s: float = READY_TIMEOUT_S,
+                 hold_no_signal_s: float = HOLD_NO_SIGNAL_S) -> None:
         self.ctx = ctx
-        self.hold_s, self.ready_timeout_s = hold_s, ready_timeout_s
+        self.hold_s, self.ready_timeout_s, self.hold_no_signal_s = hold_s, ready_timeout_s, hold_no_signal_s
         self.lock = threading.Lock()
         self.available: Optional[bool] = None     # None = not probed for this connection
         self.value: Optional[float] = None
         self.probe_err = ""
         self.probe_key = None                     # (connected, app) the probe belongs to
         self.probed_at = 0.0
-        self.pressed_at: Optional[float] = None   # setparam confirmed at
+        self.pressed_at: Optional[float] = None   # setparam confirmed at (the reset happened then)
+        self.hold_len: Optional[float] = None     # fixed at confirmation: 5 s with a bias signal, else 6 s
         self.ready_at: Optional[float] = None
         self.sending = False
         self.err = ""
@@ -101,7 +104,9 @@ class ImuCal:
         return ""
 
     def holding(self) -> bool:
-        return self.pressed_at is not None and time.time() - self.pressed_at < self.hold_s
+        if self.pressed_at is None:
+            return False
+        return time.time() - self.pressed_at < (self.hold_len or self.hold_no_signal_s)
 
     def press(self) -> Dict[str, Any]:
         reason = self.block_reason()
@@ -123,8 +128,10 @@ class ImuCal:
                 job.add(json.dumps(out))
                 if not out.get("ok"):
                     raise RuntimeError(out.get("err") or f"read back {out.get('readback')}")
+                has_bias = (self.ctx.session.bif_view() or {}).get("bias_ready") is not None
                 with self.lock:
                     self.value, self.pressed_at = float(out.get("readback")), time.time()
+                    self.hold_len = self.hold_s if has_bias else self.hold_no_signal_s
                 self.ctx.session.audit("imu calibrate", f"{path}|{PARAM} {v0:g} -> {v0 + 1:g}: {json.dumps(out)[:160]}")
                 return out
             except Exception as exc:
@@ -150,11 +157,12 @@ class ImuCal:
             text, state = "Calibrate IMU failed", "error"
         elif self.pressed_at is not None:
             el = now - self.pressed_at
-            if el < self.hold_s:
-                text, state = f"Hold still {max(1, int(self.hold_s - el + 0.999))} s…", "busy"
+            b = self.ctx.session.bif_view() or {}
+            ready = b.get("bias_ready")
+            hold = self.hold_len or self.hold_no_signal_s       # counted from the setparam confirmation
+            if el < hold:
+                text, state = f"Hold still {max(1, int(hold - el + 0.999))} s…", "busy"
             else:
-                b = self.ctx.session.bif_view() or {}
-                ready = b.get("bias_ready")
                 if self.ready_at is None and ready is not None and ready >= 0.5:
                     self.ready_at = now
                 if self.ready_at is not None:

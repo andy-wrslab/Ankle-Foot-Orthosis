@@ -7,6 +7,9 @@ then that commands.CommandState takes the model's latched commands (cmd_*) as
 the authoritative toggle state and flags a mismatch with the last-sent state.
 Exit code 1 on any unexpected count.
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _lowprio  # noqa: E402,F401  (below normal priority)
 import json
 import os
 import socket

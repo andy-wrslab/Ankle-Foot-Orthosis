@@ -5,6 +5,9 @@ the dashboard, and after it has rendered live data saves screenshots of both
 swipe pages and returns the lamp texts, parse-failure count and every console
 error the page logged. Never touches the user's own Chrome.
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _lowprio  # noqa: E402,F401  (below normal priority)
 import base64
 import json
 import os

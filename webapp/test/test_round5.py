@@ -3,6 +3,9 @@ file-log run list / default names / export guards (design round 5 + v17).
 
     python test/test_round5.py
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import _lowprio  # noqa: E402,F401  (below normal priority)
 import json
 import os
 import sys
@@ -69,7 +72,7 @@ class RC:
         return type("J", (), {"id": 99})()
 
 
-def make_ctx(rc_status, live_age=0.05, tr_age=0.05, echo=None, tmp=None):
+def make_ctx(rc_status, live_age=0.05, tr_age=0.05, echo=None, tmp=None, bif=True):
     tmp = tmp or tempfile.mkdtemp()
     ctx = type("Ctx", (), {})()
     ctx.app_dir = tmp
@@ -79,6 +82,10 @@ def make_ctx(rc_status, live_age=0.05, tr_age=0.05, echo=None, tmp=None):
     ctx.live = Sup({"live_seen": live_age is not None, "age_s": live_age})
     ctx.training = Sup({"packets_ok": 100 if tr_age is not None else 0, "age_s": tr_age}, echo)
     ctx.commands = Cmd()
+    # Bi-LSTM state from a fake Signals stream: IMU ready + valid (so "Ready" means nothing open);
+    # bif=None leaves it unknown
+    vals = {"bif_bias_ready": 1.0, "bif_valid": 1.0} if bif else {}
+    ctx.matlab = type("ML", (), {"snapshot": lambda self, kind, names, *a, **k: {"values": vals}})()
     ctx.session = S.SessionSetup(ctx)
     return ctx
 
@@ -99,6 +106,10 @@ def main():
     # 1 Ready: AFO_r1 running, both streams, echo matches
     c = make_ctx(run, echo=ECHO); confirm(c); c.session.refresh_readback()
     r["1_ready"] = top_status(c)["text"]
+    # 1b same, but no Bi-LSTM state (no Signals, 12-float console): still Ready (green),
+    # the unknown state is only a grey note in the popover
+    c = make_ctx(run, echo=ECHO, bif=False); confirm(c); c.session.refresh_readback()
+    s = top_status(c); r["1b_bif_unknown"] = (s["text"], s["level"], s.get("notes"))
     # 2 mass differs (amber)
     c = make_ctx(run, echo=dict(ECHO, weight_kg=55.0)); confirm(c); c.session.refresh_readback()
     s = top_status(c); r["2_mass"] = (s["text"], s["level"])
@@ -166,7 +177,7 @@ def main():
     r["17_meta_run"] = c.runctl.calls[-1][1]["file_log_run"]
 
     expect = {
-        "1_ready": "Ready", "2_mass": ("Mass differs", "amber"), "4_nodata": ("No data 3.3 s", "red"),
+        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs Signals or the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "4_nodata": ("No data 3.3 s", "red"),
         "5_confirm": ("Confirm foot side", "amber"), "6_connected": "Connected", "7_not_connected": "Not connected",
         "8_busy": "Starting…", "9_afo_status": "Ready", "10_status": "Assist command differs",
         "11_after_echo_lost": {"side": None, "weight": None}, "12_key": "StartDate",

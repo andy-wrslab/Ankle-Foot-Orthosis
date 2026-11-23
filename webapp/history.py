@@ -158,6 +158,27 @@ class SignalHistory:
             v = series[-1] if series else math.nan
             return v if math.isfinite(v) else None
 
+        # ankle velocity (computed, deg/s): derivative of the per-bin mean ankle angle,
+        # smoothed over 5 bins (0.1 s at 20 ms bins); two points per bin like the envelopes
+        ank = np.fromiter(self._ankle, dtype=np.float64, count=length)[first:]
+        with np.errstate(all="ignore"):
+            ok = np.isfinite(ank)
+            sums = np.add.reduceat(np.where(ok, ank, 0.0), starts)
+            cnt = np.add.reduceat(ok.astype(np.float64), starts)
+            mean = np.where(cnt > 0, sums / np.maximum(cnt, 1), np.nan)
+            vel = np.gradient(mean, bw) if nb >= 2 else np.full(nb, np.nan)
+            if nb >= 5:
+                k = np.ones(5) / 5.0
+                good = np.isfinite(vel)
+                num = np.convolve(np.where(good, vel, 0.0), k, mode="same")
+                den = np.convolve(good.astype(np.float64), k, mode="same")
+                vel = np.where(den > 0.5, num / np.maximum(den, 1e-9), np.nan)
+        ankle_vel = np.empty(2 * nb)
+        ankle_vel[0::2] = vel
+        ankle_vel[1::2] = vel
+        fin = vel[np.isfinite(vel)]
+        ankle_vel_last = float(fin[-1]) if fin.size else None
+
         payload = {
             # bin times are multiples of bin_width; rounding strips float noise
             # (1597.1200000000001 -> 1597.12) so the JSON stays short and exact
@@ -165,6 +186,7 @@ class SignalHistory:
             "t_latest": float(t[-1]),
             "bin_width": bw,
             "ankle": _env(self._ankle),
+            "ankle_vel": ankle_vel,
             "torque": _env(self._torque),
             "demand_torque": _env(self._demand),
             "gait": _env(self._gait),
@@ -175,6 +197,7 @@ class SignalHistory:
             # newest raw sample per channel for the numeric readouts (null if rejected)
             "latest": {
                 "ankle": _last(self._ankle),
+                "ankle_vel": ankle_vel_last,
                 "torque": _last(self._torque),
                 "demand_torque": _last(self._demand),
                 "gait": _last(self._gait),
@@ -283,4 +306,140 @@ class SlowBuffer:
             v[0::2], v[1::2] = lo, hi
             out["series"][nm] = {"t": [round(float(q), 4) for q in x],
                                  "v": [None if not math.isfinite(q) else float(f"{q:.6g}") for q in v]}
+        return out
+
+
+DISPLAY_CHANNELS = ("ankle", "torque", "demand_torque", "gait", "sv_target", "uc", "assistance_level")
+
+
+class DisplayHistory:
+    """100 Hz display history of the 1 kHz main bus (Nov 23).
+
+    One point per 10 ms bin = the bin MEAN of every channel (NaN-aware; a bin with
+    no valid value is a gap), heel_strike = 1 if any sample in the bin had it.
+    The point's time is the bin start in model seconds. ankle_vel (computed) is
+    the derivative of consecutive ankle means, smoothed over 5 points (50 ms).
+    The 1 kHz record is the Speedgoat file log; this is only for the page.
+    """
+
+    def __init__(self, max_seconds: float = 10.0, press_channels: int = 8, imu_channels: int = 12,
+                 dt: float = 0.01) -> None:
+        self.dt = float(dt)
+        self.max_seconds = float(max_seconds)
+        self.cap = int(round(self.max_seconds / self.dt)) + 50
+        self.npress, self.nimu = press_channels, imu_channels
+        self.reset()
+
+    def reset(self) -> None:
+        cap = self.cap
+        self.t: Deque[float] = deque(maxlen=cap)
+        self.ch: Dict[str, Deque[float]] = {k: deque(maxlen=cap) for k in DISPLAY_CHANNELS + ("ankle_vel", "heel_strike")}
+        self.press: List[Deque[float]] = [deque(maxlen=cap) for _ in range(self.npress)]
+        self.imu: List[Deque[float]] = [deque(maxlen=cap) for _ in range(self.nimu)]
+        self._bin = None
+        self._acc = None
+        self._vel_raw: Deque[float] = deque(maxlen=5)
+        self._prev_ankle = math.nan
+        self.status = 0.0
+
+    def _new_acc(self):
+        n = len(DISPLAY_CHANNELS) + self.npress + self.nimu
+        return {"sum": [0.0] * n, "cnt": [0] * n, "heel": 0.0}
+
+    def add(self, sample: Dict[str, object]) -> bool:
+        """Add one 1 kHz sample; True when a 10 ms point was completed."""
+        try:
+            t = float(sample.get("t"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return False
+        if not math.isfinite(t):
+            return False
+        b = int(math.floor(t / self.dt + 1e-9))
+        closed = False
+        if self._bin is not None and b != self._bin:
+            if b < self._bin:            # time went back (restart): start over
+                self.reset()
+            else:
+                self._close()
+                closed = True
+        if self._bin is None or b != self._bin:
+            self._bin, self._acc = b, self._new_acc()
+        acc = self._acc
+        vals = [sample.get(k) for k in DISPLAY_CHANNELS]
+        press = sample.get("press") or []
+        imu = sample.get("imu") or []
+        vals += [press[i] if i < len(press) else None for i in range(self.npress)]  # type: ignore[index]
+        vals += [imu[i] if i < len(imu) else None for i in range(self.nimu)]        # type: ignore[index]
+        for i, v in enumerate(vals):
+            try:
+                f = float(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(f):
+                acc["sum"][i] += f
+                acc["cnt"][i] += 1
+        hs = sample.get("heel_strike")
+        try:
+            if hs is not None and float(hs) >= 0.5:  # type: ignore[arg-type]
+                acc["heel"] = 1.0
+        except (TypeError, ValueError):
+            pass
+        st = sample.get("statusword")
+        try:
+            if st is not None and math.isfinite(float(st)):  # type: ignore[arg-type]
+                self.status = float(st)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            pass
+        return closed
+
+    def _close(self) -> None:
+        acc = self._acc
+        means = [(s / c) if c else math.nan for s, c in zip(acc["sum"], acc["cnt"])]
+        self.t.append(round(self._bin * self.dt, 6))
+        nd = len(DISPLAY_CHANNELS)
+        for i, k in enumerate(DISPLAY_CHANNELS):
+            self.ch[k].append(means[i])
+        for i in range(self.npress):
+            self.press[i].append(means[nd + i])
+        for i in range(self.nimu):
+            self.imu[i].append(means[nd + self.npress + i])
+        self.ch["heel_strike"].append(acc["heel"])
+        a = means[0]
+        raw = (a - self._prev_ankle) / self.dt if math.isfinite(a) and math.isfinite(self._prev_ankle) else math.nan
+        self._prev_ankle = a
+        self._vel_raw.append(raw)
+        good = [v for v in self._vel_raw if math.isfinite(v)]
+        self.ch["ankle_vel"].append(sum(good) / len(good) if len(good) >= 3 else math.nan)
+
+    def payload(self, since: float | None = None) -> Dict[str, object]:
+        """Points with t > since (all when None) + the latest values, as plain lists."""
+        n = len(self.t)
+        if n == 0:
+            return {}
+        t = list(self.t)
+        i0 = 0
+        if since is not None:
+            i0 = n
+            while i0 > 0 and t[i0 - 1] > since:
+                i0 -= 1
+
+        def clean(v):
+            # strict JSON: NaN -> null (a gap); 6 significant digits keep messages small
+            return None if v != v or v in (math.inf, -math.inf) else float(f"{v:.6g}")
+
+        def sl(d):
+            return [clean(v) for v in list(d)[i0:]]
+
+        def last(d):
+            v = d[-1] if d else math.nan
+            return clean(v)
+
+        out: Dict[str, object] = {"t": t[i0:], "t_latest": t[-1], "dt": self.dt}
+        for k, d in self.ch.items():
+            out[k] = sl(d)
+        out["press"] = [sl(d) for d in self.press]
+        out["imu"] = [sl(d) for d in self.imu]
+        out["statusword"] = self.status
+        out["latest"] = {**{k: last(d) for k, d in self.ch.items()},
+                         "press": [last(d) for d in self.press], "imu": [last(d) for d in self.imu]}
         return out

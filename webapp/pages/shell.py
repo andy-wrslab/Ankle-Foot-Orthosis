@@ -86,6 +86,10 @@ def build_app(ctx) -> dash.Dash:
             try:
                 yield "retry: 2000\n\n"
                 last = snapshots.seq
+                # first message: the whole 100 Hz window; every later one is a delta
+                full = snapshots.full_text()
+                if full:
+                    yield f"data:{full}\n\n"
                 while not ctx.stopping.is_set():
                     seq, text = snapshots.wait_next(last, _SSE_IDLE_TIMEOUT)
                     if text is None:

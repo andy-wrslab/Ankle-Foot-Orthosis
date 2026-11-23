@@ -52,7 +52,8 @@ def settings_rows(ctx) -> Dict[str, Any]:
     table = {r["name"]: r for r in sess.target_table()}
     console_live = bool(sess.echo())
     rows = []
-    main = [("side", "Foot side"), ("weight", "Body mass"), ("bif_mass", "Mass (Bi-LSTM)"),
+    # one Body mass row: on AFO_r1 it is ok only when weight AND BIF_mass_kg both equal it
+    main = [("side", "Foot side"), ("weight", "Body mass"),
             ("mode", "Assistance mode"), ("k_percent", "K")]
     for key, label in main:
         if key not in table:          # not in this model profile (bif_mass in AFO)
@@ -69,9 +70,19 @@ def settings_rows(ctx) -> Dict[str, Any]:
             state = "none"
         if r.get("source") == "echo" and not console_live:
             state = "sending"
-        rows.append({"key": key, "label": label, "entered": _fmt(key, r.get("entered")),
-                     "target": _fmt(key, r.get("target")) if r.get("target") is not None else "…",
-                     "state": state, "source": r.get("source")})
+        row = {"key": key, "label": label, "entered": _fmt(key, r.get("entered")),
+               "target": _fmt(key, r.get("target")) if r.get("target") is not None else "…",
+               "state": state, "source": r.get("source")}
+        if key == "weight" and "bif_mass" in table:
+            b = table["bif_mass"]
+            bt = b.get("target")
+            row["title"] = (f"weight {_fmt('weight', r.get('target'))} · BIF_mass_kg "
+                            f"{_fmt('bif_mass', bt) if bt is not None else '…'} (both are set from Body mass)")
+            if state == "ok" and b.get("match") is not True:
+                row["state"] = "differs" if b.get("match") is False else "sending"
+                if bt is not None:
+                    row["target"] = f"{row['target']} / {_fmt('bif_mass', bt)}"
+        rows.append(row)
     adv = [sp["key"] for sp in SPECS if sp.get("adv")]
     known = [table[k] for k in adv if k in table and table[k].get("target") is not None]
     n_match = sum(1 for r in known if r.get("match") is True or (r.get("entered") is None))
@@ -99,13 +110,18 @@ def side_view(ctx) -> Dict[str, Any]:
         state = "mismatch"
     elif chip["state"] == "ok":
         state = "ok"
+    elif chip["state"] == "pending":
+        state = "pending"
     else:
         state = "confirm"
     shown = SIDE_NAMES.get(rbi) if rbi in (0, 1) else (SIDE_NAMES.get(int(want)) if want is not None else None)
     return {"state": state, "app": SIDE_NAMES.get(int(want)) if want is not None else None,
             "target": SIDE_NAMES.get(rbi) if rbi in (0, 1) else ("UNSET" if rbi == -1 else None),
             "chip": (f"{shown.capitalize()} foot" if state == "ok" and shown else
-                     "! FOOT MISMATCH" if state == "mismatch" else "? CONFIRM FOOT"),
+                     "! FOOT MISMATCH" if state == "mismatch" else
+                     chip["text"] if state == "pending" else "? CONFIRM FOOT"),
+            "sid": sess.sid, "connected": bool((ctx.runctl.status or {}).get("connected")),
+            "msg": (sess.status.get("side") or {}).get("msg") or "",
             "after_start": bool(getattr(sess, "after_start", False)), "problem": sess.side_problem()}
 
 
@@ -141,7 +157,8 @@ def rig_view(ctx) -> Dict[str, Any]:
         "tet": tet or "–",
         "ethercat": "–" if ecat in (None, []) else ("OP" if ecat == 8 else f"state {ecat}"),
         "file_log": rc.get("filelog") or "–",
-        "main_udp": {"rate": round(live.get("rate_hz") or 0), "bad": int(lh.get("bad_length", 0) or 0) +
+        "main_udp": {"rate": round(live.get("rate_hz") or 0), "lost": int(lh.get("lost", 0) or 0),
+                     "bad": int(lh.get("bad_length", 0) or 0) +
                      int(lh.get("bad_time", 0) or 0) + int(lh.get("errors", 0) or 0)},
         "console_udp": {"enabled": bool(getattr(ctx.training, "enabled", False)), "rate": round(tr.get("rate_hz") or 0), "columns": tr.get("columns"),
                         "lost": int(tr.get("lost_packets") or 0),
@@ -172,7 +189,8 @@ def console_state(ctx) -> Dict[str, Any]:
     if job is not None:
         action = job.title.split(":")[-1].strip()
         if action in BUSY_TEXT:
-            busy = {"action": action, "verb": BUSY_TEXT[action][0], "msg": BUSY_TEXT[action][1]}
+            busy = {"action": action, "verb": BUSY_TEXT[action][0], "msg": BUSY_TEXT[action][1],
+                    "started": getattr(job, "started", None), "stage": (getattr(job, "meta", None) or {}).get("stage")}
     sess = ctx.session
     sent_recent = any((v or {}).get("state") == "sending" for v in sess.status.values())
     if not busy and sent_recent and st["level"] not in ("red",):

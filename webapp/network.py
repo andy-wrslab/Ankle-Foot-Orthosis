@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Tuple
 
 from constants import CONTROL_FMT, SAMPLE_RATE_HZ, UPDATE_MS, N_WINDOW_SEC, PARAM_FMT, BIN_WIDTH_SEC
 from state import snapshots
-from history import SignalHistory
+from history import SignalHistory, DisplayHistory
 from health import DataHealth
 
 # minimum interval between control packets in seconds and nanoseconds
@@ -17,8 +17,11 @@ _MIN_CTRL_INTERVAL = UPDATE_MS / 1000.0
 _CTRL_INTERVAL_NS = int(_MIN_CTRL_INTERVAL * 1_000_000_000)
 _last_ctrl_ns = 0
 
-# throttle SSE pushes so the browser is not overwhelmed
-_SSE_PUSH_HZ = 30.0
+# throttle SSE pushes so the browser is not overwhelmed. Since Nov 23 every message
+# is a DELTA: the 100 Hz display points of the last _DELTA_S seconds (the main
+# process merges them into the full window for newly connecting clients).
+_SSE_PUSH_HZ = 20.0
+_DELTA_S = 0.5
 _SSE_PUSH_INTERVAL = 1.0 / _SSE_PUSH_HZ
 _last_emit_ts = 0.0
 
@@ -35,11 +38,16 @@ _history = SignalHistory(
     max_emit_points=_HISTORY_MAX_POINTS,
     max_samples=_HISTORY_MAX_SAMPLES,
     bin_width=BIN_WIDTH_SEC,
+    imu_channels=12,          # every IMU column (5431 cols 11-22) for the Sensors sub-page
 )
 _health = DataHealth(window_sec=N_WINDOW_SEC)
 # the live and fake sources briefly overlap while handing over, so every
 # mutation of the rolling window is serialized
 _history_lock = threading.Lock()
+# 100 Hz display history (10 ms means); the page never sees the 1 kHz samples any more
+_display = DisplayHistory(N_WINDOW_SEC)
+# lost packets from model-time gaps (live stream at SAMPLE_RATE_HZ)
+_prev_live_t = None
 _logger = logging.getLogger("afo.network")
 
 # a silence longer than this means the target went away (restart, reboot, cable)
@@ -286,7 +294,10 @@ def _zero_controls(cfg: Dict[str, Any]) -> None:
 
 def _begin_session(cfg: Dict[str, Any], session: int, reason: str) -> None:
     """Start from a clean slate after the target (re)started."""
+    global _prev_live_t
     _history.reset()
+    _display.reset()
+    _prev_live_t = None
     _slow.reset()
     snapshots.clear()
     # No control packet here: the model holds the last command it received, and
@@ -454,6 +465,7 @@ def _build_decoder(cfg: Dict[str, Any]):
             "assistance_level": _v(name_to_idx.get("assistance_level")),
             "sv_target": _v(name_to_idx.get("sv_target")),
             "uc": _v(name_to_idx.get("uc")),
+            "heel_strike": _v(name_to_idx.get("heel_strike")),
         }
         return sample, {g: (c[0], c[1]) for g, c in counts.items()}
 
@@ -496,6 +508,10 @@ def _open_listen_socket(host: str, port: int) -> socket.socket | None:
     """Bind a UDP socket for the inbound stream, or return None on failure."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:   # 4 MB receive buffer: a busy page or test must not make the 1 kHz stream overflow
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+    except OSError:
+        pass
     if hasattr(socket, "SO_REUSEPORT"):
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
@@ -600,6 +616,7 @@ def start_fake_data(cfg: Dict[str, Any], stop_event: threading.Event | None = No
         return
     _logger.info("no live target: generating fake data until real packets arrive")
     _history.reset()
+    _display.reset()
     t = 0.0
     dt = 1.0 / SAMPLE_RATE_HZ
     while not stop_event.is_set():
@@ -632,8 +649,8 @@ def start_fake_data(cfg: Dict[str, Any], stop_event: threading.Event | None = No
 
 
 def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = True) -> None:
-    """Update the rolling history and push throttled snapshots to SSE clients."""
-    global _last_emit_ts
+    """Update the 100 Hz display history and push throttled deltas to SSE clients."""
+    global _last_emit_ts, _prev_live_t
 
     t_val = sample.get("t", math.nan)
     try:
@@ -655,10 +672,18 @@ def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = Tr
                 _health.count_packet(verdict)
                 _rl_log(verdict, logging.WARNING, "packet dropped (%s) at model time %.3f s", verdict, t_val)
                 return
+            # lost packets: a model-time step > 1.5 sample periods (within one session)
+            prev = _prev_live_t
+            if prev is not None:
+                step = t_val - prev
+                period = 1.0 / SAMPLE_RATE_HZ
+                if 1.5 * period < step <= LINK_TIMEOUT_SEC:
+                    _health.count_lost(int(round(step / period)) - 1)
+            _prev_live_t = t_val
         elif live_data_seen():
             # the real target took over; never mix fake samples into its window
             return
-        _history.add_sample(sample)
+        _display.add(sample)
         if live:
             _slow.add(sample)
             with _readback_lock:
@@ -672,9 +697,11 @@ def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = Tr
         if now - _last_emit_ts < _SSE_PUSH_INTERVAL:
             return
 
-        snapshot = _history.snapshot()
+        tl = _display.t[-1] if _display.t else None
+        snapshot = _display.payload(since=(tl - _DELTA_S) if tl is not None else None)
         if not snapshot:
             return
+        snapshot["kind"] = "delta"
         _last_emit_ts = now
 
     meta = snapshot.get("meta")
@@ -686,9 +713,6 @@ def _publish_sample(cfg: Dict[str, Any], sample: Dict[str, Any], live: bool = Tr
         meta["session"] = _link_session
     snapshot["health"] = _health.snapshot()
 
-    trimmed = meta.get("samples_trimmed", 0)
-    if trimmed and _logger.isEnabledFor(logging.DEBUG):
-        _logger.debug("trimmed %d samples (emit_points=%s)", trimmed, meta.get("emit_points"))
 
     # every connected dashboard gets this snapshot (not just one of them).
     # In the web app the receiver runs in its own process and the hook ships

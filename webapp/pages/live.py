@@ -5,7 +5,11 @@ the top bar are built by assets/afo_console.js from /api/console/state.
 * Gait and Sensors plots: main bus 5431 via SSE, drawn by a clientside
   callback (min/max envelope per time bin; no numbers on the page, values via
   the unified hover). Torque = col 25 measured / col 28 command; Stride
-  velocity = col 1 sv / col 23 sv_target; FSR 1-8; IMU accel x/y/z.
+  velocity = col 1 sv / col 23 sv_target. Sensors (Nov 23): every sensor column,
+  one card per group (plot_style.SENSOR_CARDS): FSR 1-8 by insole position, raw
+  accel, gyro, linear accel, orientation, ankle angle, ankle velocity (computed);
+  each trace named with its current value in the legend; a legend click hides it.
+* x axis = absolute model time (the last 10 s / 2 s), ticks scroll with the data.
 * Training plots: 5431 cols 27 (assistance level in use) and 24 (Uc) from the
   live worker's 330 s / 100 Hz buffer, 30 s / 2 min / 5 min windows.
 * Hover hold: while the pointer is on a plot it is not redrawn
@@ -21,9 +25,11 @@ import plotly.graph_objs as go
 from dash import dcc, html, Input, Output, State, no_update
 
 from constants import N_WINDOW_SEC
-from plot_style import GRAPH_CONFIG, HOVER_FMT, SERIES, base_layout, dtick_for, trace_hover, TRAINING_PLOTS
+from plot_style import (GRAPH_CONFIG, HOVER_FMT, SENSOR_CARDS, SERIES, base_layout, dtick_for, trace_hover,
+                        TRAINING_PLOTS)
 
-LIVE_GRAPHS = ["torque", "gait", "press", "imu"]
+SENSOR_IDS = [c["id"] for c in SENSOR_CARDS]
+LIVE_GRAPHS = ["torque", "gait"] + SENSOR_IDS
 TRAIN_GRAPHS = [p["id"] for p in TRAINING_PLOTS]
 
 
@@ -47,20 +53,28 @@ def make_figs():
                    sg(line=_line("cmd"), **trace_hover("Command", HOVER_FMT["torque"], "N·m"))], (-5, 15))
     gait = _fig([sg(line=_line("meas"), **trace_hover("Current", HOVER_FMT["speed"], "m/s")),
                  sg(line=_line("cmd"), **trace_hover("Target", HOVER_FMT["speed"], "m/s"))], (0, 2))
-    press = _fig([sg(line=dict(color=c, width=1.25), **trace_hover(f"FSR {i + 1}", HOVER_FMT["fsr"]))
-                  for i, c in enumerate(SERIES["fsr"])], (0, 1000), )
-    imu = _fig([sg(line=_line(k), **trace_hover(n, HOVER_FMT["imu"], "g"))
-                for k, n in (("imu_x", "x"), ("imu_y", "y"), ("imu_z", "z"))], (-3, 3))
-    return {"torque": torque, "gait": gait, "press": press, "imu": imu}
+    figs = {"torque": torque, "gait": gait}
+    for c in SENSOR_CARDS:
+        figs[c["id"]] = _fig([sg(line=dict(color=c["colors"][k % len(c["colors"])], width=1.25),
+                                 **trace_hover(n, f".{c['dec']}f", c["unit"]))
+                              for k, n in enumerate(c["names"])], c["y"])
+    return figs
 
 
-def training_fig(plot, series=None, window_s=120):
+def training_fig(plot, series=None, window_s=120, t_latest=None):
+    """Training plots on the same absolute model-time axis as Gait / Sensors: the slow
+    buffer gives times relative to its newest sample plus t_latest; x = t + t_latest and
+    the range is [t_latest - window, t_latest] (ticks in model seconds)."""
     lay = base_layout(tuple(plot["y"]), window_s=window_s, zeroline=False)
     lay["xaxis"]["dtick"] = dtick_for(window_s)
+    tl = float(t_latest) if isinstance(t_latest, (int, float)) else None
+    if tl is not None:
+        lay["xaxis"]["range"] = [tl - window_s, tl]
     traces = []
     for col, name in zip(plot["columns"], plot["names"]):
         s = (series or {}).get(col) or {"t": [], "v": []}
-        traces.append(go.Scattergl(x=s["t"], y=s["v"], mode="lines", line=_line("meas"),
+        x = [v + tl for v in s["t"]] if tl is not None else s["t"]
+        traces.append(go.Scattergl(x=x, y=s["v"], mode="lines", line=_line("meas"),
                                    **trace_hover(name, plot["fmt"])))
     return go.Figure(data=traces, layout=lay)
 
@@ -75,14 +89,28 @@ def _legend(items):
     return html.Span(className="legend", children=out)
 
 
-def _card(graph_id, title, unit, legend, live, hidden=False, fig=None):
+def _value_legend(c):
+    """Legend chips with the current value; a click hides / shows that trace."""
+    chips = []
+    for k, n in enumerate(c["names"]):
+        chips.append(html.Button(className="lg", type="button", title=f"Show / hide {n}",
+                                 **{"data-g": c["id"], "data-k": str(k), "aria-pressed": "true"}, children=[
+                                     html.I(style={"color": c["colors"][k % len(c["colors"])]}),
+                                     html.Span(n, className="lg-n"),
+                                     html.B("–", className="lg-v mono")]))
+    return html.Span(className="legend lg-vals", children=chips)
+
+
+def _card(graph_id, title, unit, legend, live, hidden=False, fig=None, extra_class=""):
     head = [html.Span(title, className="card-title")]
     if unit:
         head.append(html.Span(unit, className="card-unit"))
     if legend is not None:
         head.append(legend)
     head.append(html.Span(className="spacer"))
-    return html.Section(className="card plot-card", hidden=hidden, **{"data-live": live}, children=[
+    attrs = {"data-live": live} if live else {}
+    return html.Section(className="card plot-card" + (f" {extra_class}" if extra_class else ""), hidden=hidden,
+                        **attrs, children=[
         html.Div(className="card-head", children=head),
         html.Div(className="plot-body", children=dcc.Graph(
             id=graph_id, figure=fig if fig is not None else _FIGS[graph_id], config=GRAPH_CONFIG,
@@ -91,8 +119,6 @@ def _card(graph_id, title, unit, legend, live, hidden=False, fig=None):
 
 
 def layout(ctx=None) -> html.Div:
-    fsr_ramp = html.Span(className="legend", children=html.Span(className="ramp", children=[
-        html.B("Heel"), html.I(className="r"), html.B("Toe")]))
     train = {p["id"]: p for p in TRAINING_PLOTS}
     return [
         dcc.Store(id="window-sec", data=N_WINDOW_SEC),
@@ -123,9 +149,9 @@ def layout(ctx=None) -> html.Div:
                                                   ("Command", "var(--s-cmd)", True)]), "gait"),
         _card("gait", "Stride velocity", "m/s", _legend([("Current", "var(--s-meas)", False),
                                                          ("Target", "var(--s-cmd)", True)]), "gait"),
-        _card("press", "Pressure", "FSR 1–8, raw", fsr_ramp, "sensors", hidden=True),
-        _card("imu", "IMU acceleration", "g", _legend([("x", "var(--s-x)", False), ("y", "var(--s-y)", False),
-                                                       ("z", "var(--s-z)", False)]), "sensors", hidden=True),
+        html.Div(className="sensor-grid", id="sensorGrid", hidden=True, **{"data-live": "sensors"}, children=[
+            _card(c["id"], c["title"], c["unit"], _value_legend(c), None,
+                  extra_class="wide" if c.get("wide") else "") for c in SENSOR_CARDS]),
         _card("tr-assist", "Assistance", None, _legend([("Level in use", "var(--s-meas)", False)]), "training",
               hidden=True, fig=training_fig(train["tr-assist"])),
         _card("tr-uc", "Uc", None, None, "training", hidden=True, fig=training_fig(train["tr-uc"])),
@@ -137,12 +163,11 @@ def register(app: dash.Dash, ctx) -> None:
         string.Template(_GRAPH_JS).substitute(
             default_window=N_WINDOW_SEC, max_window=N_WINDOW_SEC,
             figs_json=json.dumps({k: v.to_plotly_json() for k, v in _FIGS.items()}),
+            graphs_json=json.dumps(LIVE_GRAPHS),
+            cards_json=json.dumps([{"id": c["id"], "src": c["src"], "dec": c["dec"]} for c in SENSOR_CARDS]),
         ),
-        Output("torque", "figure"), Output("gait", "figure"), Output("press", "figure"), Output("imu", "figure"),
         Output("link-session", "data"),
         Input("es", "data"), Input("window-sec", "data"),
-        State("hold-torque", "data"), State("hold-gait", "data"), State("hold-press", "data"),
-        State("hold-imu", "data"),
         prevent_initial_call=True,
     )
 
@@ -157,89 +182,174 @@ def register(app: dash.Dash, ctx) -> None:
             return no_update, no_update
         win = float(win or 120)
         d = ctx.live.slow_data(["assistance_level", "uc"], win, max_points=1500) or {}
-        series = d.get("series") or {}
-        return (no_update if hold_a else training_fig(train["tr-assist"], series, win),
-                no_update if hold_u else training_fig(train["tr-uc"], series, win))
+        series, tl = d.get("series") or {}, d.get("t_latest")
+        return (no_update if hold_a else training_fig(train["tr-assist"], series, win, tl),
+                no_update if hold_u else training_fig(train["tr-uc"], series, win, tl))
 
 
-# One run per SSE message. Every skip path returns no_update for every output.
-# Only the visible sub-page is drawn (hidden cards are display:none); a held
-# graph (pointer on it) is skipped so its hover label stays readable. The
-# Motor fill and the model time are written to the DOM here (no Dash output).
+# Live plots (Nov 23): the page keeps its own 100 Hz buffer. The first SSE message
+# is the full window, later ones are deltas (the last ~0.5 s); points with t > the
+# newest buffered t are appended. Drawing is separate from receiving: at most ~30 fps
+# in requestAnimationFrame, only the visible sub-tab, new points via
+# Plotly.extendTraces (maxPoints = window x 100), a full Plotly.react only when a
+# graph becomes visible, the window changes, the stream restarts or a trace is
+# hidden. A held graph (pointer on it) is skipped and catches up on release.
+# The Dash callback itself only ingests messages and outputs the link session.
 _GRAPH_JS = r"""
-function(msg, window_sec, hold_torque, hold_gait, hold_press, hold_imu){
+function(msg, window_sec){
+    var GRAPHS = ${graphs_json}, CARDS = ${cards_json};
+    var SERIES = ['ankle', 'torque', 'demand_torque', 'gait', 'sv_target', 'uc', 'assistance_level', 'ankle_vel', 'heel_strike'];
     var NU = (window && window.dash_clientside) ? window.dash_clientside.no_update : null;
-    var NONE = [NU, NU, NU, NU, NU];
     var raf = (typeof window.requestAnimationFrame === 'function')
-        ? window.requestAnimationFrame.bind(window) : function(cb){ return setTimeout(cb, 16); };
+        ? window.requestAnimationFrame.bind(window) : function(cb){ return setTimeout(function(){ cb(Date.now()); }, 16); };
+    var MAXWIN = ${max_window};
     try {
         if(!window._afoFigs){ window._afoFigs = ${figs_json}; }
-        var figs = window._afoFigs;
-        var raw = msg ? ((typeof msg === 'string') ? msg : msg.data) : null;
-        var p = raw ? window._afoParse(raw) : window._afoLastSnapshot;
-        if(!p){ return NONE; }
-        if(raw){ window._afoLastSnapshot = p; window._afoLastPacketAt = Date.now(); }
-        if(!Array.isArray(p.t) || !p.t.length || typeof p.t_latest !== 'number' || !isFinite(p.t_latest)){ return NONE; }
-        var st = window._afoRenderState;
-        if(!st){ st = window._afoRenderState = {session: null, lastEmitted: 0, framePending: false, rev: 0, frames: 0, drive: null}; }
-        var meta = p.meta || {};
-        var sessionOut = NU;
-        if(meta.session !== undefined && meta.session !== st.session){
-            st.session = meta.session; st.lastEmitted = 0; sessionOut = meta.session;
-        }
-        if(window._afoOnSnapshot){ try { window._afoOnSnapshot(p); } catch(e){ console.error('[AFO] snapshot hook', e); } }
-        if(window._afoPage && window._afoPage !== 'live'){ return [NU, NU, NU, NU, sessionOut]; }
-        var sub = window._afoLiveSub || 'gait';
-        if(sub === 'training'){ return [NU, NU, NU, NU, sessionOut]; }
-        var em = (typeof meta.emitted_at === 'number') ? meta.emitted_at : 0;
-        if(raw && st.lastEmitted && em && em <= st.lastEmitted && sessionOut === NU){ return NONE; }
-        if(st.framePending && sessionOut === NU){ return NONE; }
-        st.framePending = true;
-        raf(function(){ st.framePending = false; });
-        if(em){ st.lastEmitted = em; }
-
         var win = Number(window_sec);
         if(!isFinite(win) || win <= 0){ win = ${default_window}; }
-        if(win > ${max_window}){ win = ${max_window}; }
-        var tl = p.t_latest;
-        var bw = (typeof p.bin_width === 'number') ? p.bin_width : 0.02;
-        var t = p.t;
-        var x = new Array(t.length);
-        for(var i = 0; i < t.length; i++){ x[i] = t[i] - tl; }
-        var start = 0, cutoff = -win - bw;
-        while(start < x.length && x[start] < cutoff){ start++; }
-        x = x.slice(start);
-        function S(a){ return Array.isArray(a) ? a.slice(start) : []; }
-        st.rev += 1; st.frames += 1;
-        var H = window._afoHold || {};
-        var HOLD = {torque: hold_torque || H.torque, gait: hold_gait || H.gait,
-                    press: hold_press || H.press, imu: hold_imu || H.imu};
-        var out = [NU, NU, NU, NU];
-        function build(slot, name, ys){
-            if(HOLD[name]){ return; }
-            try {
-                var fig = figs[name];
-                for(var k = 0; k < fig.data.length; k++){ fig.data[k].x = x; fig.data[k].y = ys[k] || []; }
-                fig.layout.xaxis.range = [-win, 0];
-                fig.layout.xaxis.dtick = win <= 2 ? 1 : 2;
-                fig.layout.datarevision = st.rev;
-                out[slot] = {data: fig.data, layout: fig.layout};
-            } catch(err){ console.error('[AFO] ' + name + ' figure update failed', err); }
+        if(win > MAXWIN){ win = MAXWIN; }
+        window._afoWinSec = win;
+
+        if(!window._afoLive){
+            var L = window._afoLive = {R: {}, rev: 0, pending: false, last: 0, session: null};
+            var lowerT = function(arr, x){ var lo = 0, hi = arr.length; while(lo < hi){ var m = (lo + hi) >> 1; if(arr[m] < x){ lo = m + 1; } else { hi = m; } } return lo; };
+            var upperT = function(arr, x){ var lo = 0, hi = arr.length; while(lo < hi){ var m = (lo + hi) >> 1; if(arr[m] <= x){ lo = m + 1; } else { hi = m; } } return lo; };
+            L.ingest = function(p){
+                var B = window._afoBuf, t = Array.isArray(p.t) ? p.t : [];
+                var sess = (p.meta || {}).session;
+                var reset = !B || p.kind === 'full' || (sess !== undefined && B.session !== undefined && sess !== B.session) ||
+                    (t.length && B.t.length && t[t.length - 1] < B.t[B.t.length - 1] - 1);
+                var i0 = 0;
+                if(reset){
+                    B = window._afoBuf = {t: [], s: {}, press: [], imu: [], gen: (B ? B.gen + 1 : 1), session: sess, dt: p.dt || 0.01};
+                    SERIES.forEach(function(n){ B.s[n] = []; });
+                } else {
+                    i0 = upperT(t, B.t.length ? B.t[B.t.length - 1] : -Infinity);
+                }
+                if(i0 < t.length){
+                    var nOld = B.t.length;
+                    B.t = B.t.concat(t.slice(i0));
+                    SERIES.forEach(function(n){ var a = p[n]; B.s[n] = B.s[n].concat(Array.isArray(a) ? a.slice(i0) : new Array(t.length - i0).fill(null)); });
+                    ['press', 'imu'].forEach(function(g){
+                        var src = Array.isArray(p[g]) ? p[g] : [];
+                        for(var j = 0; j < src.length; j++){
+                            if(!B[g][j]){ B[g][j] = new Array(nOld).fill(null); }
+                            B[g][j] = B[g][j].concat(src[j].slice(i0));
+                        }
+                    });
+                    var keep = MAXWIN * 100 + 300;
+                    if(B.t.length > keep + 200){
+                        var cut = B.t.length - keep;
+                        B.t = B.t.slice(cut);
+                        SERIES.forEach(function(n){ B.s[n] = B.s[n].slice(cut); });
+                        ['press', 'imu'].forEach(function(g){ B[g] = B[g].map(function(a){ return a.slice(cut); }); });
+                    }
+                }
+                if(p.latest){ B.latest = p.latest; }
+                B.statusword = p.statusword;
+            };
+            var srcOf = function(B, id){
+                if(id === 'torque'){ return [B.s.torque, B.s.demand_torque]; }
+                if(id === 'gait'){ return [B.s.gait, B.s.sv_target]; }
+                for(var c = 0; c < CARDS.length; c++){
+                    if(CARDS[c].id !== id){ continue; }
+                    return CARDS[c].src.map(function(sk){
+                        var a = sk[0], k = sk[1];
+                        if(a === 'press' || a === 'imu'){ return B[a][k] || []; }
+                        return B.s[a] || [];
+                    });
+                }
+                return [];
+            };
+            var latestOf = function(B, sk){
+                var Lt = B.latest || {}, a = sk[0], k = sk[1];
+                if(a === 'press' || a === 'imu'){ return (Array.isArray(Lt[a]) ? Lt[a] : [])[k]; }
+                return Lt[a];
+            };
+            L.drawOne = function(id, B, winS, tl){
+                var gd = document.querySelector('#' + id + ' .js-plotly-plot');
+                var r = L.R[id] || (L.R[id] = {stale: true});
+                if(!gd || !gd._fullLayout || !window.Plotly){ return; }
+                if(gd.offsetParent === null){ r.stale = true; return; }
+                var H = window._afoHold || {};
+                if(H[id]){ return; }                        // held: keep the hover label; catch up on release
+                var figs = window._afoFigs, srcs = srcOf(B, id), hid = (window._afoHidden || {})[id] || {};
+                var vis = window._afoVisDirty || {};
+                var range = [tl - winS, tl];
+                if(r.stale || r.lastT == null || r.win !== winS || r.gen !== B.gen || vis[id]){
+                    var i0 = lowerT(B.t, tl - winS - 0.02);
+                    var data = figs[id].data.map(function(tr, k){
+                        var d = Object.assign({}, tr);
+                        d.x = B.t.slice(i0); d.y = (srcs[k] || []).slice(i0);
+                        d.visible = hid[k] ? 'legendonly' : true;
+                        return d;
+                    });
+                    var lay = JSON.parse(JSON.stringify(figs[id].layout));
+                    lay.xaxis.range = range; lay.xaxis.autorange = false; lay.xaxis.dtick = winS <= 2 ? 1 : 2;
+                    lay.datarevision = ++L.rev;
+                    window.Plotly.react(gd, data, lay);
+                    r.stale = false; r.lastT = tl; r.win = winS; r.gen = B.gen;
+                    if(vis[id]){ vis[id] = false; }
+                    return;
+                }
+                if(!(tl > r.lastT)){ return; }
+                var i1 = upperT(B.t, r.lastT), xs = [], yv = [], idx = [];
+                for(var k = 0; k < srcs.length; k++){ idx.push(k); xs.push(B.t.slice(i1)); yv.push((srcs[k] || []).slice(i1)); }
+                gd.layout.xaxis.range = range; gd.layout.xaxis.autorange = false;
+                gd.layout.datarevision = ++L.rev;
+                window.Plotly.extendTraces(gd, {x: xs, y: yv}, idx, Math.ceil(winS * 100) + 20);
+                r.lastT = tl;
+            };
+            L.render = function(){
+                var B = window._afoBuf;
+                if(!B || !B.t.length){ return; }
+                if(window._afoPage && window._afoPage !== 'live'){ return; }
+                var sub = window._afoLiveSub || 'gait';
+                if(sub === 'training'){ return; }
+                var winS = window._afoWinSec || ${default_window}, tl = B.t[B.t.length - 1];
+                var ids = sub === 'gait' ? ['torque', 'gait'] : CARDS.map(function(c){ return c.id; });
+                ids.forEach(function(id){ try { L.drawOne(id, B, winS, tl); } catch(e){ console.error('[AFO] ' + id + ' draw failed', e); } });
+                if(sub === 'sensors'){
+                    CARDS.forEach(function(c){
+                        var chips = document.querySelectorAll('.lg[data-g="' + c.id + '"]');
+                        for(var i = 0; i < chips.length; i++){
+                            var kk = Number(chips[i].getAttribute('data-k')), v = latestOf(B, c.src[kk]);
+                            var txt = (typeof v === 'number' && isFinite(v)) ? v.toFixed(c.dec) : '–';
+                            var b = chips[i].querySelector('.lg-v');
+                            if(b && b.textContent !== txt){ b.textContent = txt; }
+                        }
+                    });
+                }
+            };
+            L.request = function(){
+                if(L.pending){ return; }
+                L.pending = true;
+                var step = function(ts){
+                    var now = (typeof ts === 'number') ? ts : Date.now();
+                    if(now - L.last < 33){ raf(step); return; }   // ~30 fps at most
+                    L.pending = false; L.last = now;
+                    L.render();
+                };
+                raf(step);
+            };
+            window._afoRequestRender = L.request;
         }
-        if(sub === 'gait'){
-            build(0, 'torque', [S(p.torque), S(p.demand_torque)]);
-            build(1, 'gait', [S(p.gait), S(p.sv_target)]);
-        } else {
-            var press = Array.isArray(p.press) ? p.press : [];
-            var imu = Array.isArray(p.imu) ? p.imu : [];
-            build(2, 'press', [0, 1, 2, 3, 4, 5, 6, 7].map(function(j){ return S(press[j]); }));
-            build(3, 'imu', [0, 1, 2].map(function(j){ return S(imu[j]); }));
+        var L2 = window._afoLive;
+        var raw = msg ? ((typeof msg === 'string') ? msg : msg.data) : null;
+        var p = raw ? window._afoParse(raw) : null;
+        var sessionOut = NU;
+        if(p){
+            window._afoLastSnapshot = p; window._afoLastPacketAt = Date.now();
+            L2.ingest(p);
+            var meta = p.meta || {};
+            if(meta.session !== undefined && meta.session !== L2.session){ L2.session = meta.session; sessionOut = meta.session; }
+            if(window._afoOnSnapshot){ try { window._afoOnSnapshot(p); } catch(e){ console.error('[AFO] snapshot hook', e); } }
         }
-        return [out[0], out[1], out[2], out[3], sessionOut];
+        L2.request();
+        return sessionOut;
     } catch(err){
-        console.error('[AFO] graph update failed; frame skipped', err);
-        if(window._afoRenderState){ window._afoRenderState.framePending = false; }
-        return NONE;
+        console.error('[AFO] live update failed; message skipped', err);
+        return NU;
     }
 }
 """

@@ -17,8 +17,10 @@ try
         case 'status'
             out = jsonencode(rc_status(tg));
         case 'connect'
+            t0 = tic;
             if ~logical(isConnected(tg)), connect(tg); end
-            s = rc_status(tg); s.ok = s.connected;
+            tc = toc(t0);
+            s = rc_status(tg); s.ok = s.connected; s.t_connect_s = tc;
             out = jsonencode(s);
         case 'disconnect'
             if logical(isConnected(tg)), disconnect(tg); end
@@ -28,9 +30,12 @@ try
             if ~logical(isRunning(tg))
                 out = jsonencode(struct('ok', true, 'state', 'already stopped')); return
             end
-            stop(tg);
-            ok = wait_for(@() ~logical(isRunning(tg)), 20);
+            % No file-log import on Stop (Trials > Export pulls the log with
+            % tg.FileLog.import); with ReloadOnStop at Start the app stays loaded.
+            t0 = tic; stop(tg, 'AutoImportFileLog', false); tsc = toc(t0);
+            t0 = tic; ok = wait_for(@() ~logical(isRunning(tg)), 20); tw = toc(t0);
             s = rc_status(tg); s.ok = ok;
+            s.t_stop_call_s = tsc; s.t_wait_s = tw;
             if ~ok, s.err = 'failed to stop: target still reports running after 20 s'; end
             out = jsonencode(s);
         case 'start'
@@ -38,6 +43,7 @@ try
             if logical(isRunning(tg))
                 out = jsonencode(struct('ok', true, 'state', 'already running')); return
             end
+            tl = 0;
             if ~logical(isLoaded(tg))
                 % stop() unloads the app on this target: reload the SAME
                 % application (the target's last/only installed app) first
@@ -49,11 +55,12 @@ try
                     if numel(apps) == 1, name = apps{1}; end
                 end
                 if isempty(name), error('no application loaded and no unique last application to reload'); end
-                load(tg, name);
+                t0 = tic; load(tg, name); tl = toc(t0);
             end
-            start(tg);
-            ok = wait_for(@() logical(isRunning(tg)), 20);
+            t0 = tic; start(tg, 'AutoImportFileLog', false, 'ReloadOnStop', true); ts = toc(t0);
+            t0 = tic; ok = wait_for(@() logical(isRunning(tg)), 20); tw = toc(t0);
             s = rc_status(tg); s.ok = ok;
+            s.t_load_s = tl; s.t_start_call_s = ts; s.t_wait_s = tw;
             if ~ok, s.err = 'start requested but target does not report running after 20 s'; end
             out = jsonencode(s);
         case 'load'
@@ -78,7 +85,13 @@ try
                     rows{end+1} = r; %#ok<AGROW>
                 end
             end
-            out = jsonencode(struct('ok', true, 'columns', {cols}, 'rows', {rows}, 'n', numel(rows)));
+            % FileLogMaxRuns (the target deletes the oldest run beyond it), when readable
+            maxRuns = [];
+            try, maxRuns = double(tg.get('FileLogMaxRuns')); catch, end
+            if isempty(maxRuns)
+                try, maxRuns = double(tg.FileLogMaxRuns); catch, end
+            end
+            out = jsonencode(struct('ok', true, 'columns', {cols}, 'rows', {rows}, 'n', numel(rows), 'max_runs', maxRuns));
         case 'save'
             outFile = varargin{1};
             if exist(outFile, 'file'), error('refusing to overwrite %s', outFile); end
@@ -220,7 +233,7 @@ while toc(t0) < timeout_s
         if cond(), ok = true; return; end
     catch
     end
-    pause(0.5);
+    pause(0.2);   % poll every 0.2 s (was 0.5)
 end
 end
 

@@ -32,6 +32,8 @@ def worker_main(cfg, out_q, stop_evt, log_dir, req_q=None, resp_q=None) -> None:
                                       encoding="utf-8")],
     )
     log = logging.getLogger("afo.live_worker")
+    from utils import raise_priority
+    raise_priority(log)
     import encoding
     import network
     from utils import is_host_reachable

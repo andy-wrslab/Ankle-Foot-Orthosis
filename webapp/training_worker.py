@@ -70,13 +70,26 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
         handlers=[logging.FileHandler(os.path.join(log_dir, time.strftime("console_worker_%Y%m%d_%H%M%S.log")),
                                       encoding="utf-8")])
     log = logging.getLogger("afo.console")
+    try:
+        from utils import raise_priority
+        raise_priority(log)
+    except Exception:
+        pass
     lay, names = load_layout(layout_path)
     fmt = struct.Struct(lay["format"])
     port = int(lay["port"])
     period = float(lay.get("period_ms", 10)) / 1000.0
     n = len(names)
     assert fmt.size == 4 * n, "layout format and columns disagree"
-    tail = [t for t in (lay.get("optional_columns") or DEFAULT_TAIL) if t not in names]
+    # A 15-column layout (the Simulink make step writes the Bi-LSTM columns at 12-14):
+    # those last columns are an optional tail, so 12-float packets of older builds
+    # still parse (base = the first 12 columns).
+    opt = list(lay.get("optional_columns") or DEFAULT_TAIL)
+    if len(names) > len(opt) and names[-len(opt):] == opt and fmt.format.startswith("<") and fmt.format.endswith("f"):
+        names = names[:-len(opt)]
+        n = len(names)
+        fmt = struct.Struct(f"<{n}f")
+    tail = [t for t in opt if t not in names]
     fmt_ext = tail_struct(fmt, tail)
     if fmt_ext is None:
         tail = []
@@ -163,6 +176,10 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     def rx_loop():
         while not stop_evt.is_set():
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:   # 4 MB receive buffer (see network._open_listen_socket)
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            except OSError:
+                pass
             try:
                 sock.bind((host, port))
             except OSError as exc:
