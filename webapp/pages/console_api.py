@@ -101,13 +101,15 @@ def side_view(ctx) -> Dict[str, Any]:
     sess = ctx.session
     chip = sess.side_chip()
     want = sess.values.get("side")
-    rb = sess.readback.get("side")
+    rb, _src = sess.side_target()                  # 5433 echo first, then getparam
     try:
         rbi = None if rb is None else int(round(float(rb)))
     except (TypeError, ValueError):
         rbi = None
     if chip["state"] == "bad":
         state = "mismatch"
+    elif chip["state"] == "refused":
+        state = "refused"
     elif chip["state"] == "ok":
         state = "ok"
     elif chip["state"] == "pending":
@@ -134,10 +136,10 @@ def side_view(ctx) -> Dict[str, Any]:
             "target": SIDE_NAMES.get(rbi) if rbi in (0, 1) else ("UNSET" if rbi == -1 else None),
             "chip": (f"{shown.capitalize()} foot" if state == "ok" and shown else
                      "! FOOT MISMATCH" if state == "mismatch" else
-                     chip["text"] if state == "pending" else
+                     chip["text"] if state in ("pending", "refused") else
                      quiet if not online else "? CONFIRM FOOT"),
             "sid": sess.sid, "connected": online,
-            "msg": (sess.status.get("side") or {}).get("msg") or "",
+            "msg": chip.get("msg") or (sess.status.get("side") or {}).get("msg") or "",
             "after_start": bool(getattr(sess, "after_start", False)), "problem": sess.side_problem()}
 
 
@@ -199,6 +201,10 @@ def _imu_cal_view(ctx) -> Dict[str, Any]:
 
 
 def console_state(ctx) -> Dict[str, Any]:
+    try:
+        ctx.session.adopt_echo()             # first fresh 5433 echo after a server start
+    except Exception:
+        pass
     st = top_status(ctx)
     job = ctx.jobs.running("rc")
     busy = None
@@ -236,6 +242,7 @@ def console_state(ctx) -> Dict[str, Any]:
         "side": side_view(ctx), "settings": settings_rows(ctx), "commands": commands_view(ctx),
         "rig": rig_view(ctx),
         "imu_cal": _imu_cal_view(ctx),
+        "link": (ctx.settings_link.view() if getattr(ctx, "settings_link", None) is not None else None),
     }
 
 

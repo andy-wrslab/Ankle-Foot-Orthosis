@@ -88,6 +88,16 @@ class ImuCal:
     def block_reason(self) -> str:
         if not self.ctx.session.profile().get("bif"):
             return "Only in AFO_r1"
+        lk = self.ctx.session.link() if hasattr(self.ctx.session, "link") else None
+        if lk is not None:                       # run 14: over UDP 5434, no MATLAB / Connect
+            if lk.frozen:
+                return lk.view()["msg"]
+            t = self.ctx.commands.view()["toggles"]
+            if (t.get("assist") or {}).get("value") == 1 and (t.get("motor") or {}).get("value") == 1:
+                return "Switch Assist or Motor off first"
+            if self.sending or self.holding():
+                return "Calibrating…"
+            return ""
         if not self._rc().get("connected"):
             return "Connect first"
         if self.available is None:
@@ -112,6 +122,21 @@ class ImuCal:
         reason = self.block_reason()
         if reason:
             return {"ok": False, "msg": reason}
+        lk = self.ctx.session.link() if hasattr(self.ctx.session, "link") else None
+        if lk is not None:
+            # run 14: gyro_cal_request counter + 1 over 5434 (the model resets the IMU front end
+            # on every change); the hold timer starts now, bias_ready 1 -> 0 -> 1 says when ready
+            base = float((lk.view().get("adopted") or {}).get("gyro") or 0.0)
+            r = lk.press("gyro", base + 1.0)
+            if not r.get("ok"):
+                return {"ok": False, "msg": r.get("msg")}
+            has_bias = (self.ctx.session.bif_view() or {}).get("bias_ready") is not None
+            with self.lock:
+                self.err, self.ready_at, self.value = "", None, base + 1.0
+                self.pressed_at = time.time()
+                self.hold_len = self.hold_s if has_bias else self.hold_no_signal_s
+            self.ctx.session.audit("imu calibrate", f"5434 gyro_cal_request {base:g} -> {base + 1:g}")
+            return {"ok": True, "msg": "Calibrate IMU: hold still"}
         path = self._path()
         with self.lock:
             self.sending, self.err, self.ready_at = True, "", None

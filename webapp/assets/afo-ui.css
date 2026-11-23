@@ -89,7 +89,7 @@
   --r-ctl: 6px; --r-card: 8px; --r-pill: 999px;
 
   /* Sizes */
-  --topbar-h: 56px;      /* Andy Nov 23: slightly thicker top bar */
+  --topbar-h: 64px;      /* Andy Nov 23 18:48: top bar thicker again (56 -> 64), contents scaled to match */
   --dock-h:   64px;
   --btn-sm: 28px; --btn-md: 32px; --btn-lg: 40px;
 
@@ -152,6 +152,16 @@ body {
 .btn-group .btn:first-child { border-radius: var(--r-ctl) 0 0 var(--r-ctl); margin-left: 0; }
 .btn-group .btn:last-child  { border-radius: 0 var(--r-ctl) var(--r-ctl) 0; }
 .topbar .vr { width: 1px; height: 24px; background: var(--border); }
+/* 64 px bar (Andy 18:48): text and controls one step larger, still centred */
+.topbar .appname { font-size: 18px; }
+.topbar .nav a { height: 36px; font-size: 14px; }
+.topbar .btn.sm, .topbar .btn-group .btn { height: var(--btn-md); font-size: var(--fs-13); }
+.topbar .tb-field { font-size: var(--fs-13); }
+.topbar .tb-field .input { height: var(--btn-md); font-size: var(--fs-13); }
+.topbar .side-chip { height: 28px; font-size: var(--fs-13); }
+.topbar .status-btn { height: var(--btn-md); font-size: var(--fs-13); }
+.topbar .meta, .topbar .meta .num { font-size: var(--fs-13); }
+.topbar .vr { height: 28px; }
 /* Busy: Connect ~25 s, Start ~5 s + UDP, Stop ~1.5 min (log import).
    The whole group is disabled; the acting button shows a spinner + verb. */
 .btn.busy { color: var(--text-2); cursor: progress; }
@@ -591,3 +601,18 @@ ul.pop-checklist li.done { color: var(--text-2); }
 @media (prefers-reduced-motion: reduce) { .ty-stage .ty-spin { animation: none; } }
 .btn.danger.confirming { font-variant-numeric: tabular-nums; }
 #rigKv .muted { color: var(--text-3); font-weight: 400; }
+
+/* Live plots (uPlot, assets/live_uplot.js): the host fills its card body; the label shows
+   the time and every trace's value at the cursor (like the old unified hover) */
+.uplot-host { width: 100%; height: 100%; position: relative; overflow: hidden; }
+.uplot-host .uplot { font-family: var(--font-ui); }
+.uplot-host .u-over { cursor: crosshair; }
+.u-tip { position: absolute; z-index: 5; pointer-events: none; background: #FFFFFF; border: 1px solid #E2DFD9;
+         border-radius: 6px; padding: 4px 8px; font: 12px/1.45 var(--font-ui); color: var(--text, #1D1F21);
+         box-shadow: 0 2px 8px rgba(0,0,0,.08); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.u-tip[hidden] { display: none; }
+.u-tip .u-tip-t { color: var(--text-3); font-family: var(--font-num); font-size: 11px; }
+.u-tip i { display: inline-block; width: 10px; height: 2px; margin-right: 6px; vertical-align: middle; }
+.u-tip b { font-family: var(--font-num); font-weight: 500; }
+/* Sensors: FSR and linear acceleration, full width, splitting the height */
+.sensor-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(200px, 1fr); overflow-y: hidden; }

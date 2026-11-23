@@ -231,7 +231,7 @@ def e2e():
               "var bb=document.getElementById('ty-build-btn'),fb=document.getElementById('ty-flash-btn');"
               "return {build:t('ty-build-btn'),build_dis:bb&&bb.disabled,build_cls:bb&&bb.className,flash:t('ty-flash-btn'),"
               "flash_dis:fb&&fb.disabled,stage:t('ty-job-stage'),last_build:t('ty-build-summary'),last_flash:t('ty-flash-summary'),"
-              "fw_last_flash:t('ty-lastflash'),msg:t('ty-flash-msg'),port:t('ty-port'),source:t('ty-source')};})())")
+              "msg:t('ty-flash-msg'),port:t('ty-port'),source:t('ty-source')};})())")
         st0 = json.loads(c.js(rd))
         check(f"teensy tab: newest source preselected ({want_sha})", want_sha in (st0["source"] or ""), st0)
         check("teensy tab: Last build / Last flash rows", st0["last_build"] is not None and st0["last_flash"] is not None, st0)

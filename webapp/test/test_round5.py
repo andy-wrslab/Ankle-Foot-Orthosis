@@ -92,6 +92,7 @@ def make_ctx(rc_status, live_age=0.05, tr_age=0.05, echo=None, tmp=None, bif=Tru
 
 def confirm(ctx, side=1, weight=72.5):
     ctx.session.set_sid("S90")
+    ctx.session.adopted_echo = True          # operator values entered after the device state was adopted
     ctx.session.values.update(side=side, weight=weight, mode=1, k_percent=5)
     ctx.session.side_confirmed = {"sid": "S90", "side": side, "at": time.time()}
 
@@ -113,6 +114,14 @@ def main():
     # 2 mass differs (amber)
     c = make_ctx(run, echo=dict(ECHO, weight_kg=55.0)); confirm(c); c.session.refresh_readback()
     s = top_status(c); r["2_mass"] = (s["text"], s["level"])
+    # 2b server (re)start: stale page values (72.5 from disk) vs device 55 -> the page adopts
+    # the device (Andy 14:01), nothing differs, nothing is sent
+    c = make_ctx(run, echo=dict(ECHO, weight_kg=55.0)); c.session.set_sid("S90")
+    c.session.values.update(side=1, weight=72.5, mode=1, k_percent=5)
+    n0 = len(c.jobs.started)
+    c.session.refresh_readback()
+    sets = [t for _, t in c.jobs.started[n0:] if t.startswith("set ")]
+    r["2b_adopt"] = (c.session.values.get("weight"), c.session.values.get("side"), len(sets))
     # 3 side differs (red) beats mass (amber)
     c = make_ctx(run, echo=dict(ECHO, side=0, weight_kg=55.0)); confirm(c); c.session.refresh_readback()
     s = top_status(c); r["3_side"] = (s["text"], s["level"], [i["text"] for i in s["issues"]])
@@ -120,8 +129,11 @@ def main():
     c = make_ctx(run, tr_age=3.3, echo=ECHO); confirm(c); c.session.refresh_readback()
     s = top_status(c); r["4_nodata"] = (s["text"], s["level"])
     # 5 confirm foot side (amber): side not confirmed
-    c = make_ctx(run, echo=ECHO); c.session.set_sid("S90"); c.session.refresh_readback()
+    c = make_ctx(run, echo=ECHO); c.session.set_sid("S90"); c.session.adopted_echo = True; c.session.refresh_readback()
     s = top_status(c); r["5_confirm"] = (s["text"], s["level"])
+    # 5b server (re)start with the device on RIGHT: the page inherits it (Andy 14:01), no "Confirm"
+    c = make_ctx(run, echo=ECHO); c.session.set_sid("S90"); c.session.refresh_readback()
+    s = top_status(c); r["5b_adopt_side"] = (s["text"], c.session.side_chip()["text"])
     # 6 connected, app stopped
     c = make_ctx({"connected": True, "running": False, "app": "AFO_r1"}, live_age=None, tr_age=None); confirm(c)
     c.session.readback.update(side=1); c.session.readback_src.update(side="getparam")
@@ -177,8 +189,8 @@ def main():
     r["17_meta_run"] = c.runctl.calls[-1][1]["file_log_run"]
 
     expect = {
-        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs Signals or the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "4_nodata": ("No data 3.3 s", "red"),
-        "5_confirm": ("Confirm foot side", "amber"), "6_connected": "Connected", "7_not_connected": "Not connected",
+        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs Signals or the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "2b_adopt": (55.0, 1, 0), "4_nodata": ("No data 3.3 s", "red"),
+        "5_confirm": ("Confirm foot side", "amber"), "5b_adopt_side": ("Ready", "Side: RIGHT"), "6_connected": "Connected", "7_not_connected": "Not connected",
         "8_busy": "Starting…", "9_afo_status": "Ready", "10_status": "Assist command differs",
         "11_after_echo_lost": {"side": None, "weight": None}, "12_key": "StartDate",
     }

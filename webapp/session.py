@@ -145,6 +145,15 @@ class SessionSetup:
         self.readback_t: Dict[str, float] = {}
         self.echo_port: Optional[int] = None
         self.side_confirmed: Optional[Dict[str, Any]] = None
+        # the target reported the confirmed side (5433 echo or getparam) in this app session:
+        # kept when the echo goes stale or a getparam fails (no revert to "? CONFIRM FOOT");
+        # only a different value from the echo / getparam, a new S-ID or Start clears it
+        self.side_verified: Optional[Dict[str, Any]] = None
+        # Andy 14:01: after a reconnect / page reload / server restart the GUI inherits the
+        # device's settings; only values the operator entered SINCE then are re-sent after
+        # Start (never stale values from session_profiles.json)
+        self.entered: set = set()
+        self.adopted_echo = False
         self.after_start = False      # SPEC: every Start ends in the Confirm state
         self.started_at: Optional[float] = None     # last Start in this app session (after-Start checklist)
         # set when setparam/getparam says "No application is loaded" while the target runs:
@@ -243,6 +252,7 @@ class SessionSetup:
                 self.sid = sid
                 self.values = dict(self.profiles.get(sid, {}))
                 self.side_confirmed = None     # a new participant always needs the side confirmed
+                self.side_verified = None
                 self.status = {}
                 self._save()
                 self.audit("participant", sid)
@@ -269,6 +279,9 @@ class SessionSetup:
         """A committed edit of a number or mode field (not the side)."""
         if not self.sid:
             return "Set the S-ID first."
+        self.entered.add(key)
+        if key == "weight":
+            self.entered.add("bif_mass")
         sp = self.spec(key)
         try:
             v = float(value)
@@ -322,6 +335,7 @@ class SessionSetup:
         if typed_sid and typed_sid.strip().upper() != self.sid:
             return f"The ID does not match ({self.sid})."
         v = 0 if side == "LEFT" else 1
+        self.entered.add("side")
         with self.lock:
             self.values["side"] = v
             self.side_confirmed = {"sid": self.sid, "side": v, "at": time.time()}
@@ -334,8 +348,79 @@ class SessionSetup:
     def _connected(self) -> bool:
         return bool((self.ctx.runctl.status or {}).get("connected"))
 
+    # ---------------------------------------------------------- run 14: UDP settings (5434)
+    LINK_FIELD = {"side": "side", "weight": "mass", "mode": "mode", "k_percent": "k"}
+
+    def link(self):
+        """The UDP settings link when the device speaks it (18-float 5433 echo), else None."""
+        lk = getattr(self.ctx, "settings_link", None)
+        return lk if lk is not None and lk.active() else None
+
+    def echo_for_link(self):
+        """(latest 5433 row, its age now in s, column count) for udp_settings.SettingsLink."""
+        tr = getattr(self.ctx, "training", None)
+        if tr is None:
+            return {}, None, None
+        s = tr.get_status()
+        age = s.get("age_s")
+        if age is not None:
+            age = float(age) + max(0.0, time.monotonic() - getattr(tr, "last_hb", time.monotonic()))
+        return dict(s.get("latest") or {}), age, s.get("columns")
+
+    def link_status(self, field: str, state: str, msg: str) -> None:
+        keys = [k for k, f in self.LINK_FIELD.items() if f == field]
+        for k in keys:
+            self.status[k] = {"state": state, "msg": msg, "at": time.time()}
+            if k == "weight":
+                self.status["bif_mass"] = {"state": state, "msg": msg, "at": time.time()}
+
+    def adopt_echo(self) -> bool:
+        """Runs 12/13 (15-float 5433): on the first fresh echo after a server start, show the
+        device's side / mass / mode / K as the page's values (nothing is sent). Once."""
+        if self.adopted_echo or self.link() is not None:
+            return False
+        e = self.echo()
+        if not e:
+            return False
+        st = {"side": e.get("side"), "mass": e.get("weight_kg"), "mode": e.get("assist_mode"), "k": e.get("fixed_k_pct")}
+        self.adopted_echo = True
+        self.link_adopted({k: float(v) for k, v in st.items() if v is not None})
+        return True
+
+    def link_adopted(self, st: Dict[str, float]) -> None:
+        """The device state was adopted (page start, reconnect, link back after a stall):
+        show it as the page's values; nothing is sent."""
+        with self.lock:
+            side = st.get("side")
+            if side in (0.0, 1.0):
+                self.values["side"] = int(side)
+                if self.sid:
+                    self.side_confirmed = {"sid": self.sid, "side": int(side), "at": time.time(), "adopted": True}
+            if (st.get("mass") or 0) > 0:
+                self.values["weight"] = float(st["mass"])
+                self.values["bif_mass"] = float(st["mass"])
+            if st.get("mode") in (1.0, 3.0):
+                self.values["mode"] = int(st["mode"])
+            if st.get("k") is not None:
+                self.values["k_percent"] = float(st["k"])
+            for k in ("side", "weight", "bif_mass", "mode", "k_percent"):
+                self.status.pop(k, None)
+            self.after_start = False
+            self.entered.clear()
+        self.audit("adopted device settings", json.dumps(st))
+
     def _send(self, key: str, value: float) -> str:
         sp = self.spec(key)
+        lk = self.link()
+        if lk is not None and key in self.LINK_FIELD:
+            r = lk.press(self.LINK_FIELD[key], value)
+            if not r.get("ok"):
+                self.status[key] = {"state": "error", "msg": r.get("msg") or "not sent", "at": time.time()}
+                return f"{sp['label']}: {r.get('msg')}"
+            self.audit("udp set", f"{key}={value:g} (5434)")
+            return f"{sp['label']}: sending…"
+        if lk is not None and key == "bif_mass":
+            return f"{sp['label']}: follows Body mass (5434)"
         tp = self.target_path(key)
         if tp is None:
             self.status[key] = {"state": "error", "msg": f"no block for {key} in model {self.model()}", "at": time.time()}
@@ -370,6 +455,7 @@ class SessionSetup:
         return f"{sp['label']}: sending…"
 
     ELSEWHERE_MSG = "App started elsewhere: press Stop then Start to take control"
+    REFUSED_ELSEWHERE = "Target refused: app started by another MATLAB, press Stop → Start"
 
     def clear_readback(self) -> None:
         """Forget every read-back value (Connect, Disconnect, Start): only fresh values count."""
@@ -387,6 +473,14 @@ class SessionSetup:
             return self.ELSEWHERE_MSG
         return err
 
+    def refusal_text(self, key: str) -> str:
+        """What the chip / field / dock say at once when the target refused a value."""
+        st = self.status.get(key) or {}
+        if st.get("state") != "error":
+            return ""
+        m = st.get("msg") or "refused"
+        return self.REFUSED_ELSEWHERE if m == self.ELSEWHERE_MSG else ("Target refused: " + m)
+
     def _put(self, key: str, value, src: str) -> None:
         self.readback[key] = value
         self.readback_src[key] = src
@@ -402,7 +496,9 @@ class SessionSetup:
         return dict(tr, _port=5433) if tr else {}
 
     def refresh_readback(self) -> None:
-        """Echo first (no MATLAB); getparam for every value without a fresh echo."""
+        """Echo first (no MATLAB); getparam for every value without a fresh echo
+        (never with the run-14 UDP settings: the 5433 echo is the only readback)."""
+        self.adopt_echo()
         echo = self.echo()
         self.echo_port = echo.get("_port")
         for sp in self.specs():
@@ -414,6 +510,8 @@ class SessionSetup:
                 # echo gone (stream stopped / other model): drop it, getparam takes over
                 self.readback.pop(k, None)
                 self.readback_src.pop(k, None)
+        if self.link() is not None:
+            return
         if not self._connected() or self.ctx.jobs.running("rc") or self.ctx.jobs.running("session"):
             return
         need = [sp["key"] for sp in self.specs() if self.readback_src.get(sp["key"]) != "echo"]
@@ -511,7 +609,17 @@ class SessionSetup:
         threading.Thread(target=run, name="send-pending", daemon=True).start()
 
     def after_connect_or_start(self, event: str) -> None:
-        """After Connect: send pending values. After Start: re-apply everything entered."""
+        """After Connect: send pending values. After Start: re-apply everything entered.
+        Run 14 (UDP settings): Connect sends nothing (the device state is adopted from the
+        echo); Start sends the page's values once over 5434."""
+        lk = self.link()
+        if lk is not None:
+            if event == "start":
+                self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
+                self.side_verified = None
+                pkt = lk.after_start()
+                self.audit("udp resend after Start", str(pkt))
+            return
         self.clear_readback()               # Connect / Start: only values read from now on count
         if event == "start":
             self.events.append({"start": time.strftime("%Y-%m-%d %H:%M:%S")})
@@ -523,6 +631,7 @@ class SessionSetup:
                 self.after_start = True
                 self.readback.pop("side", None)
                 self.readback_src.pop("side", None)
+                self.side_verified = None          # Start reloads the build default (side -1)
                 self.started_at = time.time()
         if self.profile().get("bif") and self.values.get("weight") is not None:
             with self.lock:
@@ -539,6 +648,8 @@ class SessionSetup:
                     continue
             if event != "start" and self._flushing:
                 continue                     # flush_pending (Connect to a running app) sends these
+            if event == "start" and k not in self.entered:
+                continue                     # not entered since the device state was adopted: not re-sent
             if event == "start" or self.status.get(k, {}).get("state") == "pending":
                 self.audit(f"re-apply after {event}", f"{k}={self.values[k]}")
                 self._send(k, float(self.values[k]))
@@ -550,6 +661,16 @@ class SessionSetup:
         self.events.append({"stop": time.strftime("%Y-%m-%d %H:%M:%S")})
 
     # ---------------------------------------------------------- safety
+    def side_target(self):
+        """The side the target reports: the fresh 5433 echo first (every 10 ms, so a match
+        confirms within one console packet), else the last getparam readback."""
+        col = self.spec("side").get("udp")
+        e = self.echo()
+        if col and e.get(col) is not None:
+            return e[col], "echo"
+        rb = self.readback.get("side")
+        return rb, (self.readback_src.get("side") if rb is not None else None)
+
     def side_problem(self) -> Optional[str]:
         if not self.sid:
             return "No participant: set the participant ID and confirm the foot side in the top bar first."
@@ -557,7 +678,19 @@ class SessionSetup:
         c = self.side_confirmed
         if want is None or not c or c["sid"] != self.sid:
             return f"Foot side not confirmed for {self.sid}: confirm it in the top bar first."
-        rb = self.readback.get("side")
+        rb, src = self.side_target()
+        v = self.side_verified
+        if rb is not None:
+            try:
+                rbi_now = int(round(float(rb)))
+            except (TypeError, ValueError):
+                rbi_now = None
+            if rbi_now == int(want):
+                self.side_verified = {"sid": self.sid, "side": int(want), "at": time.time(), "src": src}
+            elif rbi_now is not None:
+                self.side_verified = None
+        elif v and v.get("sid") == self.sid and v.get("side") == int(want):
+            return None                       # verified earlier; no new evidence against it
         if rb is None:
             # blocked until the target's side has been read back and matches
             return (f"Foot side not verified on the target yet (profile {SIDE_NAMES[int(want)]}); "
@@ -574,8 +707,8 @@ class SessionSetup:
         return None
 
     def side_chip(self) -> Dict[str, str]:
-        """Low-prominence side chip: text + state (ok / pending / unset / warn / bad)."""
-        rb = self.readback.get("side")
+        """Low-prominence side chip: text + state (ok / pending / refused / unset / warn / bad)."""
+        rb, _src = self.side_target()
         want = self.values.get("side")
         try:
             rbi = None if rb is None else int(round(float(rb)))
@@ -585,6 +718,11 @@ class SessionSetup:
         # a pending side, sent by setparam once connected to a running app, then read back
         c = self.side_confirmed
         sst = self.status.get("side") or {}
+        if (want is not None and c and c.get("sid") == self.sid and c.get("side") == int(want)
+                and sst.get("state") == "error" and rbi != int(want)):
+            # the target refused it: say so at once (no silent wait for a readback)
+            return {"text": f"{SIDE_NAMES[int(want)].capitalize()} · target refused", "state": "refused",
+                    "msg": self.refusal_text("side")}
         if (want is not None and c and c.get("sid") == self.sid and c.get("side") == int(want)
                 and sst.get("state") in ("pending", "sending") and rbi not in (0, 1)):
             name = SIDE_NAMES[int(want)].capitalize()
@@ -602,6 +740,11 @@ class SessionSetup:
             return {"text": f"Side mismatch ({SIDE_NAMES[rbi]} on target)", "state": "bad"}
         return {"text": "Side: confirm" if want is None or not self.side_confirmed else
                 f"Side: {SIDE_NAMES[int(want)]} (not verified)", "state": "warn"}
+
+    def link_frozen(self) -> Optional[str]:
+        """Link stalled (run 14): nothing may be sent; the device keeps its settings."""
+        lk = getattr(self.ctx, "settings_link", None)
+        return lk.view()["msg"] if lk is not None and lk.frozen else None
 
     def guard(self, name: str) -> Optional[str]:
         p = self.side_problem()

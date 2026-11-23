@@ -58,6 +58,8 @@ class CommandState:
         self.loaded_from_disk = False
         self.last_sent_at: Optional[float] = None
         self.guard: Optional[Callable[[str], Optional[str]]] = None   # e.g. session setup: block Motor/Assist
+        # run 14: the 5433 echo stalled -> the device keeps its settings and nothing is sent
+        self.frozen: Optional[Callable[[], Optional[str]]] = None
         ccfg = (cfg or {}).get("commands") or {}
         # 2026-11-19: no block in AFO.slx reads the 5 parameters (and the model's
         # receiver expects 6 singles while the console sends '<5f'), so the UI can
@@ -188,6 +190,9 @@ class CommandState:
 
     # ---------------------------------------------------------- user actions
     def press_toggle(self, name: str) -> Dict[str, Any]:
+        fz = self.frozen() if self.frozen else None
+        if fz:
+            return {"ok": False, "msg": fz}
         with self.lock:
             cur = {t: r["value"] for t, r in self.resolved().items()}
         new = 0 if cur[name] == 1 else 1            # unknown -> ON (the operator pressed it)
@@ -214,6 +219,9 @@ class CommandState:
         """Explicit operator action (with a confirm in the page): send the current
         command with every UNKNOWN toggle set to OFF. The way out of the all-unknown
         state of a fresh install, where any single press would have to guess."""
+        fz = self.frozen() if self.frozen else None
+        if fz:
+            return {"ok": False, "msg": fz}
         with self.lock:
             cur = {t: r["value"] for t, r in self.resolved().items()}
             unknown = [t for t in TOGGLES if cur[t] is None]
@@ -237,6 +245,9 @@ class CommandState:
         """Calibrate FSR (pressure) / Reset SV: exactly two packets, the full last-sent
         state with the field = 1, then ~200 ms later the same state with it = 0.
         Calibrate locks for 30 s (repeat presses refused)."""
+        fz = self.frozen() if self.frozen else None
+        if fz:
+            return {"ok": False, "msg": fz}
         if name not in ("calibrate", "reset"):
             return {"ok": False, "msg": "unknown action"}
         now = time.time()
@@ -276,6 +287,9 @@ class CommandState:
         return {"ok": True, "msg": ("Calibrating pressure (30 s)…" if name == "calibrate" else "Reset SV sent")}
 
     def momentary(self, name: str, value: int) -> Dict[str, Any]:
+        fz = self.frozen() if self.frozen else None
+        if fz:
+            return {"ok": False, "msg": fz}
         with self.lock:
             if self.held[name] == int(value):
                 return {"ok": True, "msg": ""}
@@ -295,6 +309,9 @@ class CommandState:
     def set_param(self, field: str, value: Any, page_values: Dict[str, Any]) -> Dict[str, Any]:
         """Send all 5 parameters: last sent, with only *field* changed. A parameter
         this console never sent takes the value shown on the page."""
+        fz = self.frozen() if self.frozen else None
+        if fz:
+            return {"ok": False, "msg": fz}
         try:
             v = float(value)
         except (TypeError, ValueError):

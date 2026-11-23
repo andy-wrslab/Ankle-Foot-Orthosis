@@ -4,8 +4,11 @@ function out = afo_session(action, varargin)
 %   afo_session('set', block, param, val) setparam, then getparam readback
 %   Session parameters are tunable block parameters; every Start reloads the
 %   app and resets them to the compiled defaults, so the web app re-applies.
+persistent tg   % one Target object for the life of the warm MATLAB worker (not one per call)
 try
-    tg = slrealtime();
+    if isempty(tg) || ~isvalid(tg)
+        tg = slrealtime();
+    end
     if ~logical(isConnected(tg)), error('target not connected'); end
     switch lower(action)
         case 'read'

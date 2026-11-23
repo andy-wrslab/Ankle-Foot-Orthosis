@@ -73,7 +73,7 @@ def layout() -> html.Div:
                                  options=opts, value=val),
                 ]),
                 _kv([("Commit", "ty-commit"), ("Compared with main", "ty-vsmain"),
-                     ("Board settings", "ty-board"), ("Last flash", "ty-lastflash")]),
+                     ("Board settings", "ty-board")]),
             ]),
             html.Section(className="card", children=[
                 html.Div(className="card-head", children=[html.Span("IMU data", className="card-title")]),
@@ -292,7 +292,7 @@ def register(app, ctx) -> None:
 
     # ---- details of the chosen source; feeds every tab
     @app.callback(Output("ty-commit", "children"), Output("ty-vsmain", "children"), Output("ty-board", "children"),
-                  Output("ty-lastflash", "children"), Output("ty-file", "options"), Output("ty-file", "value"),
+                  Output("ty-file", "options"), Output("ty-file", "value"),
                   Output("ty-diff", "children"), Output("ty-code-src", "children"),
                   Input("ty-source", "value"), Input("ty-slow", "n_intervals"), Input("url", "pathname"),
                   State("ty-file", "value"))
@@ -300,14 +300,14 @@ def register(app, ctx) -> None:
     def source_details(source, _n, path, cur_file):
         trig = dctx.triggered_id
         if path != "/teensy" and trig == "ty-slow":
-            return [no_update] * 8          # other pages: no git reads every 5 s
+            return [no_update] * 7          # other pages: no git reads every 5 s
         if not source:
-            return ["–"] * 4 + [[], None, "", ""]
+            return ["–"] * 3 + [[], None, "", ""]
         try:
             src = tt.resolve(cfg, source)
             files = tt.daq_files(cfg, source)
         except Exception as exc:
-            return [f"Cannot read: {exc}", "–", "–", "–", [], None, "", ""]
+            return [f"Cannot read: {exc}", "–", "–", [], None, "", ""]
         board = tt.board_settings(cfg)
         commit = html.Span([html.Span(src["short"], className="mono"), f"  {src.get('subject', '')}  · ",
                             time.strftime("%Y-%m-%d %H:%M", time.localtime(src["time"]))])
@@ -322,13 +322,12 @@ def register(app, ctx) -> None:
         board_txt = html.Span([board["summary"], html.Br(),
                                html.Span(("from " if board["pinned"] else "") + board["source"], className="hint")],
                               title=board["fqbn"])
-        last = _flash_row(cfg)
         file_val = cur_file if cur_file in files else ("DAQ.ino" if "DAQ.ino" in files else (files[0] if files else None))
         try:
             diff = tt.changes_vs_main(cfg, source) if trig != "ty-slow" else no_update
         except Exception as exc:
             diff = f"Cannot diff: {exc}"
-        return commit, vs, board_txt, last, files, file_val, diff, f"{src['name']} @ {src['short']}"
+        return commit, vs, board_txt, files, file_val, diff, f"{src['name']} @ {src['short']}"
 
     @app.callback(Output("ty-file-view", "children"), Input("ty-file", "value"), Input("ty-source", "value"))
     @local_only

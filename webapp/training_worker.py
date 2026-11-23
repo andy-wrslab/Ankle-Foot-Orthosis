@@ -18,7 +18,10 @@ Rejected packets are counted (and logged rate-limited), never used.
 An older layout with layout_version / packet_counter columns is still checked
 the old way.
 
-Sends ("hb", status) twice a second: rates, counters, the latest valid row as
+Run 14 (UDP settings, '<18f'): 3 more after those, cols 15-17 = gyro_cal_request in
+use, last accepted 5434 seq, bif_mass_kg in use (RUN14_TAIL).
+
+Sends ("hb", status) 20 times a second: rates, counters, the latest valid row as
 {name: value} and its age. Answers ("data", names, window_s) requests with the
 recent history of the named columns (min/max binned) on a separate queue.
 """
@@ -45,6 +48,9 @@ RESTART_RUN = 20          # or 20 packets in a row (0.2 s) older than the last t
 
 
 DEFAULT_TAIL = ["bif_valid", "bif_cal_progress", "bif_bias_ready"]
+# run 14 (UDP settings 5434): 3 more floats, cols 15-17 = gyro_cal_request in use, last
+# accepted 5434 seq (0 = none), bif_mass_kg in use (0 = unset) -> '<18f'
+RUN14_TAIL = ["gyro_cal_request", "settings_seq", "bif_mass_kg"]
 
 
 def load_layout(path):
@@ -93,9 +99,13 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     fmt_ext = tail_struct(fmt, tail)
     if fmt_ext is None:
         tail = []
-    names = names + tail                 # history rows always carry the tail (NaN when absent)
+    tail14 = [t for t in RUN14_TAIL if t not in names and t not in tail] if tail else []
+    fmt_ext14 = tail_struct(fmt, tail + tail14) if tail14 else None
+    names = names + tail + tail14        # history rows always carry the tails (NaN when absent)
     n_all = len(names)
-    pad = (float("nan"),) * len(tail)
+    n15 = n + len(tail)
+    pad = (float("nan"),) * (len(tail) + len(tail14))
+    pad15 = (float("nan"),) * len(tail14)
     idx = {nm: i for i, nm in enumerate(names)}
     i_time = idx.get("t_model", 0)
     versioned = "layout_version" in idx and "packet_counter" in idx
@@ -191,8 +201,9 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
             st["bind_error"] = None
             sock.settimeout(0.5)
             buf = bytearray(65536)
-            log.info("listening for console packets on %s:%d (%s, %d columns%s)", host, port, lay["format"], n,
-                     f", or {n_all} with {', '.join(tail)}" if tail else "")
+            log.info("listening for console packets on %s:%d (%s, %d columns%s%s)", host, port, lay["format"], n,
+                     f", or {n15} with {', '.join(tail)}" if tail else "",
+                     f", or {n_all} with {', '.join(tail14)}" if tail14 else "")
             try:
                 while not stop_evt.is_set():
                     try:
@@ -204,11 +215,14 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
                     if nbytes == fmt.size:
                         row, n_used = fmt.unpack_from(buf) + pad, n
                     elif fmt_ext is not None and nbytes == fmt_ext.size:
-                        row, n_used = fmt_ext.unpack_from(buf), n_all
+                        row, n_used = fmt_ext.unpack_from(buf) + pad15, n15
+                    elif fmt_ext14 is not None and nbytes == fmt_ext14.size:
+                        row, n_used = fmt_ext14.unpack_from(buf), n_all
                     else:
                         st["bad_length"] += 1
                         rl("len", f"console packet of {nbytes} bytes dropped (expected {fmt.size}"
-                                  + (f" or {fmt_ext.size}" if fmt_ext is not None else "") + ")")
+                                  + (f" / {fmt_ext.size}" if fmt_ext is not None else "")
+                                  + (f" / {fmt_ext14.size}" if fmt_ext14 is not None else "") + ")")
                         continue
                     if not accept(row, n_used):
                         continue
@@ -277,14 +291,15 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     threading.Thread(target=req_loop, daemon=True).start()
     import multiprocessing
     parent = multiprocessing.parent_process()
-    last_ok, last_t = 0, time.monotonic()
+    last_ok, last_t, rate = 0, time.monotonic(), 0.0
     while not stop_evt.is_set():
-        time.sleep(0.5)
+        time.sleep(0.05)      # 20 Hz: the UDP-settings echo (run 14) confirms a press within ~100 ms
         if parent is not None and not parent.is_alive():
             break
         now = time.monotonic()
-        rate = (st["packets_ok"] - last_ok) / max(1e-3, now - last_t)
-        last_ok, last_t = st["packets_ok"], now
+        if now - last_t >= 0.5:
+            rate = (st["packets_ok"] - last_ok) / max(1e-3, now - last_t)
+            last_ok, last_t = st["packets_ok"], now
         with lock:
             snap = dict(latest)
         status = {k: v for k, v in st.items()}

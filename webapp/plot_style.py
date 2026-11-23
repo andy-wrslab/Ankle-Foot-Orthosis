@@ -147,7 +147,8 @@ def training_plots() -> list:
     return [dict(p, y_range=pad_range(*p["y"]), margin=MARGIN) for p in TRAINING_PLOTS]
 
 
-# ---- Live > Sensors (Nov 23): every sensor column of the main bus 5431 -------------
+# ---- Live > Sensors: FSR and linear acceleration only (Andy, Nov 23 13:53: "we only need
+# linear acceleration and FSR, like before"); the other columns stay in Signals and exports.
 # FSR names by insole position (configs/gpr_default.yaml on WRSLAB). NOT yet
 # confirmed by Andy (Met 1/3/5 order, which heel is medial): change only here.
 FSR_NAMES = ["Hallux", "Heel medial", "Met 1", "Met 5", "Arch", "Toes", "Heel lateral", "Met 3"]   # FSR1..FSR8 = cols 3..10
@@ -162,16 +163,7 @@ SENSOR_CARDS = [
     {"id": "press", "title": "FSR", "unit": "counts", "src": [("press", k) for k in range(8)],
      "names": [f"{n} (FSR{i + 1})" for i, n in enumerate(FSR_NAMES)], "y": (0, 1000), "dec": 0,
      "colors": CATEGORICAL, "wide": True},
-    {"id": "acc", "title": "Raw acceleration", "unit": "g", "src": [("imu", 9), ("imu", 10), ("imu", 11)],
-     "names": ["ax", "ay", "az"], "y": (-4, 4), "dec": 2, "colors": XYZ},
-    {"id": "gyro", "title": "Gyro", "unit": "rad/s", "src": [("imu", 6), ("imu", 7), ("imu", 8)],
-     "names": ["gx", "gy", "gz"], "y": (-8, 8), "dec": 2, "colors": XYZ},
     {"id": "imu", "title": "Linear acceleration (gravity removed)", "unit": "g",
-     "src": [("imu", 0), ("imu", 1), ("imu", 2)], "names": ["x", "y", "z"], "y": (-3, 3), "dec": 2, "colors": XYZ},
-    {"id": "ori", "title": "Orientation", "unit": "rad", "src": [("imu", 3), ("imu", 4), ("imu", 5)],
-     "names": ["yaw", "pitch", "roll"], "y": (-3.5, 3.5), "dec": 2, "colors": XYZ},
-    {"id": "ankle", "title": "Ankle angle", "unit": "deg", "src": [("ankle", None)], "names": ["Angle"],
-     "y": (-40, 40), "dec": 1, "colors": ["#1D1F21"]},
-    {"id": "ankvel", "title": "Ankle velocity (computed)", "unit": "deg/s", "src": [("ankle_vel", None)],
-     "names": ["Velocity"], "y": (-400, 400), "dec": 0, "colors": ["#1D1F21"]},
+     "src": [("imu", 0), ("imu", 1), ("imu", 2)], "names": ["x", "y", "z"], "y": (-3, 3), "dec": 2, "colors": XYZ,
+     "wide": True},
 ]

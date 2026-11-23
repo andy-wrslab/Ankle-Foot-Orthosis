@@ -9,6 +9,9 @@ udp:
   send_port: 5431
   # Port for parameter/tuning packet (deadband, margin, step up/down, v_min)
   param_port: 5430
+  # Run 14: session settings packet '<8f' (magic 4134, version 1, seq, side, body mass,
+  # assist mode, fixed K %, gyro_cal_request) to send_host, confirmed by the 18-float 5433 echo
+  session_port: 5434
 
 # Dashboard web server
 dash:

@@ -7,7 +7,8 @@ Base state (what the target is doing):
   Ready          app running, every required UDP stream live, no setting problem
   Connected      MATLAB connected, app stopped
   Not connected  no MATLAB connection and no live data
-  Speedgoat offline  (amber) the last Connect got no answer; until Disconnect or a successful connect
+  Speedgoat offline / Speedgoat busy / Connect failed  (amber) why the last Connect failed (no
+                 answer / another MATLAB session / any other error); until Disconnect or a successful connect
 "Running" is known from MATLAB, or from the live UDP stream itself when this
 app's MATLAB is not connected (data proves the app runs).
 
@@ -120,14 +121,23 @@ def top_status(ctx) -> Dict[str, Any]:
     notes: List[str] = []
     off = getattr(ctx.runctl, "offline", None)
     if base["state"] == "not-connected" and off:
-        # the last Connect got no answer: say so (amber) until Disconnect or a successful connect
+        # the last Connect failed: say why (amber) until Disconnect or a successful connect
         addr = rc.get("target") or "192.168.7.5"
-        issues.append({"level": "amber", "key": "speedgoat-offline", "text": "Speedgoat offline",
-                       "detail": f"Connect failed at {time.strftime('%H:%M:%S', time.localtime(off['at']))}: "
-                                 f"{off.get('err') or 'no answer'}",
-                       "todo": f"No answer from the Speedgoat at {addr}. Check that it is switched on and "
-                               "booted (it may be off for charging) and that the Ethernet cable is in, "
-                               "then press Connect again."})
+        kind = off.get("kind") or "offline"
+        detail = (f"Connect failed at {time.strftime('%H:%M:%S', time.localtime(off['at']))}: "
+                  f"{off.get('err') or 'no answer'}")
+        if kind == "busy":
+            issues.append({"level": "amber", "key": "speedgoat-busy", "text": "Speedgoat busy", "detail": detail,
+                           "todo": "Another MATLAB session is connected to the Speedgoat (a load script or "
+                                   "Simulink). Wait for it to disconnect, then press Connect again."})
+        elif kind == "offline":
+            issues.append({"level": "amber", "key": "speedgoat-offline", "text": "Speedgoat offline", "detail": detail,
+                           "todo": f"No answer from the Speedgoat at {addr}. Check that it is switched on and "
+                                   "booted (it may be off for charging) and that the Ethernet cable is in, "
+                                   "then press Connect again."})
+        else:
+            issues.append({"level": "amber", "key": "connect-failed", "text": "Connect failed", "detail": detail,
+                           "todo": "Read the error, fix what it names, then press Connect again."})
     if base["state"] != "not-connected":
         if running:
             for name, age, needed in (("live", live_age, True), ("console", tr_age, need_training)):
@@ -202,7 +212,7 @@ def top_status(ctx) -> Dict[str, Any]:
                            "todo": ("Press that button in the dock again to resend it." if row["name"] in ("motor", "assist", "k")
                                     else "Press Enter in that field to send it again.")})
     # the oldest silent stream first among the reds
-    prio = {"speedgoat-offline": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
+    prio = {"speedgoat-offline": 0, "speedgoat-busy": 0, "connect-failed": 0, "no-data": 0, "side-differs": 1, "imu-fault": 1.5, "drive-fault": 2, "app-elsewhere": 2.5, "confirm-side": 3, "side-pending": 4,
             "bif-mass": 5, "imu-not-ready": 6, "calibrating": 7, "bif-unknown": 10}   # "... differs": 9
     issues.sort(key=lambda i: (0 if i["level"] == "red" else 1, prio.get(i["key"], 9), -(i.get("age_s") or 0)))
     out = dict(base)

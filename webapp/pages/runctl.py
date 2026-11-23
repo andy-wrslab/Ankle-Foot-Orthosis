@@ -20,6 +20,18 @@ from dash import dcc, html, Input, Output, State, no_update
 
 from pages.common import is_local, local_only, locked_notice, kv
 
+def connect_failure_kind(err: str) -> str:
+    """Why a Connect failed: 'offline' (no answer: ping timeout, request timed out, not
+    reachable), 'busy' (another MATLAB session holds the target), else 'failed'."""
+    e = (err or "").lower()
+    if "another matlab session" in e:
+        return "busy"
+    if any(w in e for w in ("ping", "timed out", "timeout", "no response", "no answer", "not reachable",
+                            "unreachable", "did not respond")):
+        return "offline"
+    return "failed"
+
+
 TIMEOUTS = {"status": 30, "connect": 60, "disconnect": 30, "start": 90, "stop": 90, "load": 240, "save": 600}
 
 
@@ -29,8 +41,9 @@ class RunControl:
         self.status = {}
         self.status_at = 0.0
         self.banner = None
-        # last Connect failed (no answer / ping timeout): {"at", "err"}; the status button says
-        # "Speedgoat offline" until Disconnect or a successful connect
+        # last Connect failed: {"at", "err", "kind"}; kind offline / busy / failed gives the status
+        # "Speedgoat offline" / "Speedgoat busy" / "Connect failed" until Disconnect or a
+        # successful connect (Connect stays enabled: all can be retried)
         self.offline = None
 
     def audit(self, action: str, detail: str, ok) -> None:
@@ -76,10 +89,12 @@ class RunControl:
                 try:
                     res = self.call(job, action, *args)
                 except Exception as exc:
-                    self.offline = {"at": time.time(), "err": str(exc).strip()[:300] or type(exc).__name__}
+                    err = str(exc).strip()[:300] or type(exc).__name__
+                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
                     raise
                 if not res.get("ok") or not res.get("connected"):
-                    self.offline = {"at": time.time(), "err": str(res.get("err") or "no answer from the target")[:300]}
+                    err = str(res.get("err") or "no answer from the target")[:300]
+                    self.offline = {"at": time.time(), "err": err, "kind": connect_failure_kind(err)}
             else:
                 res = self.call(job, action, *args)
             if action == "disconnect":

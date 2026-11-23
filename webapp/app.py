@@ -59,6 +59,12 @@ class AppContext:
         from imu_cal import ImuCal
         self.imu_cal = ImuCal(self)
         self.commands.guard = self.session.guard    # Motor/Assist blocked on a side problem
+        # run 14: session settings over UDP 5434, confirmed by the 18-float 5433 echo
+        from udp_settings import SettingsLink
+        self.settings_link = SettingsLink(cfg, self.session.echo_for_link,
+                                          view_only=bool((cfg.get("console") or {}).get("view_only", False)),
+                                          on_status=self.session.link_status, on_adopt=self.session.link_adopted)
+        self.commands.frozen = self.session.link_frozen
         from filelog import FileLogRuns
         self.filelog = FileLogRuns(self)
 

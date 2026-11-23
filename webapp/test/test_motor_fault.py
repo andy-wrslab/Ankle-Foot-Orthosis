@@ -89,7 +89,8 @@ def main():
     con = replay_senders.start(0, 15433, side=0.0, cmds=echo)  # console only (side 0 echo), no bus
     b = None
     rd = ("JSON.stringify((function(){var m=document.getElementById('bMotor');"
-          "return {dis:m.disabled, drive:m.getAttribute('data-drive'), bg:m.style.background, title:m.title};})())")
+          "return {dis:m.disabled || m.getAttribute('aria-disabled')==='true', drive:m.getAttribute('data-drive'),"
+          " bg:m.style.background, title:m.title};})())")
     try:
         for _ in range(90):
             try:
@@ -105,7 +106,8 @@ def main():
         api("/api/console/sid", {"sid": "S98"})
         c.pump(1.5)
         m0 = json.loads(c.js(rd))
-        check("fault, side not confirmed: Motor disabled", m0["dis"] and m0["drive"] == "fault", m0)
+        check("fault, side not confirmed: Motor locked, still red (fault colour)", m0["dis"] and m0["drive"] == "fault", m0)
+        check("locked Motor says why in its title", m0["title"].startswith("Motor locked: ") and "drive fault latched" in m0["title"], m0)
         api("/api/console/side", {"side": "LEFT"})
         c.pump(2.5)
         m1 = json.loads(c.js(rd))

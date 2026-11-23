@@ -205,6 +205,7 @@
             window.dispatchEvent(new PopStateEvent('popstate'));
         }
         if (window._afoReleaseAllHolds) { window._afoReleaseAllHolds(); }
+        if (window._afoPlots && window._afoPlots.release) { window._afoPlots.release(); }
         setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 60);
         if (page === 'trials') { loadRuns(); }
         if (page === 'signals') { loadSignals(); }
@@ -216,8 +217,9 @@
     });
 
     // ---------------------------------------------------------- Live toolbar
-    // Plotly graphs drawn while hidden get a default width; size them to their card in
-    // the same frame they become visible (no half-width flash), and once more next frame
+    // Plotly graphs (Signals, Trials) drawn while hidden get a default width; size them to
+    // their card in the same frame they become visible (no half-width flash), and once more
+    // next frame. The live plots (uPlot) size themselves (ResizeObserver, live_uplot.js).
     function resizePlots(root) {
         if (!root || !window.Plotly || !window.Plotly.Plots) { return; }
         var gds = root.querySelectorAll('.js-plotly-plot');
@@ -258,6 +260,7 @@
         if ($('trWin')) { $('trWin').hidden = sub !== 'training'; }
         setProps('live-sub', {data: sub});
         if (window._afoReleaseAllHolds) { window._afoReleaseAllHolds(); }
+        if (window._afoPlots && window._afoPlots.release) { window._afoPlots.release(); }
         setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 30);
     }
     function segPress(group, btn) {
@@ -270,8 +273,10 @@
         if (t.id === 'pgGait') { setLiveSub('gait'); }
         else if (t.id === 'pgSensors') { setLiveSub('sensors'); }
         else if (t.id === 'pgTraining') { setLiveSub('training'); }
-        else if (t.id === 'w2' || t.id === 'w10') { segPress($('liveWin'), t); setProps('window-sec', {data: t.id === 'w2' ? 2 : 10}); }
-        else if (t.parentElement && t.parentElement.id === 'trWin') { segPress($('trWin'), t); setProps('tr-window', {data: Number(t.getAttribute('data-w'))}); }
+        else if (t.id === 'w2' || t.id === 'w10') { segPress($('liveWin'), t); window._afoWinSec = t.id === 'w2' ? 2 : 10;
+            setProps('window-sec', {data: window._afoWinSec}); }
+        else if (t.parentElement && t.parentElement.id === 'trWin') { segPress($('trWin'), t); window._afoTrWin = Number(t.getAttribute('data-w'));
+            setProps('tr-window', {data: window._afoTrWin}); }
         else if (t.parentElement && t.parentElement.id === 'sigWin') { segPress($('sigWin'), t); setProps('sig-window', {data: Number(t.getAttribute('data-w'))}); }
         else if (t.id === 'sigOn' || t.id === 'sigOff') { post('/api/signals/stream', {on: t.id === 'sigOn'}).then(loadSignals); }
     });
@@ -414,13 +419,24 @@
         var ms = $('sMassState');
         if (ms) {
             var mst = sv.status.weight, mmsg = sv.status_msg.weight || '', rbw = sv.readback ? sv.readback.weight : null;
+            if (mass && !S.editing.sMass) {
+                var held = mst === 'pending' || mst === 'sending';
+                mass.classList.toggle('send-pending', held);
+                if (held) { mass.classList.remove('send-error'); }
+                mass.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'sending' ? 'Sending…' : '';
+            }
             var mt = '', mc = '';
             if (mst === 'pending') { mt = /after Start/.test(mmsg) ? 'after Start' : /disabled/.test(mmsg) ? 'not sent' : 'when connected'; mc = 'pending'; }
             else if (mst === 'sending') { mt = 'sending…'; mc = 'pending'; }
-            else if (mst === 'error') { mt = 'not set'; mc = 'err'; }
+            else if (mst === 'error') { mt = 'refused'; mc = 'err';
+                var rmsg = /App started elsewhere/.test(mmsg) ? 'Target refused: app started by another MATLAB, press Stop → Start' :
+                    'Target refused: ' + (mmsg || 'not set');
+                if (S.massRefusedShown !== rmsg) { S.massRefusedShown = rmsg; dockMsg(rmsg, true); }
+                mmsg = rmsg; }
             else if (sv.values.weight != null && rbw != null && Math.abs(+rbw - +sv.values.weight) < 1e-3) { mt = '✓'; mc = 'ok'; }
             if (ms.textContent !== mt) { ms.textContent = mt; }
             ms.className = 'tb-state ' + mc; ms.hidden = !mt;
+            if (mst !== 'error') { S.massRefusedShown = null; }
             ms.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'error' ? (mmsg || 'Not set') :
                 mt === '✓' ? 'The target uses this body mass' : '';
         }
@@ -455,8 +471,12 @@
         var sd = st.side, motorOn = st.commands.toggles.motor.value === 1, onLive = S.page === 'live';
         chip.textContent = sd.chip;
         // the attention style of "? CONFIRM FOOT" only on Live and connected; else the chip stays quiet
-        chip.className = 'side-chip' + (sd.state === 'confirm' && onLive && sd.connected ? ' unset' : sd.state === 'mismatch' ? ' mismatch' :
-            sd.state === 'pending' ? ' pending' : '');
+        chip.className = 'side-chip' + (sd.state === 'confirm' && onLive && sd.connected ? ' unset' :
+            (sd.state === 'mismatch' || sd.state === 'refused') ? ' mismatch' : sd.state === 'pending' ? ' pending' : '');
+        // the target refused the side: say so at once in the dock (once per refusal), no silent wait
+        if (sd.state === 'refused' && sd.msg && S.sideRefusedShown !== sd.msg) {
+            S.sideRefusedShown = sd.msg; dockMsg(sd.msg, true); if (typeof toast === 'function') { toast(sd.msg, true); }
+        } else if (sd.state !== 'refused') { S.sideRefusedShown = null; }
         chip.disabled = motorOn;
         chip.title = motorOn ? 'Locked while Motor is on' : 'Foot side on the target';
         if (!ban) {
@@ -545,6 +565,23 @@
         var T = st.commands.toggles, sideOk = st.side.state === 'ok';
         var mb = $('bMotor'), ab = $('bAssist'), kb = $('bK');
         if (!mb) { return; }
+        // run 14: the 5433 echo stalled -> every control frozen, nothing sent, the device keeps
+        // its settings; when the echo returns the page re-adopts the device state and unfreezes
+        var lk = st.link || {};
+        if (lk.frozen) {
+            setPill(mb, T.motor.value, false, false); setPill(ab, T.assist.value, false, false); setPill(kb, T.k.value, false, false);
+            document.querySelectorAll('#dock button, #dock input, #sideChip, #sMass').forEach(function (el) {
+                el.disabled = true; el.title = lk.msg;
+            });
+            var fdm = $('dockMsg'); if (fdm && fdm.textContent !== lk.msg) { fdm.textContent = lk.msg; fdm.style.color = 'var(--caution)'; }
+            S.wasFrozen = true;
+            return;
+        }
+        if (S.wasFrozen) {
+            S.wasFrozen = false;
+            document.querySelectorAll('#dock button, #dock input, #sideChip, #sMass').forEach(function (el) { el.disabled = false; el.title = ''; });
+            var udm = $('dockMsg'); if (udm) { udm.textContent = ''; udm.style.color = ''; }
+        }
         if (st.view_only) {
             setPill(mb, T.motor.value, false, T.motor.mismatch); setPill(ab, T.assist.value, false, T.assist.mismatch);
             setPill(kb, T.k.value, false, T.k.mismatch);
@@ -566,7 +603,24 @@
         // the side confirmed; it was disabled before, which made the fault impossible to clear.
         var isR1 = !!(st.model && st.model.bif);
         var faultReset = fault && isR1 && T.motor.value !== 1 && T.assist.value !== 1 && sideOk;
-        mb.disabled = (fault && T.motor.value !== 1 && !faultReset) || (!sideOk && T.motor.value !== 1);
+        // locked Motor: aria-disabled (not disabled), so its title shows on hover and a press can
+        // say why in the dock; it keeps the drive colour (red while the fault is latched)
+        var locked = (fault && T.motor.value !== 1 && !faultReset) || (!sideOk && T.motor.value !== 1);
+        mb.disabled = false;
+        mb.setAttribute('aria-disabled', locked ? 'true' : 'false');
+        var lockWhy = '';
+        if (!sideOk && T.motor.value !== 1) {
+            var sdv = st.side || {}, elsewhere = ((st.status || {}).issues || []).some(function (i) { return i.key === 'app-elsewhere'; });
+            var why = sdv.target === 'UNSET' ? 'foot side not set on the target' :
+                sdv.state === 'mismatch' ? 'foot side on the target differs' :
+                sdv.state === 'refused' ? 'foot side refused by the target' :
+                sdv.state === 'pending' ? 'foot side not on the target yet' : 'confirm the foot side first';
+            lockWhy = 'Motor locked: ' + why + (elsewhere || sdv.state === 'refused' && /another MATLAB/.test(sdv.msg || '') ?
+                ' (app started by another MATLAB: press Stop → Start)' : '') + (fault ? '; drive fault latched' + (sw ? ' (' + sw + ')' : '') : '');
+        } else if (locked && fault) {
+            lockWhy = 'Motor locked: drive fault' + (sw ? ' (' + sw + ')' : '') + ': clear STO first';
+        }
+        S.motorLockWhy = locked ? lockWhy : '';
         // stays RED (fault colour from data-drive) but clickable; after a press that did not clear
         // the fault within 2 s, say so (STO is probably still engaged)
         // Independent of the Motor value: with STO engaged the model still echoes cmd_motor = 1
@@ -586,11 +640,13 @@
             if (notCleared && dmEl.textContent !== NC_MSG) { clearTimeout(S.msgT); dmEl.textContent = NC_MSG; dmEl.style.color = 'var(--alarm)'; }
             else if (!notCleared && dmEl.textContent === NC_MSG) { dmEl.textContent = ''; dmEl.style.color = ''; }
         }
-        mb.title = notCleared ? 'Fault not cleared: is STO released? Release STO, then press Motor again' + (sw ? ' (' + sw + ')' : '') :
+        mb.title = (S.motorLockWhy && !sideOk) ? S.motorLockWhy :
+            notCleared ? 'Fault not cleared: is STO released? Release STO, then press Motor again' + (sw ? ' (' + sw + ')' : '') :
             faultReset ? 'Drive fault' + (sw ? ' (' + sw + ')' : '') + ': release STO, then press Motor to clear it' :
             (fault && isR1 && T.assist.value === 1 && T.motor.value !== 1) ? 'Drive fault: switch Assist off, then press Motor to clear it' :
+            S.motorLockWhy ? S.motorLockWhy :
             fault ? 'Drive fault: clear STO first' + (sw ? ' (' + sw + ')' : '') :
-            (!sideOk && T.motor.value !== 1) ? 'Confirm the foot side first' : (sw ? 'Drive statusword ' + sw : 'No drive data');
+            (sw ? 'Drive statusword ' + sw : 'No drive data');
         ab.disabled = !sideOk && T.assist.value !== 1;
         ab.title = ab.disabled ? 'Confirm the foot side first' : '';
         var unknown = ['motor', 'assist', 'k'].some(function (t) { return T[t].value == null; });
@@ -645,13 +701,19 @@
     function sendSide(side) {
         var name = side.charAt(0) + side.slice(1).toLowerCase();
         toast(name + ' foot: sending…', false);
+        // the chip shows the pick at once (pending) instead of after the next state poll
+        var chip = $('sideChip');
+        if (chip) { chip.textContent = name + ' · sending…'; chip.className = 'side-chip pending'; }
         post('/api/console/side', {side: side}).then(function (r) {
             closeSidePop();
             var err = !r.ok || r._status >= 400;
-            var t = err ? (r.msg || 'Foot side not accepted') :
-                r.state === 'pending' ? name + ' foot saved for ' + ((S.state || {}).session || {}).sid + ': ' + (r.msg || 'sent when connected') :
-                (r.msg || name + ' foot sent');
-            toast(t, err); dockMsg(r.msg, err); poll();
+            var m = (r.msg || '');
+            var when = /not sent|writes are disabled|writes off/i.test(m) ? 'not sent (target writes off)' :
+                /after Start/i.test(m) ? 'sent after Start' : /when connected|on Connect/i.test(m) ? 'sent when connected' : '';
+            var t = err ? (m || 'Foot side not accepted') :
+                r.state === 'pending' ? name + ' foot saved; ' + (when || 'sent later') :
+                (name + ' foot: sending…');
+            toast(t, err); dockMsg(err ? m : '', err); poll();
         }).catch(function () { toast('App not reachable: foot side not sent', true); });
     }
     function commitField(el, key, url, body) {
@@ -659,9 +721,15 @@
         post(url, body).then(function (r) {
             S.editing[key] = false;
             var ok = r.ok && (r.state === 'sending' || r.state === 'confirmed' || r.state === undefined);
-            flash(el, ok, r.needs_confirm || r.msg || 'Not sent');
-            if (typeof toast === 'function') { toast(r.needs_confirm || r.msg || (ok ? 'Saved' : 'Not sent'), !ok); }
-            if (r.state === 'pending') { flash(el, false, r.msg); }
+            var held = r.ok && r.state === 'pending';     // saved, sent later: amber, not the red send error
+            if (held) {
+                el.classList.remove('sent-flash', 'send-error'); el.classList.add('send-pending');
+                el.title = (r.msg || '').replace(/^pending: /, 'Saved; ');
+            } else {
+                el.classList.remove('send-pending');
+                flash(el, ok, r.needs_confirm || r.msg || 'Not sent');
+            }
+            if (typeof toast === 'function') { toast(r.needs_confirm || r.msg || (ok ? 'Saved' : 'Not sent'), !ok && !held); }
             poll();
         });
     }
@@ -732,7 +800,17 @@
 
     function bindDock() {
         [['bMotor', 'motor'], ['bAssist', 'assist'], ['bK', 'k']].forEach(function (x) {
+            if (x[1] === 'motor') {
+                // a locked Motor says why once in the dock when hovered (title has it too)
+                $(x[0]).addEventListener('mouseenter', function () {
+                    if (S.motorLockWhy && S.motorLockShown !== S.motorLockWhy) { S.motorLockShown = S.motorLockWhy; dockMsg(S.motorLockWhy, true); }
+                });
+            }
             $(x[0]).addEventListener('click', function () {
+                if (x[1] === 'motor' && $(x[0]).getAttribute('aria-disabled') === 'true') {
+                    dockMsg(S.motorLockWhy || 'Motor locked', true);       // pressed while locked: say why, send nothing
+                    return;
+                }
                 if (x[1] === 'motor') {
                     // an ON press with the fault bit set is a fault-reset attempt; an OFF press ends it
                     var on = S.lastT && S.lastT.motor && S.lastT.motor.value === 1;

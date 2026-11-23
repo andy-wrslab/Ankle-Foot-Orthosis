@@ -1,4 +1,5 @@
-"""Failed Connect -> amber "Speedgoat offline" until Disconnect or a successful connect.
+"""Failed Connect -> amber "Speedgoat offline" / "Speedgoat busy" / "Connect failed", until
+Disconnect or a successful connect (no answer / another MATLAB session / any other error).
 
 Units (no MATLAB, no target: the afo_rc call is a stub): a Connect that raises (ping
 timeout) or answers connected=false makes the status button "Speedgoat offline"
@@ -101,6 +102,41 @@ def units():
     st = top_status(ctx)
     check("successful connect: not offline any more", st["text"] != "Speedgoat offline"
           and ctx.runctl.offline is None, (st["text"], ctx.runctl.offline))
+    # 4) "another MATLAB session" (13:50:43 live): busy, not offline
+    ctx.matlab.next["status"] = {"ok": True, "connected": False}     # target gone again
+    ctx.matlab.next["disconnect"] = {"ok": True, "connected": False}
+    run(ctx, "disconnect")
+    ctx.matlab.next["connect"] = RuntimeError("Unable to connect to target computer 'TargetPC1': The target computer "
+                                              "may be connected to another MATLAB session.")
+    run(ctx, "connect")
+    st = top_status(ctx)
+    it = next((i for i in st["issues"] if i["key"] == "speedgoat-busy"), {})
+    check("another MATLAB session: amber 'Speedgoat busy' (not offline)", st["text"] == "Speedgoat busy"
+          and st["level"] == "amber" and not any(i["key"] == "speedgoat-offline" for i in st["issues"]), st["text"])
+    check("busy: what to do", it.get("todo", "").startswith("Another MATLAB session is connected to the Speedgoat")
+          and "press Connect again" in it.get("todo", ""), it)
+    check("busy: the real error in the detail", "another MATLAB session" in it.get("detail", ""), it)
+    # 5) any other error: "Connect failed" with the real error
+    run(ctx, "disconnect")
+    ctx.matlab.next["connect"] = RuntimeError("slrealtime: license checkout failed (error -5)")
+    run(ctx, "connect")
+    st = top_status(ctx)
+    it = next((i for i in st["issues"] if i["key"] == "connect-failed"), {})
+    check("other error: 'Connect failed' with the real error", st["text"] == "Connect failed"
+          and "license checkout failed" in it.get("detail", ""), (st["text"], it))
+    # 6) 'Request timed out' is offline
+    run(ctx, "disconnect")
+    ctx.matlab.next["connect"] = {"ok": False, "connected": False, "err": "Request timed out."}
+    run(ctx, "connect")
+    check("'Request timed out': offline", top_status(ctx)["text"] == "Speedgoat offline", top_status(ctx)["text"])
+    from pages.runctl import connect_failure_kind as k
+    check("classifier", [k("ping timeout"), k("The target computer may be connected to another MATLAB session."),
+                         k("no response from 192.168.7.5"), k("Access is denied")] == ["offline", "busy", "offline", "failed"])
+    js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
+    check("page: Connect shows the stage and a live m:ss counter while it runs",
+          "var acting = {connect: c, disconnect: c, start: s, stop: p}[busy.action]" in js
+          and "acting.textContent = (busy.stage || busy.verb) + el" in js and "mmss(Date.now() / 1000 - busy.started)" in js)
+    check("page: Connect enabled again after a failed connect (retry)", "c.disabled = false;" in js)
     check("only the afo_rc stub was called", all(f == "afo_rc" for f, _ in ctx.matlab.calls), ctx.matlab.calls)
     return offline_status
 
