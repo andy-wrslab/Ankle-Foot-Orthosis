@@ -203,6 +203,7 @@ def _imu_cal_view(ctx) -> Dict[str, Any]:
 def console_state(ctx) -> Dict[str, Any]:
     try:
         ctx.session.adopt_echo()             # first fresh 5433 echo after a server start
+        ctx.session.refresh_echo()           # readbacks from the echo on every poll (no MATLAB)
     except Exception:
         pass
     st = top_status(ctx)

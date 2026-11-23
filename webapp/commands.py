@@ -248,8 +248,15 @@ class CommandState:
         fz = self.frozen() if self.frozen else None
         if fz:
             return {"ok": False, "msg": fz}
-        if name not in ("calibrate", "reset"):
+        if name not in ("calibrate", "reset", "zero"):
             return {"ok": False, "msg": "unknown action"}
+        if name == "zero":
+            # field 0 rising edge (run 14 Triggered Subsystem6): latches the motor encoder and
+            # ankle-angle offsets (mean of the last 200 samples) -> only with Assist off
+            with self.lock:
+                a = self.resolved()["assist"]["value"]
+            if a != 0:
+                return {"ok": False, "msg": "Zero: switch Assist off first (hold the ankle still in neutral)"}
         now = time.time()
         if name == "calibrate" and now < self.calibrate_busy_until:
             return {"ok": False, "msg": f"Calibrating pressure: {self.calibrate_busy_until - now:.0f} s left; not sent again."}
@@ -270,7 +277,7 @@ class CommandState:
         def release():
             seen = False
             t_end = time.time() + self.PULSE_S
-            echo_key = {"calibrate": "cmd_calibrate_pressure", "reset": "cmd_reset_sv"}[name]
+            echo_key = {"calibrate": "cmd_calibrate_pressure", "reset": "cmd_reset_sv", "zero": "cmd_zero"}[name]
             while time.time() < t_end:
                 v = (self.readback() or {}).get(echo_key)
                 if isinstance(v, (int, float)) and v >= 0.5:
@@ -284,7 +291,8 @@ class CommandState:
             _log.info("user pulsed %s; model echo saw it: %s", name, rec["model_saw"])
 
         threading.Thread(target=release, daemon=True).start()
-        return {"ok": True, "msg": ("Calibrating pressure (30 s)…" if name == "calibrate" else "Reset SV sent")}
+        return {"ok": True, "msg": ("Calibrating pressure (30 s)…" if name == "calibrate" else
+                                    "Zeroed" if name == "zero" else "Reset SV sent")}
 
     def momentary(self, name: str, value: int) -> Dict[str, Any]:
         fz = self.frozen() if self.frozen else None

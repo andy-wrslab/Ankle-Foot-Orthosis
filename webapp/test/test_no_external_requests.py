@@ -2,7 +2,7 @@
 
 App on 127.0.0.1:18050 (test ports, replay senders so the plots draw), the installed
 Chrome headless with the CDP Network domain on. Visits Live (Gait, Sensors, Training),
-Trials, Signals, Teensy (each of its tabs) and the status / Advanced / side popovers,
+Trials, DAQ (each of its tabs) and the status / Advanced / side popovers,
 and lists every request whose host is not 127.0.0.1 / localhost (fails on any).
 Also checks that the bundled fonts load from /assets/fonts/ (Inter, JetBrains Mono)
 and that nothing 404s.
@@ -138,8 +138,7 @@ def main():
 
         go("/live", "#pgGait", "#pgSensors", "#pgTraining", "#statusBtn", "#advBtn", "#sideChip")
         go("/trials")
-        go("/signals")
-        go("/teensy", '[id*="ty-tab-btn"][id*="code"]', '[id*="ty-tab-btn"][id*="changes"]',
+        go("/daq", '[id*="ty-tab-btn"][id*="code"]', '[id*="ty-tab-btn"][id*="changes"]',
            '[id*="ty-tab-btn"][id*="serial"]', '[id*="ty-tab-btn"][id*="build"]')
         fonts = r.js("document.fonts.ready.then(function(){var o=[]; document.fonts.forEach(function(f){"
                      "o.push([f.family.replace(/\"/g,''), f.weight, f.status]);}); return o;})")

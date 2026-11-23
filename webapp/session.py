@@ -106,6 +106,7 @@ SIDE_WARNING = ("Side mismatch: measured torque and ankle angle are sign-inverte
 SID_RE = re.compile(r"^S\d{1,4}$")
 ECHO_MODEL = "AFO_r1"        # the model that sends the training UDP echo
 NOT_ON_DEVICE = "Not set on device: press to send"
+MASS_NOT_SET = "Mass not set: enter the body mass"
 ECHO_MAX_AGE_S = 0.5      # console packet every 10 ms; older than this -> rows grey
 SHORT = {"side": "Foot side", "weight": "Mass", "mode": "Mode", "k_percent": "K", "sv_target_min": "SV target",
          "sv_target_max": "SV target", "bif_mass": "Mass (Bi-LSTM)", "motor": "Motor command", "assist": "Assist command", "k": "K command"}
@@ -136,7 +137,7 @@ class SessionSetup:
         self.writes_enabled = (bool(scfg.get("target_writes_enabled", False))
                                and not bool((ctx.cfg.get("console") or {}).get("view_only", False)))
         self.path = os.path.join(ctx.app_dir, "data", "session_profiles.json")
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()   # re-entrant: set_sid -> _apply_device both take it
         self.sid: Optional[str] = None
         self.values: Dict[str, Any] = {}
         self.status: Dict[str, Dict[str, Any]] = {}
@@ -156,6 +157,10 @@ class SessionSetup:
         self.entered: set = set()
         self.adopted_echo = False
         self.device_state: Optional[Dict[str, float]] = None     # last adopted device state
+        # where each value came from (14:26 live: run 13's built weight 55 was adopted as the
+        # mass and sent to run 14 after Start): "entered" in this page session for this S-ID,
+        # "adopted18" (valid run-14 echo; mass only from col 17 > 0) or "adopted15" (shown only)
+        self.src: Dict[str, str] = {}
         self.start_owned_until = 0.0     # a page Start owns the settings until it has sent them
         self._start_waited = False
         self.after_start = False      # SPEC: every Start ends in the Confirm state
@@ -254,6 +259,8 @@ class SessionSetup:
         with self.lock:
             if sid != self.sid:
                 first = self.sid is None
+                if not first and sid != self.sid:
+                    self.src = {}               # values of another participant are not "entered" for this one
                 self.sid = sid
                 self.values = dict(self.profiles.get(sid, {}))
                 self.side_confirmed = None     # a new participant always needs the side confirmed
@@ -289,8 +296,10 @@ class SessionSetup:
         if not self.sid:
             return "Set the S-ID first."
         self.entered.add(key)
+        self.src[key] = "entered"
         if key == "weight":
             self.entered.add("bif_mass")
+            self.src["bif_mass"] = "entered"
         sp = self.spec(key)
         try:
             v = float(value)
@@ -345,6 +354,7 @@ class SessionSetup:
             return f"The ID does not match ({self.sid})."
         v = 0 if side == "LEFT" else 1
         self.entered.add("side")
+        self.src["side"] = "entered"
         with self.lock:
             self.values["side"] = v
             self.side_confirmed = {"sid": self.sid, "side": v, "at": time.time()}
@@ -391,20 +401,23 @@ class SessionSetup:
         e = self.echo()
         if not e:
             return False
-        st = {"side": e.get("side"), "mass": e.get("weight_kg"), "mode": e.get("assist_mode"), "k": e.get("fixed_k_pct")}
+        # col 2 weight_kg of a 15-float echo is the build default until set (run 13: 55), never a
+        # real mass: the mass stays unknown / unset
+        st = {"side": e.get("side"), "mode": e.get("assist_mode"), "k": e.get("fixed_k_pct")}
         self.adopted_echo = True
-        self.link_adopted({k: float(v) for k, v in st.items() if v is not None})
+        self.link_adopted({k: float(v) for k, v in st.items() if v is not None}, src="adopted15")
         return True
 
     def _start_values(self) -> Dict[str, float]:
         """What a page Start sends: mass, mode, K from the page; side only when confirmed in
         this app session for this S-ID (unchanged safety rule)."""
         v = {}
-        if self.values.get("weight") is not None:
+        ok = ("entered", "adopted18")
+        if self.values.get("weight") is not None and self.src.get("weight") in ok:
             v["mass"] = float(self.values["weight"])
-        if self.values.get("mode") is not None:
+        if self.values.get("mode") is not None and self.src.get("mode") in ok:
             v["mode"] = float(self.values["mode"])
-        if self.values.get("k_percent") is not None:
+        if self.values.get("k_percent") is not None and self.src.get("k_percent") in ok:
             v["k"] = float(self.values["k_percent"])
         c = self.side_confirmed
         if (self.values.get("side") is not None and c and c.get("sid") == self.sid
@@ -425,48 +438,65 @@ class SessionSetup:
             vals = self._start_values()
             pkt = lk.send_values(vals)
             self.audit("udp send after page Start", f"{vals} -> {pkt}")
+            if "mass" not in vals:
+                self.status["weight"] = {"state": "pending", "msg": MASS_NOT_SET, "at": time.time()}
         else:
             # run <= 13 (15 / 12 floats) or no echo: setparam, side AND mass always
             self._start_waited = True
             try:
-                self.entered |= {"side", "weight", "bif_mass"}     # side still only if confirmed
+                self.entered.add("side")                           # side still only if confirmed
+                if self.src.get("weight") in ("entered", "adopted18"):
+                    self.entered |= {"weight", "bif_mass"}         # a mass, never a default
+                else:
+                    self.entered -= {"weight", "bif_mass"}
+                    self.status["weight"] = {"state": "pending", "msg": MASS_NOT_SET, "at": time.time()}
+                for k in ("mode", "k_percent"):
+                    if self.src.get(k) not in ("entered", "adopted18"):
+                        self.entered.discard(k)
                 self.after_connect_or_start("start")
             finally:
                 self._start_waited = False
         self.start_owned_until = time.time() + 1.0
 
-    def link_adopted(self, st: Dict[str, float]) -> None:
+    def link_adopted(self, st: Dict[str, float], src: str = "adopted18") -> None:
         """The device state was adopted (page start, reconnect, link back after a stall):
         show it as the page's values; nothing is sent. Not right after a PAGE Start (the
         page sends its values then)."""
         if time.time() < getattr(self, "start_owned_until", 0.0):
             return
         self.device_state = dict(st)
-        self._apply_device(st, confirm_side=True)
+        self._apply_device(st, confirm_side=True, src=src)
         self.audit("adopted device settings", json.dumps(st))
 
-    def _apply_device(self, st: Dict[str, float], confirm_side: bool) -> None:
+    def _apply_device(self, st: Dict[str, float], confirm_side: bool, src: str = "adopted18") -> None:
         with self.lock:
             side = st.get("side")
             if side in (0.0, 1.0):
                 self.values["side"] = int(side)
+                self.src["side"] = src
                 if self.sid and confirm_side:
                     self.side_confirmed = {"sid": self.sid, "side": int(side), "at": time.time(), "adopted": True}
-            if (st.get("mass") or 0) > 0:
+            if src == "adopted18" and 20.0 <= (st.get("mass") or 0) <= 200.0:      # col 17 only
                 self.values["weight"] = float(st["mass"])
                 self.values["bif_mass"] = float(st["mass"])
+                self.src["weight"] = self.src["bif_mass"] = src
+            elif self.src.get("weight") not in ("entered",):
+                self.src.pop("weight", None)             # unknown: never sent as a default
+                self.src.pop("bif_mass", None)
             if st.get("mode") in (1.0, 3.0):
                 self.values["mode"] = int(st["mode"])
+                self.src["mode"] = src
             if st.get("k") is not None:
                 self.values["k_percent"] = float(st["k"])
+                self.src["k_percent"] = src
             for k in ("side", "weight", "bif_mass", "mode", "k_percent"):
                 self.status.pop(k, None)
             self.after_start = False
             self.entered.clear()
             # device unset (mass 0 / side -1) while the page has a value: say so, never silently
-            if not (st.get("mass") or 0) > 0 and self.values.get("weight") is not None:
+            if src == "adopted18" and not (st.get("mass") or 0) > 0 and self.values.get("weight") is not None:
                 self.status["weight"] = {"state": "pending", "msg": NOT_ON_DEVICE, "at": time.time()}
-            if st.get("side") not in (0.0, 1.0) and self.values.get("side") is not None:
+            if src == "adopted18" and st.get("side") not in (0.0, 1.0) and self.values.get("side") is not None:
                 self.status["side"] = {"state": "pending", "msg": NOT_ON_DEVICE, "at": time.time()}
 
     def _send(self, key: str, value: float) -> str:
@@ -555,21 +585,33 @@ class SessionSetup:
         tr = self.ctx.training.latest(max_age_s=ECHO_MAX_AGE_S) or {}
         return dict(tr, _port=5433) if tr else {}
 
+    # run 14 (18-float echo): every "Target uses" value comes from the echo; BIF mass = col 17
+    # (the root constant BIF_mass_kg stays 0: the UDP settings override it inside the model)
+    ECHO18_COL = {"bif_mass": "bif_mass_kg"}
+    ECHO_ONLY_KEYS = ("side", "weight", "bif_mass", "mode", "k_percent")
+
+    def refresh_echo(self) -> None:
+        """The cheap part of refresh_readback (no MATLAB): readbacks from the fresh 5433 echo.
+        Called on every page state poll, so a confirmation shows within one poll."""
+        echo = self.echo()
+        self.echo_port = echo.get("_port")
+        udp = self.link() is not None
+        for sp in self.specs():
+            k = sp["key"]
+            col = sp.get("udp") or (self.ECHO18_COL.get(k) if udp else None)
+            if col and echo.get(col) is not None:
+                self._put(k, echo[col], "echo")
+            elif self.readback_src.get(k) == "echo" or (udp and k in self.ECHO_ONLY_KEYS):
+                # echo gone (stream stopped / other model), or a getparam leftover on run 14:
+                # drop it (run <= 13: getparam takes over)
+                self.readback.pop(k, None)
+                self.readback_src.pop(k, None)
+
     def refresh_readback(self) -> None:
         """Echo first (no MATLAB); getparam for every value without a fresh echo
         (never with the run-14 UDP settings: the 5433 echo is the only readback)."""
         self.adopt_echo()
-        echo = self.echo()
-        self.echo_port = echo.get("_port")
-        for sp in self.specs():
-            k = sp["key"]
-            col = sp.get("udp")
-            if col and echo.get(col) is not None:
-                self._put(k, echo[col], "echo")
-            elif self.readback_src.get(k) == "echo":
-                # echo gone (stream stopped / other model): drop it, getparam takes over
-                self.readback.pop(k, None)
-                self.readback_src.pop(k, None)
+        self.refresh_echo()
         if self.link() is not None:
             return
         if not self._connected() or self.ctx.jobs.running("rc") or self.ctx.jobs.running("session"):
@@ -829,26 +871,14 @@ class SessionSetup:
 
     # ---------------------------------------------------------- Bi-LSTM (AFO_r1)
     def bif_view(self) -> Optional[Dict[str, Any]]:
-        """Bi-LSTM phase: console packet cols 12-14 when present (15-float packet),
-        else the MATLAB Signals stream (bif_bias_ready, bif_valid, bif_dbg(1)/(8))."""
+        """Bi-LSTM phase from the console packet cols 12-14 (15 / 18-float packet). The MATLAB
+        Signals fallback is gone with the Signals page (Andy 14:36): no getsignal calls; a
+        12-float build shows the state as unknown (a grey note)."""
         if not self.profile().get("bif"):
             return None
         echo = self.echo()
         if echo.get("bif_valid") is not None or echo.get("bif_bias_ready") is not None:
             return mp.bif_status(echo, "console")
-        sig: Dict[str, Any] = {}
-        ml = getattr(self.ctx, "matlab", None)
-        if ml is not None and hasattr(ml, "snapshot"):
-            try:
-                got = ml.snapshot("latest", ["bif_bias_ready", "bif_valid", mp.DBG_STATE, mp.DBG_PROGRESS],
-                                  2.0, timeout=0.3) or {}
-            except Exception:
-                got = {}
-            vals = got.get("values") or {}
-            sig = {"bif_bias_ready": vals.get("bif_bias_ready"), "bif_valid": vals.get("bif_valid"),
-                   "state": vals.get(mp.DBG_STATE), "bif_cal_progress": vals.get(mp.DBG_PROGRESS)}
-        if any(v is not None for v in sig.values()):
-            return mp.bif_status(sig, "signals")
         return mp.bif_status({}, None)
 
     def checklist(self, bif: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:

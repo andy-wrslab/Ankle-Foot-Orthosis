@@ -215,8 +215,7 @@ def main():
             res["shots"][f"{tag}_advanced"] = shot(c, f"{tag}_advanced")
             c.js("document.body.click(); 1"); c.pump(0.3)
             nav(c, "trials", 3.0); res["shots"][f"{tag}_trials"] = shot(c, f"{tag}_trials")
-            nav(c, "signals", 3.0); res["shots"][f"{tag}_signals"] = shot(c, f"{tag}_signals")
-            nav(c, "teensy", 3.0); res["shots"][f"{tag}_teensy"] = shot(c, f"{tag}_teensy")
+            nav(c, "daq", 3.0); res["shots"][f"{tag}_daq"] = shot(c, f"{tag}_daq")
             nav(c, "live", 3.0)
             if w == 1920:
                 # ---- hover hold on Torque

@@ -20,9 +20,10 @@ var now = 1000, rafQ = [];
 var console = {errors: [], error: function () { var a = []; for (var i = 0; i < arguments.length; i++) { a.push(String(arguments[i])); } console.errors.push(a.join(" ")); }, log: function () {}};
 var performance = {now: function () { return now; }};
 var calls = {};     // id -> [{op, min, max, n}]
+var optsOf = {};
 function FakeUPlot(opts, data, host) {
     this.series = [{}]; for (var i = 1; i < opts.series.length; i++) { this.series.push({show: true}); }
-    this.id = host.id; calls[this.id] = [];
+    this.id = host.id; calls[this.id] = []; optsOf[host.id] = opts;
 }
 FakeUPlot.prototype.batch = function (f) { f(); };
 FakeUPlot.prototype.setData = function (d) { calls[this.id].push({op: "data", n: d[0].length, last: d[0][d[0].length - 1]}); };
@@ -30,8 +31,11 @@ FakeUPlot.prototype.setScale = function (k, r) { calls[this.id].push({op: "x", m
 FakeUPlot.prototype.setSeries = function (i, o) { this.series[i].show = o.show; };
 FakeUPlot.prototype.setSize = function () {};
 function Host(id) {
-    this.id = id; this.offsetParent = {}; this.clientWidth = 800; this.clientHeight = 300;
-    this.addEventListener = function () {}; this.closest = function () { return null; };
+    var self = this;
+    this.id = id; this.offsetParent = {}; this.clientWidth = 800; this.clientHeight = 300; this.on = {};
+    this.addEventListener = function (ev, fn) { self.on[ev] = fn; };
+    this.closest = function () { return null; };
+    this.fire = function (ev) { if (self.on[ev]) { self.on[ev]({}); } };
 }
 var spec = {window_default: 10, style: {text: "#777", grid: "#eee", zero: "#ccc"}, plots: {
     torque: {group: "gait", y: [-6.6, 16.6], series: [{label: "Measured", src: ["torque", null], color: "#000", width: 1.5, dec: 2, unit: "N·m"},
@@ -99,6 +103,35 @@ if (CASE === "early") {
     check("early: Gait x range never negative (t from 1 s)", neg === 0, neg + " negative frames");
     check("early: range = [max(0, t - w), max(w, t)]", okShape, stringify(lastX("torque")));
     for (var r0 = 0; r0 < results.length; r0++) { WScript.Echo(results[r0]); }
+    WScript.Quit(0);
+}
+if (CASE === "hold") {
+    window._afoLiveMsg(message("full", 0, 1000, function () { return 0; }));
+    n = 1000;
+    for (var w0 = 0; w0 < 40; w0++) { window._afoLiveMsg(message("delta", n, n + 5, function () { return 0; })); n += 5; runFrames(3); }
+    hosts.torque.fire("mouseenter");                       // pointer on the Torque plot (no hold any more)
+    var heldAt = lastX("torque"), same = true, frozen = true, frames = 0, adv = 0, prev = heldAt.max;
+    for (var hs = 0; hs < 20 * 10; hs++) {                 // 10 s, pointer moving every 0.5 s
+        window._afoLiveMsg(message("delta", n, n + 5, function () { return 0; })); n += 5; runFrames(3);
+        if (hs % 10 === 0) { hosts.torque.fire("mousemove"); }
+        var a1 = lastX("torque"), b1 = lastX("gait"); frames++;
+        if (a1.min !== b1.min || a1.max !== b1.max) { same = false; }
+        if (a1.max > prev) { adv++; }
+        prev = a1.max;
+    }
+    var tlh = t0 + (n - 1) * 0.01;
+    check("no hold: pointer on Torque for 10 s, both plots identical every frame", same, stringify(lastX("torque")) + " " + stringify(lastX("gait")));
+    check("no hold: both keep scrolling with the shared clock", adv >= 190 && Math.abs(lastX("torque").max - tlh) < 0.3, adv + " advances");
+    check("no hold: state never 'held'", E.state().held === false && E.state().plots.torque.held === false, "");
+    check("same x-axis height on every plot", optsOf.torque.axes[0].size === optsOf.gait.axes[0].size, "");
+    check("tick font 13 px", /^13px/.test(optsOf.torque.axes[0].font), optsOf.torque.axes[0].font);
+    check("same y-axis gutter and padding on every plot (ticks line up)",
+          optsOf.torque.axes[1].size === optsOf.gait.axes[1].size && stringify(optsOf.torque.padding) === stringify(optsOf.gait.padding),
+          optsOf.torque.axes[1].size + " / " + optsOf.gait.axes[1].size);
+    window._afoLiveSub = "sensors"; window._afoLiveMsg(message("delta", n, n + 5, function () { return 0; })); n += 5; runFrames(4);
+    check("Sensors gutter = Gait gutter", optsOf.press.axes[1].size === optsOf.torque.axes[1].size, optsOf.press.axes[1].size);
+    check("same host size -> same plot size (Gait and Sensors)", optsOf.press.width === optsOf.torque.width && optsOf.press.height === optsOf.torque.height, "");
+    for (var r1 = 0; r1 < results.length; r1++) { WScript.Echo(results[r1]); }
     WScript.Quit(0);
 }
 var torqueOf = CASE === "real" ? function (k) { return 5 * Math.sin(k / 30); } : function (k) { return 0.0; };   // STO: exactly 0.0

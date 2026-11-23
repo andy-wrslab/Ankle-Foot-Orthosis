@@ -114,8 +114,8 @@ def main():
     # 2 mass differs (amber)
     c = make_ctx(run, echo=dict(ECHO, weight_kg=55.0)); confirm(c); c.session.refresh_readback()
     s = top_status(c); r["2_mass"] = (s["text"], s["level"])
-    # 2b server (re)start: stale page values (72.5 from disk) vs device 55 -> the page adopts
-    # the device (Andy 14:01), nothing differs, nothing is sent
+    # 2b server (re)start onto a 15-float echo: side adopted from the device; col 2 weight (55,
+    # possibly the build default) is NOT adopted as a mass (14:26 live); nothing is sent
     c = make_ctx(run, echo=dict(ECHO, weight_kg=55.0)); c.session.set_sid("S90")
     c.session.values.update(side=1, weight=72.5, mode=1, k_percent=5)
     n0 = len(c.jobs.started)
@@ -189,7 +189,7 @@ def main():
     r["17_meta_run"] = c.runctl.calls[-1][1]["file_log_run"]
 
     expect = {
-        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs Signals or the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "2b_adopt": (55.0, 1, 0), "4_nodata": ("No data 3.3 s", "red"),
+        "1_ready": "Ready", "1b_bif_unknown": ("Ready", "green", ["Bi-LSTM state unknown: needs the 15-float console packet"]), "2_mass": ("Mass differs", "amber"), "2b_adopt": (72.5, 1, 0), "4_nodata": ("No data 3.3 s", "red"),
         "5_confirm": ("Confirm foot side", "amber"), "5b_adopt_side": ("Ready", "Side: RIGHT"), "6_connected": "Connected", "7_not_connected": "Not connected",
         "8_busy": "Starting…", "9_afo_status": "Ready", "10_status": "Assist command differs",
         "11_after_echo_lost": {"side": None, "weight": None}, "12_key": "StartDate",

@@ -181,7 +181,7 @@ def top_status(ctx) -> Dict[str, Any]:
                     issues.append({"level": "red", "key": "drive-fault", "text": "Drive fault (STO)",
                                    "detail": f"statusword 0x{int(sw):04X}",
                                    "todo": "Release STO, then press Motor once: the model sends the fault reset."})
-                # Bi-LSTM phase (console 15-float tail or the Signals stream)
+                # Bi-LSTM phase (console 15 / 18-float tail)
                 try:
                     b = ctx.session.bif_view() or {}
                 except Exception:
@@ -198,7 +198,7 @@ def top_status(ctx) -> Dict[str, Any]:
                                    "detail": b.get("text"), "todo": "Walk normally for about 30 s."})
                 elif ph == "unknown":
                     # not actionable: a grey note in the popover only (the button can be green Ready)
-                    notes.append("Bi-LSTM state unknown: needs Signals or the 15-float console packet")
+                    notes.append("Bi-LSTM state unknown: needs the 15-float console packet")
         seen = set()
         for row in ctx.session.target_table():
             if row["name"] == "side" or row["match"] is not False:

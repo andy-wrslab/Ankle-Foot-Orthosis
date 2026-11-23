@@ -5,7 +5,7 @@
 // committed field (Enter / leaving the field). Plots are Dash graphs.
 (function () {
     'use strict';
-    var S = {state: null, page: null, liveSub: 'gait', runs: null, selRun: null, sigChecked: null,
+    var S = {state: null, page: null, liveSub: 'gait', runs: null, selRun: null,
              sigNames: [], lastPacketAt: 0, editing: {}, exportJob: null, lastSid: null};
     var POLL_MS = 500;
     var $ = function (id) { return document.getElementById(id); };
@@ -87,7 +87,7 @@
                     f[0] + '"' + (f[4] ? ' readonly' : '') + '>' + (f[2] ? ' ' + esc(f[2]) : '') + '</span></label>';
             }).join('');
             if (sec[3]) {
-                rows += '<div class="adv-nc" title="UDP 5430 parameters: no block in this model reads them. Wiring them waits for a later round.">' +
+                rows += '<div class="adv-nc" id="advNc" title="UDP 5430 parameters: no block in this model reads them. Wiring them waits for a later round.">' +
                     '<div class="nc-head">Not connected in this model · UDP 5430</div>' +
                     ['epsilon up', 'epsilon down', 'step up', 'step down', 'v min'].map(function (n) {
                         return '<label>' + n + '<span><input class="input mono" value="–" disabled></span></label>'; }).join('') + '</div>';
@@ -102,7 +102,7 @@
         '<header class="topbar" id="topbar">' +
           '<span class="appname">AFO</span>' +
           '<nav class="nav" id="nav"><a href="/live" data-nav="live">Live</a><a href="/trials" data-nav="trials">Trials</a>' +
-          '<a href="/signals" data-nav="signals">Signals</a><a href="/teensy" data-nav="teensy">Teensy</a></nav>' +
+          '<a href="/daq" data-nav="daq">DAQ</a></nav>' +
           '<span class="spacer"></span>' +
           '<div class="session-bar" id="sessionBar">' +
             '<label class="tb-field" title="Participant ID (used in export file names)"><span>ID</span><input class="input" id="sPart" autocomplete="off"></label>' +
@@ -169,6 +169,7 @@
           '<button class="btn act" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
           '<button class="btn act" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
           '<button class="btn act" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
+          '<button class="btn act" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
         '</div>';
     }
 
@@ -186,12 +187,14 @@
             '<button class="btn primary" id="expBtn">Export</button>' +
           '</div>' +
         '</section>' +
-        '<p class="hint">Click a run to select it. The name is participant ID, date, start time and trial number; edit it before exporting if needed. Saved to the OMEN\'s afo_mat folder with a settings .json beside the .mat; a run split by Reconnect Signals is joined into one file.</p>';
+        '<p class="hint">Click a run to select it. The name is participant ID, date, start time and trial number; edit it before exporting if needed. Saved to the OMEN\'s afo_mat folder with a settings .json beside the .mat; a run split by a reconnect is joined into one file.</p>';
     }
 
     // ---------------------------------------------------------- router
-    var PAGES = ['live', 'trials', 'signals', 'teensy'];
+    var PAGES = ['live', 'trials', 'daq'];
+    var LEGACY = {signals: 'live', teensy: 'daq'};       // removed / renamed pages (Andy 14:36)
     function go(page, push) {
+        if (LEGACY[page]) { page = LEGACY[page]; push = true; }
         if (PAGES.indexOf(page) < 0) { page = 'live'; }
         S.page = page; window._afoPage = page;
         PAGES.forEach(function (p) { var el = $('page-' + p); if (el) { el.hidden = p !== page; } });
@@ -208,7 +211,6 @@
         if (window._afoPlots && window._afoPlots.release) { window._afoPlots.release(); }
         setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 60);
         if (page === 'trials') { loadRuns(); }
-        if (page === 'signals') { loadSignals(); }
         if (S.state) { renderSide(S.state); }
     }
     window.addEventListener('popstate', function () {
@@ -256,8 +258,9 @@
         document.querySelectorAll('#page-live [data-live]').forEach(function (c) { c.hidden = c.getAttribute('data-live') !== sub; });
         resizeSoon($('page-live'));
         if (window._afoRequestRender) { window._afoRequestRender(); }
-        if ($('liveWin')) { $('liveWin').hidden = sub === 'training'; }
-        if ($('trWin')) { $('trWin').hidden = sub !== 'training'; }
+        // one 2 s / 10 s window for Gait, Sensors and Training (Andy 14:34)
+        if ($('liveWin')) { $('liveWin').hidden = false; }
+        if ($('trWin')) { $('trWin').hidden = true; }
         setProps('live-sub', {data: sub});
         if (window._afoReleaseAllHolds) { window._afoReleaseAllHolds(); }
         if (window._afoPlots && window._afoPlots.release) { window._afoPlots.release(); }
@@ -277,8 +280,6 @@
             setProps('window-sec', {data: window._afoWinSec}); }
         else if (t.parentElement && t.parentElement.id === 'trWin') { segPress($('trWin'), t); window._afoTrWin = Number(t.getAttribute('data-w'));
             setProps('tr-window', {data: window._afoTrWin}); }
-        else if (t.parentElement && t.parentElement.id === 'sigWin') { segPress($('sigWin'), t); setProps('sig-window', {data: Number(t.getAttribute('data-w'))}); }
-        else if (t.id === 'sigOn' || t.id === 'sigOff') { post('/api/signals/stream', {on: t.id === 'sigOn'}).then(loadSignals); }
     });
 
     // ---------------------------------------------------------- snapshot hook (SSE)
@@ -317,8 +318,6 @@
     function render(st) {
         S.state = st;
         renderStatus(st); renderTarget(st); renderSession(st); renderSide(st); renderBif(st); renderDock(st);
-        var hint = $('liveSrc');
-        if (hint) { var t = 'UDP only · ' + st.rig.main_udp.rate + ' packets/s'; if (hint.textContent !== t) { hint.textContent = t; } }
     }
 
     function renderStatus(st) {
@@ -411,6 +410,7 @@
 
     function renderSession(st) {
         var sv = st.session, part = $('sPart'), mass = $('sMass');
+        checkConfirm(sv);
         if (part && document.activeElement !== part && !S.editing.sPart) { var v = sv.sid || ''; if (part.value !== v) { part.value = v; } }
         if (mass && document.activeElement !== mass && !S.editing.sMass) {
             var w = sv.values.weight; var t = w == null ? '' : String(+w); if (mass.value !== t) { mass.value = t; }
@@ -426,7 +426,8 @@
                 mass.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'sending' ? 'Sending…' : '';
             }
             var mt = '', mc = '';
-            if (mst === 'pending') { mt = /Not set on device/.test(mmsg) ? 'not on device' : /after Start/.test(mmsg) ? 'after Start' :
+            if (mst === 'pending') { mt = /Mass not set/.test(mmsg) ? 'not set' : /Not set on device/.test(mmsg) ? 'not on device' :
+                /after Start/.test(mmsg) ? 'after Start' :
                 /disabled/.test(mmsg) ? 'not sent' : 'when connected'; mc = 'pending'; }
             else if (mst === 'sending') { mt = 'sending…'; mc = 'pending'; }
             else if (mst === 'error') { mt = 'refused'; mc = 'err';
@@ -434,14 +435,17 @@
                     'Target refused: ' + (mmsg || 'not set');
                 if (S.massRefusedShown !== rmsg) { S.massRefusedShown = rmsg; dockMsg(rmsg, true); }
                 mmsg = rmsg; }
-            else if (sv.values.weight != null && rbw != null && Math.abs(+rbw - +sv.values.weight) < 1e-3) { mt = '✓'; mc = 'ok'; }
+            // design rule v17: no check marks, colour only; a confirmed mass is the normal field,
+            // "Confirmed by device" in its tooltip
+            var massOk = sv.values.weight != null && rbw != null && Math.abs(+rbw - +sv.values.weight) < 1e-3 && !mt;
             if (ms.textContent !== mt) { ms.textContent = mt; }
             ms.className = 'tb-state ' + mc; ms.hidden = !mt;
             if (mst !== 'error') { S.massRefusedShown = null; }
-            ms.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'error' ? (mmsg || 'Not set') :
-                mt === '✓' ? 'The target uses this body mass' : '';
+            ms.title = mst === 'pending' ? mmsg.replace(/^pending: /, 'Saved; ') : mst === 'error' ? (mmsg || 'Not set') : '';
+            if (mass && !S.editing.sMass && massOk) { mass.title = 'Confirmed by device (5433 echo)'; }
         }
         var gw = $('sGearWrap'), gear = $('sGear'), isBif = !!(st.model && st.model.bif);
+        var nc = $('advNc'); if (nc && nc.hidden !== isBif) { nc.hidden = isBif; }      // AFO_r1 does not use UDP 5430
         if (gw && gw.hidden === isBif) { gw.hidden = !isBif; setTimeout(topbarHeight, 0); }
         if (gear && isBif && document.activeElement !== gear && !S.editing.sGear) {
             var g = sv.values.bif_mass; var gt = g == null ? '' : String(+g); if (gear.value !== gt) { gear.value = gt; }
@@ -479,14 +483,15 @@
             S.sideRefusedShown = sd.msg; dockMsg(sd.msg, true); if (typeof toast === 'function') { toast(sd.msg, true); }
         } else if (sd.state !== 'refused') { S.sideRefusedShown = null; }
         chip.disabled = motorOn;
-        chip.title = motorOn ? 'Locked while Motor is on' : 'Foot side on the target';
+        // full text in the title: the chip ellipsizes when the top bar is tight
+        chip.title = sd.chip + ' · ' + (motorOn ? 'Locked while Motor is on' : sd.state === 'ok' ? 'Confirmed by device (5433 echo)' : 'Foot side on the target');
         if (!ban) {
             document.querySelectorAll('.side-opt').forEach(function (o) { o.setAttribute('aria-pressed', o.getAttribute('data-side') === sd.app ? 'true' : 'false'); });
             return;
         }
         var sid = esc(st.session.sid || 'this participant'), html = '', cls = '';
         if (sd.state !== 'mismatch' && !onLive) {
-            // Trials / Signals / Teensy: no foot-side banner (the quiet chip stays in the top bar)
+            // Trials / DAQ: no foot-side banner (the quiet chip stays in the top bar)
         } else if (!st.session.sid) {
             cls = 'caution'; html = '<span><b>Set the participant ID</b> in the top bar, then confirm the foot side.</span>';
         } else if (sd.state === 'pending') {
@@ -528,8 +533,8 @@
             var chk2 = st.checklist, bif2 = st.bif, h2 = '';
             if (chk2) {
                 h2 = chk2.items.map(function (i) {
-                    var mark = i.done === true ? '\u2713' : i.done === false ? '\u25CB' : '?';
-                    return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '"><span class="ck" aria-hidden="true">' + mark + '</span>' +
+                    var mark = '';
+                    return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '">' + mark + '' +
                         esc(i.text) + (i.detail ? ' <span class="hint">' + esc(i.detail) + '</span>' : '') + '</li>';
                 }).join('');
             }
@@ -541,8 +546,8 @@
         var html = '', chk = st.checklist, bif = st.bif;
         if (chk && !chk.all_done) {
             html = '<span><b>After Start</b></span><ol class="checklist">' + chk.items.map(function (i) {
-                var mark = i.done === true ? '\u2713' : i.done === false ? '\u25CB' : '?';
-                return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '"><span class="ck" aria-hidden="true">' + mark + '</span>' +
+                var mark = '';
+                return '<li class="' + (i.done === true ? 'done' : i.done === false ? 'todo' : 'unknown') + '">' + mark + '' +
                     esc(i.text) + (i.detail ? ' <span class="hint">' + esc(i.detail) + '</span>' : '') + '</li>';
             }).join('') + '</ol><span class="spacer"></span>' + (bif ? '<span class="bif-txt">' + esc(bif.text) + '</span>' : '');
         } else if (bif && st.target.running && bif.phase !== 'valid' && bif.phase !== 'unknown') {
@@ -672,6 +677,14 @@
             cal.title = 'Walk normally until the 30 s calibration finishes'; }
         else if (cal.classList.contains('busy') && !busyHeld(cal)) { cal.classList.remove('busy'); cal.disabled = false; cal.textContent = 'Calibrate FSR';
             cal.title = '30 s FSR (insole pressure) calibration: walk normally until it finishes'; }
+        var zb = $('bZero');
+        if (zb && !busyHeld(zb)) {
+            var zOff = T.assist.value === 0;
+            zb.classList.remove('busy'); if (zb.textContent !== 'Zero') { zb.textContent = 'Zero'; }
+            zb.setAttribute('aria-disabled', zOff ? 'false' : 'true');
+            zb.title = zOff ? 'Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)' :
+                'Zero: switch Assist off first (hold the ankle still in neutral)';
+        }
         // Calibrate IMU (AFO_r1): enabled only when the loaded app has Gyro_Cal_Request and Assist or Motor is off
         var ib = $('bImuCal'), ic = st.imu_cal || {};
         if (ib && !(busyHeld(ib) && ic.state === 'idle')) {
@@ -692,6 +705,16 @@
     }
 
     // ---------------------------------------------------------- actions
+    // a press of side / mass / mode / K: toast "sending…", fast polling until the device echo
+    // confirms (then "… saved" for 1.5 s) or 3 s pass
+    function expectConfirm(key, label) { S.expect = {key: key, label: label, at: Date.now()}; S.fastUntil = Date.now() + 3000; }
+    function checkConfirm(sv) {
+        var e = S.expect; if (!e) { return; }
+        var st = (sv.status || {})[e.key];
+        if (st === 'confirmed') { S.expect = null; S.fastUntil = 0; toast(e.label + ' saved', false); clearTimeout(S.toastT);
+            S.toastT = setTimeout(function () { var el = $('afoToast'); if (el) { el.hidden = true; } }, 1500); }
+        else if (st === 'error' || Date.now() - e.at > 3000) { S.expect = null; S.fastUntil = 0; }
+    }
     function toast(t, isErr) {
         var el = $('afoToast');
         if (!el) { el = document.createElement('div'); el.id = 'afoToast'; el.className = 'toast'; el.setAttribute('role', 'status');
@@ -705,6 +728,7 @@
         // the chip shows the pick at once (pending) instead of after the next state poll
         var chip = $('sideChip');
         if (chip) { chip.textContent = name + ' · sending…'; chip.className = 'side-chip pending'; }
+        expectConfirm('side', name + ' foot');
         post('/api/console/side', {side: side}).then(function (r) {
             closeSidePop();
             var err = !r.ok || r._status >= 400;
@@ -719,6 +743,8 @@
     }
     function commitField(el, key, url, body) {
         S.editing[key] = true;
+        var ck = (body && (body.key || body.name)) || ({sMass: 'weight', kPct: 'k_percent'})[key] || key;
+        expectConfirm(ck, ck === 'weight' ? 'Body mass' : ck === 'k_percent' ? 'K' : ck === 'mode' ? 'Mode' : ck);
         post(url, body).then(function (r) {
             S.editing[key] = false;
             var ok = r.ok && (r.state === 'sending' || r.state === 'confirmed' || r.state === undefined);
@@ -876,12 +902,23 @@
             busyNow($('bImuCal'), 'Calibrate IMU: sending…', 2500);
             post('/api/console/imucal', {}).then(function (r) { dockMsg(r.ok ? '' : r.msg, !r.ok); if (!r.ok) { $('bImuCal')._busyUntil = 0; } poll(); });
         });
+        $('bZero').addEventListener('click', function () {
+            var b = $('bZero');
+            if (b.getAttribute('aria-disabled') === 'true') { dockMsg(b.title, true); return; }
+            busyNow(b, 'Zeroing…', 600);
+            post('/api/console/pulse', {name: 'zero'}).then(function (r) {
+                if (r.ok) { toast('Zeroed', false); clearTimeout(S.toastT);
+                    S.toastT = setTimeout(function () { var el = $('afoToast'); if (el) { el.hidden = true; } }, 1500); }
+                else { dockMsg(r.msg, true); b._busyUntil = 0; }
+                poll();
+            });
+        });
         $('bResetSV').addEventListener('click', function () {
             var b = $('bResetSV');
             b.textContent = 'Resetting…'; b.classList.add('busy');
             post('/api/console/pulse', {name: 'reset'}).then(function (r) {
                 b.classList.remove('busy');
-                if (r.ok) { b.textContent = 'Reset ✓'; setTimeout(function () { b.textContent = 'Reset SV'; }, 1500); }
+                if (r.ok) { b.textContent = 'Reset sent'; setTimeout(function () { b.textContent = 'Reset SV'; }, 1500); }
                 else { b.textContent = 'Reset SV'; dockMsg(r.msg, true); }
                 poll();
             });
@@ -990,73 +1027,6 @@
         });
     }
 
-    // ---------------------------------------------------------- Signals
-    var FAV = ['Uc', 'assistance', 'assistance_level', 'SV_target', 'median_SV', 'Total Desired torque', 'Actual Torque'];
-    // AFO_r1 group (logged in AFO_r1.slx: Bi-LSTM Estimator 1-5, Drive Enable Logic 2-3, IMU Check 2-3)
-    var R1_GROUP = ['estimated_ankle_moment', 'bif_valid', 'bif_stance', 'bif_bias_ready', 'bif_dbg(1)', 'bif_dbg(8)',
-                    'drive_enabled', 'drive_state', 'imu_ok', 'imu_bad_count'];
-    var R1_FAV = ['estimated_ankle_moment', 'bif_valid'];
-    function isR1() { return !!(S.state && S.state.model && S.state.model.bif); }
-    function loadSignals() {
-        getJSON('/api/signals/status').then(function (st) { S.sig = st; renderSignals(); }).catch(function () {});
-    }
-    function renderSignals() {
-        var st = S.sig || {}, ul = $('sigul'); if (!ul) { return; }
-        var names = (st.channels || []).map(function (c) { return c.name; });
-        if (S.sigChecked === null && names.length) {
-            S.sigChecked = (isR1() ? R1_FAV : FAV).filter(function (n) { return names.indexOf(n) >= 0; }).slice(0, 2);
-            if (!S.sigChecked.length) { S.sigChecked = names.slice(0, 2); }
-            setProps('sig-pick', {data: S.sigChecked});
-        }
-        var q = (($('sigq') || {}).value || '').toLowerCase();
-        var r1 = isR1(), grp = r1 ? R1_GROUP.filter(function (n) { return names.indexOf(n) >= 0; }) : [];
-        var key = names.join('|') + '#' + q + '#' + (S.sigChecked || []).join('|') + '#' + r1;
-        if (ul.getAttribute('data-key') !== key) {
-            ul.setAttribute('data-key', key);
-            var li = function (n) {
-                return '<li><label><input type="checkbox" data-n="' + esc(n) + '"' + ((S.sigChecked || []).indexOf(n) >= 0 ? ' checked' : '') +
-                    '><span class="mono">' + esc(n) + '</span></label></li>';
-            };
-            var hit = function (n) { return !q || n.toLowerCase().indexOf(q) >= 0; };
-            var gh = grp.filter(hit), rest = names.filter(function (n) { return grp.indexOf(n) < 0 && hit(n); });
-            ul.innerHTML = (gh.length ? '<li class="sig-group">AFO_r1 · Bi-LSTM, drive, IMU</li>' + gh.map(li).join('') +
-                (rest.length ? '<li class="sig-group">All signals</li>' : '') : '') + rest.map(li).join('') ||
-                '<li class="hint" style="padding:8px 12px">' + (st.on ? 'No signals yet' : 'Stream is off') + '</li>';
-            ul.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
-                cb.addEventListener('change', function () {
-                    var n = cb.getAttribute('data-n'), arr = (S.sigChecked || []).filter(function (x) { return x !== n; });
-                    if (cb.checked) { arr.push(n); }
-                    S.sigChecked = arr.slice(0, 6); setProps('sig-pick', {data: S.sigChecked}); renderSignals();
-                });
-            });
-        }
-        var qi = $('sigq'); if (qi) { qi.placeholder = 'Search ' + names.length + ' signals'; }
-        var hint = $('sigHint');
-        if (hint) {
-            var t = 'MATLAB stream, about 100 Hz · ' + (S.sigChecked || []).length + ' of ' + names.length + ' shown';
-            if (!st.stream_wanted) { t = 'MATLAB stream is off' + (st.local ? '' : ' (start it on the OMEN)'); }
-            else if (st.state && st.state !== 'streaming') { t = 'MATLAB stream: ' + st.state + (st.err ? ' · ' + st.err.slice(0, 80) : ''); }
-            hint.textContent = t;
-        }
-        if ($('sigOn')) { $('sigOn').hidden = !st.local || !!st.stream_wanted; $('sigOff').hidden = !st.local || !st.stream_wanted; }
-        var ban = $('sigBanner');
-        if (ban) {
-            var show = !!st.offer_recover;
-            if (show && !ban.getAttribute('data-wired')) {
-                ban.setAttribute('data-wired', '1');
-                ban.innerHTML = '<span>Signals stream lost <span class="sub">Live UDP plots are unaffected. Auto-reconnect failed 3 times.</span></span><span class="spacer"></span>' +
-                    '<button class="btn sm" id="sigReconnect" title="Removes the MATLAB instruments, disconnects, waits 3 s, reconnects and restarts recording. Never stops the app or changes parameters; the motor and Live plots keep running. The file log splits into two files here; Export joins them.">Reconnect Signals</button>';
-                confirmable($('sigReconnect'), function () { return 'Reconnect Signals'; }, 'Splits the file log here. Reconnect?', function () {
-                    post('/api/signals/reconnect').then(function (r) { ban.querySelector('.sub').textContent = r.msg || ''; });
-                });
-                if (!st.local) { $('sigReconnect').disabled = true; $('sigReconnect').title = 'Reconnect from the OMEN'; }
-            }
-            ban.hidden = !show;
-            if (!show) { ban.removeAttribute('data-wired'); }
-        }
-    }
-    document.addEventListener('input', function (e) { if (e.target && e.target.id === 'sigq') { renderSignals(); } });
-
     // ---------------------------------------------------------- polling + boot
     function poll() {
         return getJSON('/api/console/state').then(render).catch(function () {
@@ -1076,8 +1046,9 @@
         if (location.pathname === '/' ) { history.replaceState({}, '', '/live'); window.dispatchEvent(new PopStateEvent('popstate')); }
         topbarHeight(); window.addEventListener('resize', topbarHeight);
         poll(); setInterval(poll, POLL_MS);
+        // while a value is being sent, poll every 100 ms so its confirmation shows at once
+        setInterval(function () { if (S.fastUntil && Date.now() < S.fastUntil) { poll(); } }, 100);
         setInterval(function () { if (S.page === 'trials' && !S.exportBusy) { loadRuns(); } }, 3000);
-        setInterval(function () { if (S.page === 'signals') { loadSignals(); } }, 1000);
     }
     if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', boot); } else { boot(); }
     window._afoConsole = S;

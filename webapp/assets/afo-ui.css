@@ -616,3 +616,26 @@ ul.pop-checklist li.done { color: var(--text-2); }
 .u-tip b { font-family: var(--font-num); font-weight: 500; }
 /* Sensors: FSR and linear acceleration, full width, splitting the height */
 .sensor-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(200px, 1fr); overflow-y: hidden; }
+/* design v17: no check marks; done items neutral, open items amber, unknown grey */
+ul.pop-checklist li.todo { color: var(--caution); font-weight: 600; }
+ul.pop-checklist li.unknown { color: var(--text-3); }
+/* Andy 14:34: label fonts one step larger; all live plots the same size (equal heads, so the
+   stacked plot areas are equal; the same y gutter is set in live_uplot.js) */
+#page-live .card-head .legend, #page-live .card-unit { font-size: 13px; }
+.lg { font-size: 13px; }
+.u-tip { font-size: 13px; }
+.u-tip .u-tip-t { font-size: 12px; }
+#page-live .plot-card .card-head { height: 40px; min-height: 40px; flex-wrap: nowrap; overflow: hidden; }
+.sensor-grid .card-head { flex-wrap: nowrap; height: 40px; min-height: 40px; overflow: hidden; }
+.legend.lg-vals { flex-wrap: nowrap; overflow: hidden; }
+.plot-card.holding .card-head::after { content: none; }
+/* Top bar never overflows (1024..2560 px, longest side chip + longest status): the side chip
+   ellipsizes (full text in its title), the status button never shrinks, and the Model time
+   readout is the first thing to give way (it shrinks to nothing before anything else). */
+.topbar .side-chip { display: inline-block; max-width: 220px; min-width: 0; flex: 0 1 auto; overflow: hidden;
+                     white-space: nowrap; text-overflow: ellipsis; line-height: 28px; }
+.topbar .status-btn { flex: none; }
+.topbar .meta { min-width: 0; flex: 0 1 auto; }
+.topbar .meta > span:first-child { flex: 0 100 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+.topbar .session-bar { min-width: 0; }
+@media (max-width: 1600px) { .topbar .meta .mt-label { display: none; } }

@@ -137,9 +137,9 @@ def main():
                 fail.append(f"checklist_{w}")
             if "CONFIRM" not in p["chip"].upper():
                 fail.append(f"chip_{w}")
-            c.call("Page.navigate", url=BASE + "/signals")
+            c.call("Page.navigate", url=BASE + "/daq")
             c.pump(3)
-            res[f"shot_signals_{w}x{h}"] = shot(c, f"{w}x{h}_r1_signals")
+            res[f"shot_daq_{w}x{h}"] = shot(c, f"{w}x{h}_r1_daq")
             b.close()
         res["udp_out_ctl"], res["udp_out_param"] = len(ctl.pkts), len(prm.pkts)
         if ctl.pkts or prm.pkts:

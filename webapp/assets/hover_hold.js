@@ -5,9 +5,8 @@
 // shows the label and holds; a tap outside releases. Safety: 20 s without
 // pointer movement releases too. Each graph <id> has a dcc.Store "hold-<id>".
 (function () {
-    // Signals plots only: the live plots (uPlot) hold themselves in live_uplot.js and are
-    // released 2 s after the pointer last moved
-    var HELD = ['sig-g0', 'sig-g1', 'sig-g2', 'sig-g3', 'sig-g4', 'sig-g5'];
+    // Andy 14:34: "no need for hold in any of the pages" -> no plot is held anywhere
+    var HELD = [];
     var MAX_HOLD_MS = 20000;
     window._afoHold = window._afoHold || {};
     var timers = {};

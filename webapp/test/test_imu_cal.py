@@ -3,7 +3,7 @@
 Checks: the button is disabled with "needs the next r1 build" when the loaded app has
 no Gyro_Cal_Request block; with the block it reads the value and writes value + 1
 (readback checked); blocked while Assist AND Motor are on; "Hold still N s…" then
-"IMU ready" when bif_bias_ready is 1 again, or "IMU ready (assumed)" without Signals;
+"IMU ready" when bif_bias_ready (console echo) is 1 again, or "IMU ready (assumed)" without it;
 AFO (GPR) profile: hidden.
 
     python test/test_imu_cal.py
@@ -129,18 +129,18 @@ def main():
     ic = ctx.imu_cal
     ic.probe(force=True)
     check("Motor off: enabled", ic.view()["enabled"], ic.view())
-    ctx.matlab.stream = {"bif_bias_ready": 1.0, "bif_valid": 0.0}   # a bias signal exists at the press
+    ctx.training = Sup({"packets_ok": 100, "age_s": 0.05}, {"bif_bias_ready": 1.0, "bif_valid": 0.0})   # a bias signal exists at the press
     r = ic.press()
     check("press: ok", r["ok"], r)
     check("press: setparam value + 1", ctx.matlab.sets == [(path, 4.0)], ctx.matlab.sets)
     v = ic.view()
     check("after press: Hold still N s…", v["state"] == "busy" and v["text"].startswith("Hold still"), v)
     check("after press: button disabled while holding", not v["enabled"], v)
-    ctx.matlab.stream = {"bif_bias_ready": 0.0, "bif_valid": 0.0}
+    ctx.training = Sup({"packets_ok": 100, "age_s": 0.05}, {"bif_bias_ready": 0.0, "bif_valid": 0.0})
     time.sleep(0.7)
     v = ic.view()
     check("bias not ready yet: waiting", v["text"] == "Hold still… waiting for IMU ready", v)
-    ctx.matlab.stream = {"bif_bias_ready": 1.0, "bif_valid": 0.0}
+    ctx.training = Sup({"packets_ok": 100, "age_s": 0.05}, {"bif_bias_ready": 1.0, "bif_valid": 0.0})
     v = ic.view()
     check("bias ready: IMU ready", v["text"] == "IMU ready" and v["state"] == "done", v)
     check("enabled again after", ic.view()["enabled"], ic.view())
@@ -167,7 +167,7 @@ def main():
     ic.press()
     t_conf = ic.pressed_at
     check("hold length fixed at confirmation (no bias signal)", ic.hold_len == 0.9, ic.hold_len)
-    ctx.matlab.stream = {"bif_bias_ready": 1.0}        # a signal appearing later must not shorten it
+    ctx.training = Sup({"packets_ok": 100, "age_s": 0.05}, {"bif_bias_ready": 1.0})        # a signal appearing later must not shorten it
     time.sleep(max(0.0, t_conf + 0.75 - time.time()))
     check("still holding at 0.75 s", ic.view()["text"].startswith("Hold still"), ic.view())
     time.sleep(max(0.0, t_conf + 0.95 - time.time()))
@@ -178,7 +178,7 @@ def main():
     ic = ctx.imu_cal
     ic.probe(force=True)
     ic.press()
-    ctx.matlab.stream = {"bif_bias_ready": 0.0}
+    ctx.training = Sup({"packets_ok": 100, "age_s": 0.05}, {"bif_bias_ready": 0.0})
     time.sleep(1.8)
     v = ic.view()
     check("bias stays 0: IMU not ready", v["state"] == "error" and "not ready" in v["text"], v)

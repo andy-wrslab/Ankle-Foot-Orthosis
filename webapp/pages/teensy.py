@@ -1,4 +1,4 @@
-"""Teensy page (OMEN only): firmware source, build, guarded flash, code, changes, serial monitor.
+"""DAQ page (was "Teensy", Andy 14:36; route /daq, OMEN only): firmware source, build, guarded flash, code, changes, serial monitor.
 
 One firmware source drives every tab: pick a branch and the page uses that branch's
 newest commit (GitHub is fetched when the page opens and on "Fetch latest") for the
@@ -48,7 +48,7 @@ def layout() -> html.Div:
     opts = _source_options(s) if s else []
     val = s["newest"] if s else None
     if not is_local():
-        return html.Div(className="narrow", children=[html.H1("Teensy", className="page-title"), locked_notice("Teensy")])
+        return html.Div(className="narrow", children=[html.H1("DAQ", className="page-title"), locked_notice("DAQ")])
     return html.Div(className="narrow teensy", children=[
         dcc.Interval(id="ty-poll", interval=1000, n_intervals=0),
         dcc.Interval(id="ty-slow", interval=5000, n_intervals=0),
@@ -56,7 +56,7 @@ def layout() -> html.Div:
         dcc.Store(id="ty-flash-arm", data=None),
         dcc.Store(id="ty-serial-paused", data=False),
         html.Div(className="toolbar", children=[
-            html.H1("Teensy", className="page-title"),
+            html.H1("DAQ", className="page-title"),
             html.Span("Debugging only. The Teensy USB is unplugged during collection; that is normal.",
                       className="hint"),
         ]),
@@ -258,7 +258,7 @@ def register(app, ctx) -> None:
                   State("ty-source", "value"))
     @local_only
     def source_list(path, _n, fetched, current):
-        if path != "/teensy":
+        if path != "/daq":
             return no_update, no_update
         trig = dctx.triggered_id
         if trig == "ty-fetched" and not str(fetched or "").startswith("Fetched"):
@@ -281,7 +281,7 @@ def register(app, ctx) -> None:
                   State("ty-fetched", "children"))
     @local_only
     def fetch_ui(_n, _i, path, shown):
-        if path != "/teensy":
+        if path != "/daq":
             return no_update, no_update, no_update, no_update
         if dctx.triggered_id == "ty-fetch-btn":
             tt.fetch_in_background(cfg, min_age_s=0)
@@ -299,7 +299,7 @@ def register(app, ctx) -> None:
     @local_only
     def source_details(source, _n, path, cur_file):
         trig = dctx.triggered_id
-        if path != "/teensy" and trig == "ty-slow":
+        if path != "/daq" and trig == "ty-slow":
             return [no_update] * 7          # other pages: no git reads every 5 s
         if not source:
             return ["–"] * 3 + [[], None, "", ""]
@@ -424,7 +424,7 @@ def register(app, ctx) -> None:
                   State("ty-dry", "value"), State("ty-flash-arm", "data"), State("ty-serial-port", "value"))
     @local_only
     def refresh(_n, path, source, dry, armed, port_val):
-        if path != "/teensy":
+        if path != "/daq":
             return [no_update] * 21
         sc = tt.scanner(cfg)
         sc.touch()
@@ -493,7 +493,7 @@ def register(app, ctx) -> None:
                   Input("ty-rescan", "n_clicks"), Input("ty-poll", "n_intervals"), State("url", "pathname"))
     @local_only
     def scan_ui(_n, _i, path):
-        if path != "/teensy":
+        if path != "/daq":
             return no_update, no_update, no_update
         sc = tt.scanner(cfg)
         if dctx.triggered_id == "ty-rescan":
@@ -529,7 +529,7 @@ def register(app, ctx) -> None:
                   State("ty-tab", "data"))
     @local_only
     def serial_view(_n, filt, paused, path, tab):
-        if path != "/teensy" or paused or tab != "serial":
+        if path != "/daq" or paused or tab != "serial":
             return no_update
         txt = serial.text(filt or "")
         if not txt and not serial.running():

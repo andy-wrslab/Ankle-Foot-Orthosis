@@ -85,7 +85,7 @@ def main():
             except Exception:
                 time.sleep(0.5)
         time.sleep(3)
-        for i, path in enumerate(["/live", "/live", "/trials", "/signals"]):
+        for i, path in enumerate(["/live", "/live", "/trials", "/daq"]):
             b = Browser(19341 + i, 1280, 800)
             b.c.call("Page.addScriptToEvaluateOnNewDocument", source=DRAW_HOOK)
             b.c.call("Page.navigate", url=BASE + path)

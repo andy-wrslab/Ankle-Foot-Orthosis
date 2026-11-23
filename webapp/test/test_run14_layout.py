@@ -220,6 +220,7 @@ def make_session(dev, calls):
     ctx.session = s
     s.set_sid("S1")
     s.values.update(side=0, weight=83.0, mode=3, k_percent=5.0)
+    s.src.update(side="entered", weight="entered", bif_mass="entered", mode="entered", k_percent="entered")
     s.side_confirmed = {"sid": "S1", "side": 0, "at": time.time()}
     s.adopted_echo = True
 
@@ -291,10 +292,94 @@ def page_start():
     ctx.settings_link.stop()
 
 
+def fresh_session(dev, calls):
+    """A page / server restart: no S-ID values, nothing entered, nothing adopted yet."""
+    ctx, s = make_session(dev, calls)
+    s.values.clear(); s.src.clear(); s.entered.clear(); s.side_confirmed = None; s.adopted_echo = False
+    return ctx, s
+
+
+def mass_defaults():
+    """14:26 live: run 13's built weight 55 (15-float col 2) was adopted as the mass and sent to
+    run 14 after the page Start; the user's 83 was lost."""
+    import session as S
+    # (1) 15 floats: col 2 weight is never adopted as a mass
+    dev, calls = Dev(15), []
+    dev.v.update(side=-1.0, weight_kg=55.0, assist_mode=1.0, fixed_k_pct=2.0)      # run 13 in use: mode 1, K 2
+    ctx, s = fresh_session(dev, calls)
+    dev.on = True
+    s.adopt_echo()
+    check("15 floats: weight_kg 55 NOT adopted as the mass", s.values.get("weight") is None and "weight" not in s.src,
+          (s.values, s.src))
+    check("15 floats: mode / K shown but marked adopted15 (never sent)", s.src.get("mode") == "adopted15", s.src)
+    ctx.settings_link.stop()
+    # the 14:26 sequence: run 13 adopted, then a page Start onto run 14 (18 floats, reloaded)
+    dev.cols = 18
+    dev.v.update(side=-1.0, weight_kg=0.0, bif_mass_kg=0.0, gyro_cal_request=0.0, settings_seq=0.0,
+                 assist_mode=3.0, fixed_k_pct=5.0)                                  # run 14 reloaded: mode 3, K 5
+    ctx.settings_link = U.SettingsLink({"udp": {"send_host": "127.0.0.1", "session_port": 15434}}, s.echo_for_link,
+                                       on_status=s.link_status, on_adopt=s.link_adopted, sender=dev.recv)
+    s.after_connect_or_start("start")
+    time.sleep(0.8)
+    p = dev.packets[0] if dev.packets else None
+    check("page Start after a run-13 adopt: mass NOT sent (0 = keep), never 55", p is not None and p[4] == 0.0, dev.packets)
+    check("... mode / K: the run-14 device's own values (3, 5), never run-13 memory (1, 2)",
+          p is not None and (p[5], p[6]) == (3.0, 5.0), p)
+    check("... device mass stays unset (not 55)", dev.v["bif_mass_kg"] == 0.0, dev.v)
+    check("... amber 'Mass not set'", (s.status.get("weight") or {}).get("msg") == S.MASS_NOT_SET, s.status.get("weight"))
+    ctx.settings_link.stop()
+    # (3) entered this page session for this S-ID: sent
+    dev, calls = Dev(18), []
+    ctx, s = fresh_session(dev, calls)
+    s.set_sid("S2")
+    s.enter_value("weight", 83.0)
+    s.after_connect_or_start("start")
+    dev.on = True
+    time.sleep(0.8)
+    check("entered 83 this session: sent after Start", dev.v["bif_mass_kg"] == 83.0, dev.packets)
+    ctx.settings_link.stop()
+    # (2) 18 floats: mass only from col 17 (> 0)
+    for col17, want in ((70.0, 70.0), (0.0, None)):
+        dev, calls = Dev(18), []
+        dev.v.update(side=0.0, weight_kg=55.0, bif_mass_kg=col17)
+        ctx, s = fresh_session(dev, calls)
+        dev.on = True
+        time.sleep(0.4)
+        check(f"18 floats, col 17 = {col17:g} (col 2 = 55): adopted mass {want}", s.values.get("weight") == want
+              and (s.src.get("weight") == "adopted18") == (want is not None), (s.values, s.src))
+        ctx.settings_link.stop()
+    # adopted from a valid col 17: resent after a page Start
+    dev, calls = Dev(18), []
+    dev.v.update(side=0.0, bif_mass_kg=70.0, weight_kg=70.0)
+    ctx, s = fresh_session(dev, calls)
+    dev.on = True
+    time.sleep(0.4)
+    dev.v.update(side=-1.0, bif_mass_kg=0.0, weight_kg=0.0)        # the Start reloads the device
+    s.after_connect_or_start("start")
+    time.sleep(0.8)
+    check("adopted from col 17 (70): resent after Start", dev.v["bif_mass_kg"] == 70.0, dev.packets)
+    ctx.settings_link.stop()
+    # 15-float page Start without an entered mass: setparam of the side only, never a default mass
+    dev, calls = Dev(15), []
+    dev.v.update(weight_kg=55.0)
+    ctx, s = fresh_session(dev, calls)
+    s.set_sid("S3"); s.confirm_side("LEFT", "S3"); calls.clear()
+    s.after_connect_or_start("start")
+    dev.on = True
+    time.sleep(0.8)
+    sets = [c[1] for c in calls if c[0] == "job"]
+    check("15 floats, mass never entered: no 'set weight' (no default)", "set weight" not in sets and "set side" in sets, sets)
+    ctx.settings_link.stop()
+    js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
+    check("design v17: no check marks; 'Confirmed by device' in the tooltips", "✓" not in js
+          and "mass.title = 'Confirmed by device (5433 echo)'" in js and "'Confirmed by device (5433 echo)' : 'Foot side on the target'" in js)
+
+
 def main():
     settings_packet()
     console_parse()
     page_start()
+    mass_defaults()
     load_endpoint()
     print("\nFAILS:", FAILS)
     sys.exit(1 if FAILS else 0)

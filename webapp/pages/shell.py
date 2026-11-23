@@ -2,8 +2,8 @@
 browser by assets/afo_console.js (from the mock markup) and driven by
 /api/console/state; Dash renders the page frames and the Plotly graphs.
 
-Pages: Live (Gait | Sensors | Training sub-pages, start page), Trials, Signals,
-Teensy. All pages are in the layout at once; the script shows one (hidden
+Pages: Live (Gait | Sensors | Training sub-pages, start page), Trials, DAQ (was Teensy;
+the Signals page was removed Nov 23). All pages are in the layout at once; the script shows one (hidden
 attribute) and keeps dcc.Location in sync so server callbacks know the page.
 Home and Run control are gone (merged into the top bar and the status popover).
 """
@@ -18,10 +18,10 @@ from dash import dcc, html
 from flask import Response, jsonify, request
 
 from state import snapshots, MAX_CLIENTS
-from pages import live, trials, teensy, signals, console_api
+from pages import live, trials, teensy, console_api
 from pages.common import is_local
 
-NAV = [("live", "Live"), ("trials", "Trials"), ("signals", "Signals"), ("teensy", "Teensy")]
+NAV = [("live", "Live"), ("trials", "Trials"), ("daq", "DAQ")]      # Andy 14:36: Signals removed, Teensy -> DAQ
 _SSE_IDLE_TIMEOUT = 0.5
 _clients = {"n": 0}
 _clients_lock = threading.Lock()
@@ -56,6 +56,19 @@ def load_request(ctx, body):
     return 200, {"ok": True, "file": path}
 
 
+def register_legacy_routes(server) -> None:
+    """Removed / renamed pages: /signals -> /live (Signals page removed), /teensy -> /daq."""
+    from flask import redirect
+
+    @server.route("/signals")
+    def legacy_signals():  # type: ignore
+        return redirect("/live", code=302)
+
+    @server.route("/teensy")
+    def legacy_teensy():  # type: ignore
+        return redirect("/daq", code=302)
+
+
 def serve_layout(ctx):
     def layout():
         local = is_local()
@@ -69,9 +82,7 @@ def serve_layout(ctx):
             html.Main(className="page live", id="page-live", **{"data-page": "live"}, children=live.layout(ctx)),
             html.Main(className="page", id="page-trials", hidden=True, **{"data-page": "trials"},
                       children=html.Div(className="narrow", id="trials-root")),            # JS
-            html.Main(className="page signals", id="page-signals", hidden=True, **{"data-page": "signals"},
-                      children=signals.layout()),
-            html.Main(className="page", id="page-teensy", hidden=True, **{"data-page": "teensy"},
+            html.Main(className="page", id="page-daq", hidden=True, **{"data-page": "daq"},
                       children=html.Div(className="narrow", children=teensy.layout())),
             html.Footer(className="dock", id="dock"),                                       # JS
         ])
@@ -88,7 +99,7 @@ def build_app(ctx) -> dash.Dash:
     app.title = "AFO"
     app.layout = serve_layout(ctx)
 
-    for page in (live, signals, teensy):
+    for page in (live, teensy):
         page.register(app, ctx)
 
     server = app.server
@@ -282,35 +293,7 @@ def build_app(ctx) -> dash.Dash:
         job = ctx.runctl.run_action(action, *args)
         return jsonify({"ok": True, "job": job.id})
 
-    @server.route("/api/signals/stream", methods=["POST"])
-    def api_sig_stream():  # type: ignore
-        if not is_local():
-            return jsonify({"ok": False, "err": "OMEN only"}), 403
-        on = bool((request.get_json(silent=True) or {}).get("on"))
-        job = ctx.jobs.start("signals", f"signals {'on' if on else 'off'}", lambda j: j.add(ctx.matlab.set_stream(on)))
-        return jsonify({"ok": True, "job": job.id})
-
-    @server.route("/api/signals/reconnect", methods=["POST"])
-    def api_sig_reconnect():  # type: ignore
-        if not is_local():
-            return jsonify({"ok": False, "err": "OMEN only"}), 403
-        from pages.signals import start_recover
-        msg = start_recover(ctx)
-        ok = msg.startswith("Reconnect Signals started")
-        return jsonify({"ok": ok, "msg": msg}), (200 if ok else 409)
-
-    @server.route("/api/signals/status")
-    def api_sig_status():  # type: ignore
-        st = ctx.matlab.snapshot("status", timeout=1.0) or {}
-        st["stream_wanted"] = bool(ctx.matlab.stream_wanted)
-        st["worker"] = (ctx.matlab.get_status() or {}).get("state")
-        st["local"] = is_local()
-        return jsonify(st)
-
-    @server.route("/api/signals/data")
-    def api_sig_data():  # type: ignore
-        names = [n for n in (request.args.get("names") or "").split(",") if n]
-        win = float(request.args.get("window", 10))
-        return jsonify(ctx.matlab.snapshot("data", names, win, timeout=1.0))
+    # Signals page removed (Andy 14:36): /signals and the old /teensy land on the pages that remain
+    register_legacy_routes(server)
 
     return app

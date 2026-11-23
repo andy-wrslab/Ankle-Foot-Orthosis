@@ -97,7 +97,7 @@ def live_spec() -> dict:
     for p in TRAINING_PLOTS:
         dec = int(p["fmt"].strip(".f") or 2)
         plots[p["id"]] = {"group": "training", "y": pad_range(*p["y"]), "series": [
-            ser(n, ("tr", col), "meas", dec=dec) for n, col in zip(p["names"], p["columns"])]}
+            ser(n, (col, None), "meas", dec=dec) for n, col in zip(p["names"], p["columns"])]}
     return {"window_default": N_WINDOW_SEC, "style": {"text": TEXT_3, "grid": GRID, "zero": ZERO}, "plots": plots}
 
 
@@ -105,10 +105,11 @@ def _value_legend(c):
     """Legend chips with the current value; a click hides / shows that trace."""
     chips = []
     for k, n in enumerate(c["names"]):
-        chips.append(html.Button(className="lg", type="button", title=f"Show / hide {n}",
+        short = n.split(" (")[0]                      # "Hallux (FSR1)" -> "Hallux"; full name in the tooltip
+        chips.append(html.Button(className="lg", type="button", title=f"{n}: show / hide",
                                  **{"data-g": c["id"], "data-k": str(k), "aria-pressed": "true"}, children=[
                                      html.I(style={"color": c["colors"][k % len(c["colors"])]}),
-                                     html.Span(n, className="lg-n"),
+                                     html.Span(short, className="lg-n"),
                                      html.B("–", className="lg-v mono")]))
     return html.Span(className="legend lg-vals", children=chips)
 
@@ -142,12 +143,12 @@ def layout(ctx=None) -> html.Div:
                 html.Button("Training", id="pgTraining", **{"aria-pressed": "false"}),
             ]),
             html.Span(className="tb-right", children=[
-                html.Span("UDP only", className="hint", id="liveSrc"),
                 html.Div(className="seg", role="group", id="liveWin", **{"aria-label": "Time window"}, children=[
                     html.Button("2 s", id="w2", **{"aria-pressed": "false"}),
                     html.Button("10 s", id="w10", **{"aria-pressed": "true"}),
                 ]),
-                html.Div(className="seg", role="group", id="trWin", hidden=True, **{"aria-label": "Time window"},
+                html.Div(className="seg", role="group", id="trWin", hidden=True, style={"display": "none"},
+                         **{"aria-label": "Time window"},
                          children=[html.Button("30 s", **{"data-w": "30", "aria-pressed": "false"}),
                                    html.Button("2 min", **{"data-w": "120", "aria-pressed": "true"}),
                                    html.Button("5 min", **{"data-w": "300", "aria-pressed": "false"})]),

@@ -13,15 +13,18 @@
 // * Gait: Torque, Stride velocity. Sensors: FSR (8 named) and Linear acceleration. Training:
 //   Assistance, Uc from /api/live/training (1 Hz, min/max binned, up to 5 min).
 // * Hidden browser tabs, other pages and other sub-tabs: nothing drawn.
-// * Hold: pointer on a plot freezes that plot so the value label can be read, released 2 s
-//   after the pointer last moved (or when it leaves). The card shows "Held" meanwhile.
+// * No hold (Andy 14:34: "no need for hold in any of the pages"): plots always follow the
+//   shared clock; hovering only shows the cursor readout (time + every trace's value).
+// * Every plot has the same y-axis gutter and right padding, so the time ticks of stacked
+//   plots line up vertically.
 // * Test hook: window._afoPlots.state() (ranges, last x, sizes, fps).
 (function () {
     'use strict';
     var E = window._afoPlots = window._afoPlots || {};
     E.plots = {};          // id -> {u, host, spec, ...}
     E.frames = 0; E.drawn = 0; E.fpsLog = [];
-    var LAG = 0.08, HOLD_MS = 2000;
+    var LAG = 0.08, Y_GUTTER = 52, X_AXIS_H = 30;
+    var HOLD = {on: false};                             // kept for the state() hook: always false
     var SERIES_KEYS = ['ankle', 'torque', 'demand_torque', 'gait', 'sv_target', 'uc', 'assistance_level', 'ankle_vel', 'heel_strike'];
 
     function spec() {
@@ -111,7 +114,7 @@
     }
 
     // ------------------------------------------------------------ uPlot instances
-    function cssFont() { return '11px Inter, "Segoe UI", system-ui, sans-serif'; }
+    function cssFont() { return '13px Inter, "Segoe UI", system-ui, sans-serif'; }      // Andy 14:34: one step larger
     function fmtTick(v, step) { var d = step < 1 ? 1 : 0; return v.toFixed(d) + ' s'; }
 
     function zeroLinePlugin(color) {
@@ -162,9 +165,9 @@
             axes: [
                 {stroke: st.text, font: cssFont(), grid: {show: false}, ticks: {stroke: st.grid, width: 1, size: 4},
                  border: {show: true, stroke: st.grid, width: 1},
-                 incrs: [0.5, 1, 2, 5, 10, 15, 20, 30, 60], space: 56, size: 26,
+                 incrs: [0.5, 1, 2, 5, 10, 15, 20, 30, 60], space: 64, size: X_AXIS_H,
                  values: function (u, vals, ax, sp, incr) { return vals.map(function (v) { return fmtTick(v, incr); }); }},
-                {stroke: st.text, font: cssFont(), grid: {stroke: st.grid, width: 1}, ticks: {show: false}, size: 44, space: 32}
+                {stroke: st.text, font: cssFont(), grid: {stroke: st.grid, width: 1}, ticks: {show: false}, size: Y_GUTTER, space: 32}
             ],
             series: [{}].concat(ps.series.map(function (s) {
                 return {label: s.label, stroke: s.color, width: s.width, dash: s.dash || undefined,
@@ -174,7 +177,7 @@
         };
         var data = [[]].concat(ps.series.map(function () { return []; }));
         var u = new window.uPlot(opts, data, host);
-        var P = {id: id, u: u, host: host, spec: ps, ver: -1, gen: -1, w: w, h: h, held: 0, lastMove: 0, shown: {}};
+        var P = {id: id, u: u, host: host, spec: ps, ver: -1, gen: -1, w: w, h: h, shown: {}, gutter: Y_GUTTER, padding: opts.padding};
         if (window.ResizeObserver) {
             P.ro = new ResizeObserver(function () {
                 var W = host.clientWidth, H = host.clientHeight;
@@ -182,10 +185,6 @@
             });
             P.ro.observe(host);
         }
-        host.addEventListener('mouseenter', function () { P.held = performance.now(); P.lastMove = P.held; card(P, true); });
-        host.addEventListener('mousemove', function () { P.lastMove = performance.now(); if (!P.held) { P.held = P.lastMove; card(P, true); } });
-        host.addEventListener('mouseleave', function () { P.held = 0; card(P, false); });
-        host.addEventListener('touchstart', function () { P.held = performance.now(); P.lastMove = P.held; card(P, true); }, {passive: true});
         return P;
     }
     function destroy(P) {
@@ -194,11 +193,7 @@
         E.destroyed = (E.destroyed || 0) + 1;
     }
     function card(P, on) { var c = P.host.closest('.plot-card'); if (c) { c.classList.toggle('holding', on); } }
-    function isHeld(P, now) {
-        if (!P.held) { return false; }
-        if (now - P.lastMove > HOLD_MS) { P.held = 0; card(P, false); return false; }   // 2 s without movement: release
-        return true;
-    }
+
 
     function srcArray(src) {
         var a = src[0], k = src[1];
@@ -242,7 +237,7 @@
     function drawTraining(P, now) {
         var d = TR.data, u = P.u, ps = P.spec;
         var win = window._afoTrWin || 120;
-        var tl = (E.clock != null) ? E.clock : (d && typeof d.t_latest === 'number' ? d.t_latest : null);
+        var tl = (E.shown != null) ? E.shown : (d && typeof d.t_latest === 'number' ? d.t_latest : null);
         if (tl == null) { return; }
         var r = trainingRange(tl, win);
         if (d && d.t_latest != null && TR.ver !== P.ver) {
@@ -277,9 +272,10 @@
         if (window._afoPage && window._afoPage !== 'live') { lastFrame = now; return; }
         var S = spec(); if (!S) { lastFrame = now; return; }
         var sub = window._afoLiveSub || 'gait';
-        var t = tick(now);
+        var live = tick(now);
         lastFrame = now;
-        if (sub === 'training') { trainingPoll(now); }
+        var t = live;                                   // ONE clock for every plot of the tab, always
+        E.shown = t;
         var win = window._afoWinSec || S.window_default;
         var drew = 0;
         visibleIds(sub).forEach(function (id) {
@@ -296,10 +292,9 @@
                 var show = !hid[k];
                 if (P.shown[k] !== show) { P.shown[k] = show; P.u.setSeries(k + 1, {show: show}); }
             });
-            if (isHeld(P, now)) { return; }
             try {
-                if (S.plots[id].group === 'training') { drawTraining(P, now); }
-                else if (t != null) { drawLive(P, Math.max(0, t - win), Math.max(win, t), now); }   // never negative
+                // every group (Gait, Sensors, Training: Andy 14:34, same 2 s / 10 s range, 100 Hz)
+                if (t != null) { drawLive(P, Math.max(0, t - win), Math.max(win, t), now); }   // never negative
                 drew++;
             } catch (e) { console.error('[AFO] ' + id + ' draw failed', e); }
         });
@@ -310,17 +305,17 @@
 
     // ------------------------------------------------------------ test / debug hook
     E.state = function () {
-        var out = {clock: E.clock, frames: E.frames, drawn: E.drawn, t_latest: B && B.t.length ? B.t[B.t.length - 1] : null,
+        var out = {clock: E.clock, shown: E.shown, held: HOLD.on, frames: E.frames, drawn: E.drawn, t_latest: B && B.t.length ? B.t[B.t.length - 1] : null,
                    buffer_len: B ? B.t.length : 0, created: Object.keys(E.plots).length, destroyed: E.destroyed || 0, plots: {}};
         Object.keys(E.plots).forEach(function (id) {
             var P = E.plots[id]; if (!P) { return; }
-            out.plots[id] = {xmin: P.xmin, xmax: P.xmax, lastX: P.lastX, w: P.w, h: P.h,
-                             visible: P.host.offsetParent !== null, held: !!P.held,
+            out.plots[id] = {xmin: P.xmin, xmax: P.xmax, lastX: P.lastX, w: P.w, h: P.h, gutter: P.gutter,
+                             visible: P.host.offsetParent !== null, held: HOLD.on,
                              shown: P.u.series.slice(1).map(function (s) { return s.show; })};
         });
         return out;
     };
-    E.release = function () { Object.keys(E.plots).forEach(function (id) { var P = E.plots[id]; if (P && P.held) { P.held = 0; card(P, false); } }); };
+    E.release = function () { /* no hold any more */ };
     // kept names used by afo_console.js
     window._afoRequestRender = function () { /* every frame draws anyway */ };
 })();

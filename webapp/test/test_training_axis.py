@@ -1,4 +1,4 @@
-"""Training x axis never below 0 (round-2 screenshot: -60…40 s at model time 50 s, 2 min).
+"""Training x axis: never below 0, and (Andy 14:34) the same 2 s / 10 s window and shared clock as Gait.
 
 Units: training_range / training_fig give [max(0, t - w), max(w, t)].
 Browser (app on 127.0.0.1:18050, replay senders on test ports; the replay's model time
@@ -50,13 +50,10 @@ def units():
 
 RANGES = r"""
 JSON.stringify((function(){
+  var st = window._afoPlots ? window._afoPlots.state() : {plots: {}};
   var out = [];
-  ['tr-assist', 'tr-uc'].forEach(function(id){
-    var gd = document.querySelector('#' + id + ' .js-plotly-plot');
-    if (gd && gd.layout && gd.layout.xaxis) { out.push([id, gd.layout.xaxis.range]); }
-  });
-  var p = window._afoLastSnapshot || {};
-  return {r: out, t: p.t_latest};
+  ['tr-assist', 'tr-uc'].forEach(function(id){ var p = st.plots[id]; if (p) { out.push([id, [p.xmin, p.xmax]]); } });
+  return {r: out, t: st.shown != null ? st.shown : st.clock};
 })())
 """
 
@@ -104,30 +101,25 @@ def e2e():
         c.pump(2.5)
 
         def look(w, label):
-            c.js("document.querySelector('#trWin button[data-w=\"%d\"]').click(); 1" % w)
-            c.pump(2.5)
+            # Andy 14:34: Training uses the same 2 s / 10 s buttons and shared clock as Gait / Sensors
+            c.js("document.getElementById('%s').click(); 1" % ("w2" if w == 2 else "w10"))
+            c.pump(1.0)
             v = json.loads(c.js(RANGES))
             t = v["t"]
             ok_all = len(v["r"]) == 2
             for gid, r in v["r"]:
                 want = training_range(t, w)
-                ok = r and r[0] >= 0 and abs(r[0] - want[0]) <= 1.3 and abs(r[1] - want[1]) <= 1.3
+                ok = r and r[0] >= 0 and abs(r[0] - want[0]) <= 0.2 and abs(r[1] - want[1]) <= 0.2
                 ok_all = ok_all and ok
-                check(f"{label}: {gid} range {r and [round(x, 1) for x in r]} ~ {[round(x, 1) for x in want]} (t {t:.1f})",
-                      ok, (r, want, t))
+                check(f"{label}: {gid} range {[round(x, 1) for x in r]} ~ {[round(x, 1) for x in want]} (t {t:.1f})", ok, (r, want, t))
             return v, ok_all
 
-        v, _ = look(120, "t~30 s, 2 min")
-        check("2 min, t < 120: starts at 0", all(r[0] == 0 for _, r in v["r"]), v)
-        v, _ = look(300, "t~33 s, 5 min")
-        check("5 min: starts at 0", all(r[0] == 0 for _, r in v["r"]), v)
-        # wait for model time > 50 s
-        while (json.loads(c.js(RANGES))["t"] or 0) < 51:
-            c.pump(1.0)
-        v, _ = look(30, "t>50 s, 30 s")
-        check("30 s at t > 30 s: scrolling (start > 0)", all(r[0] > 0 for _, r in v["r"]), v)
-        v, _ = look(120, "t>50 s, 2 min")
-        check("2 min at t ~ 50 s: [0, 120], never negative", all(r[0] == 0 and r[1] == 120 for _, r in v["r"]), v)
+        v, _ = look(10, "t~25 s, 10 s")
+        check("10 s at t > 10 s: scrolling (start > 0)", all(r[0] > 0 for _, r in v["r"]), v)
+        v, _ = look(2, "2 s")
+        check("2 s window", all(abs((r[1] - r[0]) - 2) < 1e-6 for _, r in v["r"]), v)
+        check("Training has no own window buttons any more", c.js("(function(){var w=document.getElementById('trWin');"
+                                                                    "return !w || w.hidden || w.style.display==='none';})()"))
         check("no browser errors", not c.console, c.console[:4])
     finally:
         if senders:

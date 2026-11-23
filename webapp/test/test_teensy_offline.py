@@ -108,7 +108,7 @@ def e2e():
         time.sleep(3)                                   # warm-up read at app start
         b = Browser(19473, 1600, 1000)
         c = b.c
-        c.call("Page.navigate", url=BASE + "/teensy")
+        c.call("Page.navigate", url=BASE + "/daq")
         t0, seen, filled_at, first_src = time.time(), [], None, None
         while time.time() - t0 < 6:
             c.pump(0.25)
@@ -118,8 +118,8 @@ def e2e():
                 first_src = time.time() - t0
             if filled_at is None and v["commit"] not in ("", "–") and v["vs"] not in ("", "–") and v["board"] not in ("", "–"):
                 filled_at = time.time() - t0
-        check("direct /teensy: branch selected within 1.5 s", first_src is not None and first_src < 1.5, (first_src, seen[:3]))
-        check("direct /teensy: Commit, Compared with main, Board settings within 3 s",
+        check("direct /daq: branch selected within 1.5 s", first_src is not None and first_src < 1.5, (first_src, seen[:3]))
+        check("direct /daq: Commit, Compared with main, Board settings within 3 s",
               filled_at is not None and filled_at < 3.0, (filled_at, seen[-1]))
         bad = [s for s in seen if "·" in s[1]["src"] and "Pick a firmware branch" in s[1]["msg"]]
         check("never 'Pick a firmware branch.' while a branch is selected", not bad, bad[:2])
@@ -130,7 +130,7 @@ def e2e():
         # Live first, then the Teensy tab
         c.call("Page.navigate", url=BASE + "/live")
         c.pump(6)
-        c.js("document.querySelector('a[data-nav=\"teensy\"]').click(); 1")
+        c.js("document.querySelector('a[data-nav=\"daq\"]').click(); 1")
         t0, filled_at = time.time(), None
         while time.time() - t0 < 4:
             c.pump(0.2)
