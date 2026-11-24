@@ -84,10 +84,10 @@ def bus(port, dur, stop):
 CONSOLE_DEFAULTS = dict(bif_valid=1.0, bif_cal_progress=1.0, bif_bias_ready=1.0, gyro_cal_request=0.0, settings_seq=1.0,
                         bif_mass_kg=55.0, sv_target_min=0.8, sv_target_max=1.5, target_step_up=0.04,
                         target_step_down=0.08, step_up_window=20.0, step_down_window=10.0, high_assist_level=9.0,
-                        high_assist_strides=10.0, torque_p_gain=0.6, torque_i_gain=0.8, standing_still_cutoff=200.0,
+                        high_assist_strides=10.0, torque_p_gain=0.45, torque_i_gain=0.55, standing_still_cutoff=200.0,
                         adv_seq=1.0, spring_stiffness=1.25, slack_flag=0.0, jam_flag=0.0, slack_count=0.0,
                         slack_last_stride=0.0, slack_floor_on=1.0, slack_thr_nm=-0.5, slack_ms=20.0, slack_floor_nm=0.5,
-                        jam_cut_on=1.0, jam_apnm=5.0, jam_ms=100.0, fb_filter=0.0, guard_seq=1.0)
+                        jam_cut_on=1.0, jam_apnm=7.5, jam_ms=150.0, fb_filter=0.0, guard_seq=1.0)
 
 
 def console(port, dur, stop, side, stop_after, cmds=None, layout=None):

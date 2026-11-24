@@ -104,7 +104,7 @@ def receiver():
                 last = pl
     dev = FakeRun14(settings_port=15449, console_port=15448, n_floats=44, side=0.0, mass=70.0)
     dev.flags.update(slack_flag=1.0, slack_count=3.0, slack_last_stride=1.0)
-    dev.guard["jam_ms"] = 150.0
+    dev.guard["jam_ms"] = 250.0
     dev.guard_seq = 2.0
     time.sleep(0.3)
     dev.close()
@@ -113,9 +113,9 @@ def receiver():
     lt = hb.get("latest", {})
     check("receiver: 44 floats from the fake run-16 device accepted", hb.get("columns") == 44 and hb.get("bad_length") == 0,
           {k: hb.get(k) for k in ("columns", "bad_length", "packets_ok")})
-    check("receiver: cols 31-43 (slack_flag 1, slack_count 3, jam_ms 150, guard_seq 2) and run-15 cols intact",
+    check("receiver: cols 31-43 (slack_flag 1, slack_count 3, jam_ms 250, guard_seq 2) and run-15 cols intact",
           (lt.get("slack_flag"), lt.get("slack_count"), lt.get("jam_ms"), lt.get("guard_seq"), lt.get("adv_seq"), lt.get("bif_mass_kg"))
-          == (1.0, 3.0, 150.0, 2.0, 0.0, 70.0), lt)
+          == (1.0, 3.0, 250.0, 2.0, 0.0, 70.0), lt)
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     got = {}
     for n in (31, 18, 15, 12):
@@ -144,7 +144,7 @@ def guard_link():
                      layout_path=os.path.join(ROUND1, "settings_guard_udp_layout.json"))
     check("5436 link: fields in the round1 layout order", list(lk.FIELDS) == GUARD_FIELDS, lk.FIELDS)
     lk.tick()
-    check("5436: adopt from the echo, nothing sent", not sent and lk.state.get("jam_ms") == 100.0, (sent, lk.state))
+    check("5436: adopt from the echo, nothing sent", not sent and lk.state.get("jam_ms") == 150.0, (sent, lk.state))
     r = lk.press("slack_thr_nm", -1.0)
     data, addr = sent[-1]
     p = struct.unpack("<12f", data)
@@ -194,13 +194,13 @@ def fake_socket():
             return dict(dev.guard, guard_seq=dev.guard_seq), 0.01, 44
     lk = U.GuardLink({"udp": {"send_host": "127.0.0.1", "guard_port": 15451}}, echo, start_thread=False)
     lk.tick()
-    lk.press("jam_apnm", 7.5)
+    lk.press("jam_apnm", 9.0)
     t0 = time.time()
     while time.time() - t0 < 0.5 and lk.result.get("jam_apnm", {}).get("state") != "confirmed":
         lk.tick()
         time.sleep(0.02)
     dev.close()
-    check("fake run-16 device over UDP: one 48-byte packet applied and confirmed", dev.guard["jam_apnm"] == 7.5
+    check("fake run-16 device over UDP: one 48-byte packet applied and confirmed", dev.guard["jam_apnm"] == 9.0
           and lk.result["jam_apnm"]["state"] == "confirmed" and len(dev.guard_received) == 1, (dev.guard, lk.result))
 
 
@@ -282,7 +282,7 @@ def page():
     from pages import console_api as CA
     v = CA._guard_view(ctx)
     check("page state: guard udp + send on 44 floats, values from the echo, rules", v["udp"] and v["send"] and not v["frozen"]
-          and v["values"]["jam_ms"] == 100.0 and v["rules"]["slack_ms"]["int"], v)
+          and v["values"]["jam_ms"] == 150.0 and v["rules"]["slack_ms"]["int"], v)
     check("44 floats: the run-15 Advanced profile stays on (>= 31)", s.adv_profile() and s.udp_profile(), s.echo_cols())
     dev.on = False
     time.sleep(0.9)

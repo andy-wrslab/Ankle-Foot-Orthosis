@@ -74,9 +74,9 @@ SPECS = [
      "block": "min_cycles|Value", "default": 10, "unit": "strides"},
     # Advanced: Torque controller
     {"key": "p_gain", "label": "Torque P gain", "kind": "number", "min": 0, "max": 10, "adv": True,
-     "block": "P|Value", "default": 0.6},
+     "block": "P|Value", "default": 0.45},          # Andy Nov 24 09:31 (was 0.6)
     {"key": "i_gain", "label": "Torque I gain", "kind": "number", "min": 0, "max": 10, "adv": True,
-     "block": "I|Value", "default": 0.8},
+     "block": "I|Value", "default": 0.55},          # Andy Nov 24 09:31 (was 0.8)
     # Advanced: Safety
     {"key": "threshold_pressure", "label": "Standing-still cutoff", "kind": "number", "min": 0, "max": 5000,
      "adv": True, "block": "threshold_pressure|Value", "default": 200, "unit": "counts"},

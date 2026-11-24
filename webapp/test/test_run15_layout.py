@@ -224,7 +224,7 @@ def adv_link():
     check("5435 link: fields in the layout order (the 11 run-15 values, then the run-16c fade)",
           list(lk.FIELDS) == ADV_FIELDS + ["standstill_fade_ms"], lk.FIELDS)
     lk.tick()
-    check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.6, (sent, lk.state))
+    check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.45, (sent, lk.state))
     r = lk.press("torque_p_gain", 0.9)
     check("5435 press: accepted, sending", r["ok"] and r["state"] == "sending", r)
     data, addr = sent[-1]
@@ -309,7 +309,7 @@ def session_send():
           (s.status.get("i_gain"), s.readback.get("i_gain")))
     pk = dev.adv_packets[-1]
     check("session: one packet, seq = adv_seq 3 + 1, the other values = the device's", len(dev.adv_packets) == 1
-          and pk[2] == 4.0 and pk[3 + 9] == f32(1.1) and pk[3 + 8] == f32(0.6), dev.adv_packets)
+          and pk[2] == 4.0 and pk[3 + 9] == f32(1.1) and pk[3 + 8] == f32(0.45), dev.adv_packets)
     msg = s.enter_value("sv_target_min", 1.6)
     check("session: min >= max refused with the reason, nothing sent", "below the max" in msg and len(dev.adv_packets) == 1, msg)
     from pages import console_api as CA

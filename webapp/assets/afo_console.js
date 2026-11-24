@@ -86,9 +86,10 @@
         ['slack_thr_nm', 'Slack threshold', 'N·m', 2, '-5 .. -0.05 (default -0.5)'],
         ['slack_ms', 'Slack time', 'ms', 0, 'whole number 1 .. 500 (default 20)'],
         ['slack_floor_nm', 'Slack torque floor', 'N·m', 2, '0 .. 3 (default 0.5)'],
+        // page defaults (Andy Nov 24 09:31): jam cut on at 7.5 A/(N·m) for 150 ms
         ['jam_cut_on', 'Jam cut', '0/1', 0, '1 = on (default)'],
-        ['jam_apnm', 'Jam current per torque', 'A/(N·m)', 1, '1 .. 50 (default 5)'],
-        ['jam_ms', 'Jam time', 'ms', 0, 'whole number 10 .. 2000 (default 100)'],
+        ['jam_apnm', 'Jam current per torque', 'A/(N·m)', 1, '1 .. 50 (default 7.5)'],
+        ['jam_ms', 'Jam time', 'ms', 0, 'whole number 10 .. 2000 (default 150)'],
         ['fb_filter', 'PI feedback filter', '', 0, '0 = 12 Hz torque (default), 1 = 45 Hz']];
     function guardFmt(f, v) {
         var g = GUARD.filter(function (x) { return x[0] === f; })[0], d = g ? g[3] : 3;

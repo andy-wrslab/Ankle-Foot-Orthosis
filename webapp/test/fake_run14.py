@@ -24,11 +24,11 @@ BASE = ["t_model", "side", "weight_kg", "assist_mode", "fixed_k_pct", "cmd_motor
 ADV_FIELDS = ["sv_target_min", "sv_target_max", "target_step_up", "target_step_down", "step_up_window",
               "step_down_window", "high_assist_level", "high_assist_strides", "torque_p_gain", "torque_i_gain",
               "standing_still_cutoff"]
-ADV_DEFAULTS = [0.8, 1.5, 0.04, 0.08, 20.0, 10.0, 9.0, 10.0, 0.6, 0.8, 200.0]
+ADV_DEFAULTS = [0.8, 1.5, 0.04, 0.08, 20.0, 10.0, 9.0, 10.0, 0.45, 0.55, 200.0]     # P 0.45 / I 0.55 (Andy Nov 24)
 # run 16: torque guard (5436) settings in use, cols 35-42, defaults per settings_guard_udp_layout.json
 GUARD_FIELDS = ["slack_floor_on", "slack_thr_nm", "slack_ms", "slack_floor_nm", "jam_cut_on", "jam_apnm", "jam_ms",
                 "fb_filter"]
-GUARD_DEFAULTS = [1.0, -0.5, 20.0, 0.5, 1.0, 5.0, 100.0, 0.0]
+GUARD_DEFAULTS = [1.0, -0.5, 20.0, 0.5, 1.0, 7.5, 150.0, 0.0]     # jam on, 7.5 A/(N·m), 150 ms (Andy Nov 24)
 GUARD_RULES = {"slack_floor_on": (0, 1, True), "slack_thr_nm": (-5, -0.05, False), "slack_ms": (1, 500, True),
                "slack_floor_nm": (0, 3, False), "jam_cut_on": (0, 1, True), "jam_apnm": (1, 50, False),
                "jam_ms": (10, 2000, True), "fb_filter": (0, 1, True)}
