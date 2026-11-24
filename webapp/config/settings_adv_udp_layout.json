@@ -75,13 +75,13 @@
       "index": 11,
       "name": "torque_p_gain",
       "unit": "",
-      "rule": "0.05..3; else keep; takes effect at once"
+      "rule": "0.05..3 (default 0.45); else keep; takes effect at once"
     },
     {
       "index": 12,
       "name": "torque_i_gain",
       "unit": "",
-      "rule": "0..5; else keep; takes effect at once, a change resets the PI integrator for one step"
+      "rule": "0..5 (default 0.55); else keep; takes effect at once, a change resets the PI integrator for one step"
     },
     {
       "index": 13,

@@ -57,13 +57,13 @@
       "index": 8,
       "name": "jam_apnm",
       "unit": "A/(N*m)",
-      "rule": "1..50 (default 5); else keep"
+      "rule": "1..50 (default 7.5); else keep"
     },
     {
       "index": 9,
       "name": "jam_ms",
       "unit": "ms",
-      "rule": "whole number 10..2000 (default 100); else keep"
+      "rule": "whole number 10..2000 (default 150); else keep"
     },
     {
       "index": 10,
