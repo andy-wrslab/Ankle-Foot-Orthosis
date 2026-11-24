@@ -147,6 +147,37 @@
         }]}};
     }
 
+    // Hover value text (Andy Nov 24 16:11 "the value still jumps"): rounded first, so -0.004 is
+    // "0.00" never "-0.00"; padded on the left to the plot's fixed width (sign + the y range's
+    // integer digits + decimals), so in the monospace value column the box never changes width
+    // and the values never move. A value wider than that (out of range) just widens the box.
+    function tipChars(ps) {
+        var m = Math.max(Math.abs(ps.y[0]), Math.abs(ps.y[1]), 10), dig = Math.floor(Math.log(m) / Math.LN10 + 1e-9) + 1, n = 0;   // at least 2 integer digits: a value just out of range (12.34 on a 0-2 axis) keeps the width
+        for (var k = 0; k < ps.series.length; k++) {
+            var d = ps.series[k].dec || 0;
+            n = Math.max(n, 1 + dig + (d > 0 ? 1 + d : 0));
+        }
+        return n;
+    }
+    function tipNum(v, dec, n) {
+        if (typeof v !== 'number' || !isFinite(v)) { v = null; }
+        var t = v === null ? '–' : v.toFixed(dec);
+        if (v !== null && parseFloat(t) === 0) { t = (0).toFixed(dec); }      // no "-0.00"
+        while (t.length < n) { t = ' ' + t; }
+        return t;
+    }
+    function tipHTML(ps, x, vals, shown) {
+        var n = tipChars(ps);
+        var html = '<div class="u-tip-t">' + x.toFixed(3) + ' s</div><div class="u-tip-g">';
+        for (var k = 0; k < ps.series.length; k++) {
+            if (!shown[k]) { continue; }
+            var s = ps.series[k];
+            html += '<i style="background:' + s.color + '"></i><span>' + s.label + '</span><b>' + tipNum(vals[k], s.dec, n) + '</b>';
+        }
+        return html + '</div>';
+    }
+    E.tipHTML = tipHTML; E.tipNum = tipNum; E.tipChars = tipChars;          // test hooks
+
     function tooltipPlugin(ps) {
         var tip;
         return {hooks: {
@@ -159,15 +190,9 @@
                 if (i == null || u.cursor.left < 0) { tip.hidden = true; return; }
                 var x = u.data[0][i]; if (x == null) { tip.hidden = true; return; }
                 // Andy Nov 24 15:20: no units in the hover; swatch | name | value, values right-aligned
-                var html = '<div class="u-tip-t">' + x.toFixed(3) + ' s</div><div class="u-tip-g">';
-                ps.series.forEach(function (s, k) {
-                    if (!u.series[k + 1].show) { return; }
-                    var v = u.data[k + 1][i];
-                    html += '<i style="background:' + s.color + '"></i><span>' + s.label + '</span><b>' +
-                        (typeof v === 'number' ? v.toFixed(s.dec) : '–') + '</b>';
-                });
-                html += '</div>';
-                tip.innerHTML = html; tip.hidden = false;
+                var vals = [], shown = [];
+                for (var k = 0; k < ps.series.length; k++) { vals.push(u.data[k + 1][i]); shown.push(!!u.series[k + 1].show); }
+                tip.innerHTML = tipHTML(ps, x, vals, shown); tip.hidden = false;
                 var left = u.cursor.left + 12, w = tip.offsetWidth;
                 if (left + w > u.over.clientWidth) { left = u.cursor.left - w - 12; }
                 tip.style.left = Math.max(0, left) + 'px'; tip.style.top = '4px';

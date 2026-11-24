@@ -695,3 +695,7 @@ button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:fo
 .u-tip .u-tip-g { display: grid; grid-template-columns: 10px auto auto; column-gap: 6px; align-items: center; }
 .u-tip .u-tip-g i { margin-right: 0; }
 .u-tip .u-tip-g b { justify-self: end; padding-left: 10px; font-variant-numeric: tabular-nums; }
+/* Hover values never move (Andy Nov 24 16:11): monospace, spaces kept (left padding to the
+   plot's fixed width), right-aligned */
+.u-tip .u-tip-g b { white-space: pre; font-family: var(--font-num); }
+.u-tip .u-tip-t { white-space: pre; font-variant-numeric: tabular-nums; }
