@@ -51,8 +51,9 @@ HOVER_FMT = {"torque": ".2f", "speed": ".2f", "fsr": ".0f", "imu": ".2f",
 
 
 def trace_hover(name, fmt=".2f", unit=""):
-    """Trace kwargs for the unified hover label: 'Measured  +12.41 Nm'."""
-    u = f" {unit}" if unit else ""
+    """Trace kwargs for the unified hover label: 'Measured  +12.41' (no unit in the hover,
+    Andy Nov 24 15:20; the axis title carries it). *unit* is accepted and ignored."""
+    u = ""
     # yhoverformat, not a format inside the template: in "x unified" mode
     # Plotly 2.35 printed full precision with %{y:.2f} (checked in the mock).
     return dict(name=name, yhoverformat=fmt, hovertemplate=f"{name}  <b>%{{y}}</b>{u}<extra></extra>")

@@ -158,13 +158,15 @@
                 var i = u.cursor.idx;
                 if (i == null || u.cursor.left < 0) { tip.hidden = true; return; }
                 var x = u.data[0][i]; if (x == null) { tip.hidden = true; return; }
-                var html = '<div class="u-tip-t">' + x.toFixed(3) + ' s</div>';
+                // Andy Nov 24 15:20: no units in the hover; swatch | name | value, values right-aligned
+                var html = '<div class="u-tip-t">' + x.toFixed(3) + ' s</div><div class="u-tip-g">';
                 ps.series.forEach(function (s, k) {
                     if (!u.series[k + 1].show) { return; }
                     var v = u.data[k + 1][i];
-                    html += '<div><i style="background:' + s.color + '"></i>' + s.label + '  <b>' +
-                        (typeof v === 'number' ? v.toFixed(s.dec) : '–') + '</b>' + (s.unit ? ' ' + s.unit : '') + '</div>';
+                    html += '<i style="background:' + s.color + '"></i><span>' + s.label + '</span><b>' +
+                        (typeof v === 'number' ? v.toFixed(s.dec) : '–') + '</b>';
                 });
+                html += '</div>';
                 tip.innerHTML = html; tip.hidden = false;
                 var left = u.cursor.left + 12, w = tip.offsetWidth;
                 if (left + w > u.over.clientWidth) { left = u.cursor.left - w - 12; }

@@ -127,7 +127,7 @@ def build_figure(store: TrialStore, groups: List[str], xr) -> go.Figure:
             tx, yy = _envelope(ts, y)
             fig.add_trace(go.Scattergl(x=tx, y=yy, mode="lines", name=label, legendgroup=g,
                                        line=dict(width=2.4, color=COLOR_CYCLE[j % len(COLOR_CYCLE)]),
-                                       hovertemplate=f"{label}: %{{y:.4g}}<br>t=%{{x:.3f}} s<extra></extra>"),
+                                       hovertemplate=f"{label}  <b>%{{y:.4g}}</b><extra></extra>"),   # no unit / time per row (Andy Nov 24)
                           row=r, col=1)
     fig.update_layout(height=max(320, 210 * len(groups)), margin=dict(l=60, r=16, t=36, b=40),
                       paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF", showlegend=False, uirevision="trial",
