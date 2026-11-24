@@ -25,7 +25,7 @@ use (order of round1/settings_adv_udp_layout.json), 29 adv_seq, 30 spring_stiffn
 (read-only; the page ignores it) (RUN15_TAIL). Run 16 ('<44f'): cols 31-43 slack_flag,
 jam_flag (latched until Motor OFF -> ON), slack_count, slack_last_stride, the 8 torque-guard
 settings in use, guard_seq (RUN16_TAIL). Run 16c ('<45f'): col 44 standstill_fade_ms
-(RUN16C_TAIL). Any layout parses 12, 15, 18, 31, 44 and 45 floats.
+(RUN16C_TAIL), 47 (RUN16G_TAIL: assist ramp step / cap). Any layout parses 12, 15, 18, 31, 44, 45 and 47 floats.
 
 Sends ("hb", status) 20 times a second: rates, counters, the latest valid row as
 {name: value} and its age. Answers ("data", names, window_s) requests with the
@@ -54,7 +54,7 @@ RESTART_RUN = 20          # or 20 packets in a row (0.2 s) older than the last t
 
 
 # the column tails per build and the echo lengths: ONE place (echo_sizes.py)
-from echo_sizes import DEFAULT_TAIL, ECHO_SIZES, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL  # noqa: E402,F401
+from echo_sizes import DEFAULT_TAIL, ECHO_SIZES, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL, RUN16G_TAIL  # noqa: E402,F401
 
 
 def load_layout(path):
@@ -95,7 +95,7 @@ def worker_main(layout_path, host, out_q, req_q, resp_q, stop_evt, log_dir) -> N
     # those last columns are an optional tail, so 12-float packets of older builds
     # still parse (base = the first 12 columns).
     opt = list(lay.get("optional_columns") or DEFAULT_TAIL)
-    tails = [opt, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL]
+    tails = [opt, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL, RUN16G_TAIL]
     # a longer layout (15 / 18 / 31 columns) = base 12 + the known tails: strip them from the
     # end (outermost first), so every shorter packet of an older build still parses
     if fmt.format.startswith("<") and fmt.format.endswith("f"):

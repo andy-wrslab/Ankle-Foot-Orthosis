@@ -10,6 +10,7 @@ never looks at echo lengths: it gets the server's flags (session.adv / session.g
     + RUN15_TAIL    -> 31  run 15 (Advanced over 5435)
     + RUN16_TAIL    -> 44  run 16b (torque guard over 5436, flags)
     + RUN16C_TAIL   -> 45  run 16c (standing-still fade)
+    + RUN16G_TAIL   -> 47  run 16g (assist fade-in: step in use, cap now)
 """
 from __future__ import annotations
 
@@ -29,8 +30,10 @@ RUN16_TAIL = ["slack_flag", "jam_flag", "slack_count", "slack_last_stride", "sla
               "slack_floor_nm", "jam_cut_on", "jam_apnm", "jam_ms", "fb_filter", "guard_seq"]
 # run 16c: col 44 = standstill_fade_ms in use -> '<45f'
 RUN16C_TAIL = ["standstill_fade_ms"]
+# run 16g: col 45 = assist_ramp_step in use (5435 [14]), col 46 = assist_ramp_cap now -> '<47f'
+RUN16G_TAIL = ["assist_ramp_step", "assist_ramp_cap"]
 
-TAILS: List[List[str]] = [DEFAULT_TAIL, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL]
+TAILS: List[List[str]] = [DEFAULT_TAIL, RUN14_TAIL, RUN15_TAIL, RUN16_TAIL, RUN16C_TAIL, RUN16G_TAIL]
 
 
 def _sizes() -> Tuple[int, ...]:
@@ -41,13 +44,14 @@ def _sizes() -> Tuple[int, ...]:
     return tuple(out)
 
 
-# every echo length a build sends (12, 15, 18, 31, 44, 45): any of them = the console echo is alive
+# every echo length a build sends (12, 15, 18, 31, 44, 45, 47): any of them = the console echo is alive
 ECHO_SIZES: Tuple[int, ...] = _sizes()
-ECHO_RUN13, ECHO_RUN14, ECHO_RUN15, ECHO_RUN16B, ECHO_RUN16C = ECHO_SIZES[1:]
+ECHO_RUN13, ECHO_RUN14, ECHO_RUN15, ECHO_RUN16B, ECHO_RUN16C, ECHO_RUN16G = ECHO_SIZES[1:]
 # the smallest echo that carries each UDP link's echo / seq (an echo at least this long = that build or later)
 UDP_SETTINGS_MIN = ECHO_RUN14        # 5434: side / mass / mode / K / gyro
 ADV_UDP_MIN = ECHO_RUN15             # 5435: Advanced
 GUARD_UDP_MIN = ECHO_RUN16B          # 5436: torque guard
 FADE_MIN = ECHO_RUN16C               # standing-still fade in the echo
+RAMP_MIN = ECHO_RUN16G               # assist fade-in step / cap in the echo (run 16g)
 
-assert ECHO_SIZES == (12, 15, 18, 31, 44, 45), ECHO_SIZES
+assert ECHO_SIZES == (12, 15, 18, 31, 44, 45, 47), ECHO_SIZES

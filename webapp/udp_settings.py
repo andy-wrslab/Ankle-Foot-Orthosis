@@ -423,7 +423,8 @@ ADV_FIELD = {"sv_target_min": "sv_target_min", "sv_target_max": "sv_target_max",
              "window_up": "step_up_window", "window_down": "step_down_window",
              "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
              "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff",
-             "fade_ms": "standstill_fade_ms"}      # run 16c (5435 [15], echo col 44)
+             "fade_ms": "standstill_fade_ms",      # run 16c (5435 [15], echo col 44)
+             "assist_ramp_step": "assist_ramp_step"}   # run 16g (5435 [14], echo col 45)
 _RANGE = re.compile(r"(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)")
 
 
@@ -576,6 +577,11 @@ class AdvLink(SettingsLink):
             elif name == "seq":
                 out.append(float(self.seq))
             elif name.startswith("reserved"):
+                out.append(0.0)
+            elif name == "assist_ramp_step" and (self.state or {}).get(name) is None and name not in self.pending:
+                # [14] was reserved_spring before run 16g: a build that does not echo the ramp
+                # step gets 0 there (ignored), as before; on 16g the echoed step in use is sent
+                # (never 0 by accident: that would switch the fade-in off on every Confirm)
                 out.append(0.0)
             else:
                 out.append(float(values.get(name, float("nan"))))

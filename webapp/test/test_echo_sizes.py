@@ -42,7 +42,7 @@ def shared():
     import status
     import training_worker as TW
     import udp_settings as U
-    check("echo_sizes: 12 / 15 / 18 / 31 / 44 / 45", ES.ECHO_SIZES == (12, 15, 18, 31, 44, 45), ES.ECHO_SIZES)
+    check("echo_sizes: 12 / 15 / 18 / 31 / 44 / 45 / 47 (run 16g)", ES.ECHO_SIZES == (12, 15, 18, 31, 44, 45, 47), ES.ECHO_SIZES)
     check("status uses the shared lengths (44 and 45 included)", status.R1_ECHO_COLS is ES.ECHO_SIZES
           and 44 in status.R1_ECHO_COLS and 45 in status.R1_ECHO_COLS, status.R1_ECHO_COLS)
     check("receiver tails = echo_sizes tails", TW.RUN16C_TAIL is ES.RUN16C_TAIL and TW.RUN14_TAIL is ES.RUN14_TAIL)

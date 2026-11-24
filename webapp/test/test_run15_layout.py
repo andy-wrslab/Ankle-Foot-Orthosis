@@ -221,8 +221,8 @@ def adv_link():
                    lambda: (dict(echo["row"]), echo["age"], echo["cols"]),
                    sender=lambda data, addr: sent.append((data, addr)), start_thread=False,
                    layout_path=os.path.join(APP, "config", "settings_adv_udp_layout.json"))   # the page copy (cutoff 0..5000)
-    check("5435 link: fields in the layout order (the 11 run-15 values, then the run-16c fade)",
-          list(lk.FIELDS) == ADV_FIELDS + ["standstill_fade_ms"], lk.FIELDS)
+    check("5435 link: fields in the layout order (the 11 run-15 values, the run-16g ramp step [14], the run-16c fade [15])",
+          list(lk.FIELDS) == ADV_FIELDS + ["assist_ramp_step", "standstill_fade_ms"], lk.FIELDS)
     lk.tick()
     check("5435: adopt from the echo, nothing sent", not sent and lk.state.get("torque_p_gain") == 0.45, (sent, lk.state))
     r = lk.press("torque_p_gain", 0.9)
@@ -235,7 +235,7 @@ def adv_link():
     want[ADV_FIELDS.index("torque_p_gain")] = f32(0.9)
     check("5435 packet: all 11 in-use values, only P gain changed", list(p[3:14]) == want, (p[3:14], want))
     # layout from run 16c on: [15] = standstill_fade_ms; a 31-float echo has no fade -> NaN (keep)
-    check("5435 packet: [14] reserved_spring = 0, [15] fade unknown on a 31-float echo = NaN (keep)",
+    check("5435 packet: [14] = 0 (no ramp step echoed; reserved before 16g), [15] fade unknown on a 31-float echo = NaN (keep)",
           p[14] == 0.0 and p[15] != p[15], p[14:])
     row.update(torque_p_gain=f32(0.9), adv_seq=8.0)
     lk.tick()

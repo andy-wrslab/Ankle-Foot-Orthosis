@@ -1,6 +1,6 @@
 {
   "port": 5433,
-  "format": "<45f",
+  "format": "<47f",
   "period_ms": 10,
   "note": "console values not on the main bus; 5431 and 5432 unchanged",
   "columns": [
@@ -318,6 +318,20 @@
       "unit": "ms",
       "description": "standing-still fade time in use (5435 field 15; 0 = hard cut)",
       "column": 44
+    },
+    {
+      "name": "assist_ramp_step",
+      "tag": "ADV_RampStep",
+      "unit": "%/strike",
+      "description": "assistance fade-in step in use after Assist ON (5435 field 14; 0 = no ramp; run 16g)",
+      "column": 45
+    },
+    {
+      "name": "assist_ramp_cap",
+      "tag": "ASR_Cap",
+      "unit": "%",
+      "description": "assistance ramp ceiling now (0 while Assist/Motor off; rises by the step per heel strike; 10 = done; run 16g)",
+      "column": 46
     }
   ]
 }

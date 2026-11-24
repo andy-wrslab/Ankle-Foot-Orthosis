@@ -29,7 +29,7 @@ PENDING_S = 1.0
 # Advanced display decimals (speeds / gains 2, step sizes 3, windows / strides / level / cutoff whole)
 ADV_DEC = {"sv_target_min": 2, "sv_target_max": 2, "target_step_up": 3, "target_step_down": 3, "window_up": 0,
            "window_down": 0, "assist_threshold": 0, "min_cycles": 0, "p_gain": 2, "i_gain": 2, "threshold_pressure": 0,
-           "fade_ms": 0}
+           "fade_ms": 0, "assist_ramp_step": 1, "assist_ramp_cap": 1}
 
 
 def _fmt(key: str, v) -> str:

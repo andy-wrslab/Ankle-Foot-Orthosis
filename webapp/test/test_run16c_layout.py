@@ -51,14 +51,17 @@ def layouts():
     adv = json.load(open(os.path.join(ROUND1, "settings_adv_udp_layout.json"), encoding="utf-8"))
     r16b = json.load(open(os.path.join(FIX, "run16b_console_udp_layout.json"), encoding="utf-8"))
     n = names_of(con)
-    check("round1 console layout: '<45f', 45 columns", con["format"] == "<45f" and len(n) == 45, con["format"])
+    # round1 moved on to run 16g ('<47f': + assist_ramp_step / assist_ramp_cap); cols 0-44 as 16c
+    check("round1 console layout: '<45f' (16c) or '<47f' (16g, + ramp step / cap)", (con["format"], len(n)) in (("<45f", 45), ("<47f", 47))
+          and n[45:] in ([], ["assist_ramp_step", "assist_ramp_cap"]), con["format"])
     check("cols 0-43 = run 16b unchanged", n[:44] == names_of(r16b), n[:44])
     check("col 44 = standstill_fade_ms", n[44] == "standstill_fade_ms", n[44:])
     import training_worker as TW
-    check("receiver: RUN16C_TAIL = col 44", TW.RUN16C_TAIL == n[44:], TW.RUN16C_TAIL)
+    check("receiver: RUN16C_TAIL = col 44", TW.RUN16C_TAIL == n[44:45], TW.RUN16C_TAIL)
     f = {x["index"]: x for x in adv["fields"]}
-    check("5435: '<16f' 64 B, [14] reserved_spring, [15] standstill_fade_ms", adv["format"] == "<16f" and adv["bytes"] == 64
-          and f[14]["name"] == "reserved_spring" and f[15]["name"] == "standstill_fade_ms", (f.get(14), f.get(15)))
+    check("5435: '<16f' 64 B, [14] reserved_spring (16c) or assist_ramp_step (16g), [15] standstill_fade_ms",
+          adv["format"] == "<16f" and adv["bytes"] == 64 and f[14]["name"] in ("reserved_spring", "assist_ramp_step")
+          and f[15]["name"] == "standstill_fade_ms", (f.get(14), f.get(15)))
     check("5435 [15] rule: 0..1000, default 200, 0 = hard cut", "0..1000" in f[15]["rule"] and "200" in f[15]["rule"],
           f[15]["rule"])
     for name in ("console_udp_layout.json", "settings_adv_udp_layout.json", "settings_guard_udp_layout.json",
@@ -198,7 +201,7 @@ def session_page():
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
     check("page: 'Fade' (ms) right after the standing-still cutoff, shown only when echoed, whole ms",
           "['threshold_pressure', 'Standing-still cutoff'" in js and js.index("['threshold_pressure'") < js.index("['fade_ms', 'Fade', 'ms'")
-          and "has = advUdp && (sv.readback || {}).fade_ms != null" in js and "fade_ms: 0}" in js)
+          and "has = advUdp && (sv.readback || {})[k] != null" in js and "k === 'fade_ms'" in js and "fade_ms: 0," in js)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
   "to": "192.168.7.5",
   "format": "<16f",
   "bytes": 64,
-  "note": "Advanced settings from the OMEN page to AFO_r1 (run 15). Packet accepted only with magic and version; each field taken only if valid, else the value in use is kept. Held forever, no timeout. Values in use are echoed on 5433 columns 18-28 in this order, 29 adv_seq, 30 spring_stiffness, 44 standstill_fade_ms.",
+  "note": "Advanced settings from the OMEN page to AFO_r1 (run 15). Packet accepted only with magic and version; each field taken only if valid, else the value in use is kept. Held forever, no timeout. Values in use are echoed on 5433 columns 18-28 in this order, 29 adv_seq, 30 spring_stiffness, 44 standstill_fade_ms, 45 assist_ramp_step.",
   "fields": [
     {
       "index": 0,
@@ -91,9 +91,9 @@
     },
     {
       "index": 14,
-      "name": "reserved_spring",
-      "unit": "",
-      "rule": "ignored (spring stiffness is read-only; echoed as 5433 column 30)"
+      "name": "assist_ramp_step",
+      "unit": "%/strike",
+      "rule": "0..10 (default 1); 0 = no ramp; assistance rises by this much per heel strike after Assist ON; else keep"
     },
     {
       "index": 15,

@@ -83,6 +83,12 @@ SPECS = [
     # run 16c: standing-still torque fade (5435 [15], echo col 44); 0 = hard cut. UDP only (no block)
     {"key": "fade_ms", "label": "Fade", "kind": "number", "min": 0, "max": 1000, "adv": True, "models": ["AFO_r1"],
      "block": None, "default": 200, "unit": "ms", "udp_only": True},
+    # run 16g: assistance fade-in after Assist ON (5435 [14], echo col 45); 0 = no ramp. The cap
+    # now (echo col 46) is shown read-only (Andy Nov 24 16:00-16:27)
+    {"key": "assist_ramp_step", "label": "Assist ramp per step", "kind": "number", "min": 0, "max": 10, "adv": True,
+     "models": ["AFO_r1"], "block": None, "default": 1, "unit": "%", "udp_only": True},
+    {"key": "assist_ramp_cap", "label": "Ramp cap", "kind": "number", "min": 0, "max": 10, "adv": True,
+     "models": ["AFO_r1"], "block": None, "unit": "%", "udp_only": True, "readonly": True},
 ]
 
 
@@ -682,9 +688,10 @@ class SessionSetup:
                     "window_up": "step_up_window", "window_down": "step_down_window",
                     "assist_threshold": "high_assist_level", "min_cycles": "high_assist_strides",
                     "p_gain": "torque_p_gain", "i_gain": "torque_i_gain", "threshold_pressure": "standing_still_cutoff",
-                    "fade_ms": "standstill_fade_ms"}
-    # in the echo only from run 16c (45 floats): not required for the run-15 Advanced profile
-    ADV_OPTIONAL = ("fade_ms",)
+                    "fade_ms": "standstill_fade_ms", "assist_ramp_step": "assist_ramp_step",
+                    "assist_ramp_cap": "assist_ramp_cap"}
+    # in the echo only from run 16c (45 floats) / 16g (47): not required for the run-15 Advanced profile
+    ADV_OPTIONAL = ("fade_ms", "assist_ramp_step", "assist_ramp_cap")
     ADV_READONLY_MSG = "Advanced is read-only on this build (sending over UDP 5435 comes next)"
 
     def adv_echo(self, echo: Optional[Dict[str, Any]] = None) -> bool:
