@@ -53,7 +53,7 @@ def page_static():
     for gone in ("All runs in the Speedgoat file log, newest first", "Click a run to select it.",
                  '<span class="hint">Rarely changed', '<p class="sec-help">', "Start, Stop, Export and Load connect by themselves</span>"):
         check(f"helper text removed: {gone[:40]}", gone not in js)
-    check("tooltips: Advanced head, export name, Trials Connect", 'title="Rarely changed · sent on Enter"' in js
+    check("tooltips: Advanced head, export name, Trials Connect", 'title="Rarely changed · nothing is sent until you press Confirm"' in js
           and 'id="expName" autocomplete="off" title="Participant ID' in js and 'title="Start, Stop, Export and Load connect by themselves"' in js)
     ty = open(os.path.join(APP, "pages", "teensy.py"), encoding="utf-8").read()
     check("DAQ: no helper sentence under the heading, no 'DAQ/ only' subtitle", 'html.Span("Debugging only.' not in ty

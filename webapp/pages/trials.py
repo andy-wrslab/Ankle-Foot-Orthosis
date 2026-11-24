@@ -126,7 +126,7 @@ def build_figure(store: TrialStore, groups: List[str], xr) -> go.Figure:
                 y = np.where(np.isfinite(y) & (np.abs(y) < 1e6), y, np.nan)
             tx, yy = _envelope(ts, y)
             fig.add_trace(go.Scattergl(x=tx, y=yy, mode="lines", name=label, legendgroup=g,
-                                       line=dict(width=1.2, color=COLOR_CYCLE[j % len(COLOR_CYCLE)]),
+                                       line=dict(width=2.4, color=COLOR_CYCLE[j % len(COLOR_CYCLE)]),
                                        hovertemplate=f"{label}: %{{y:.4g}}<br>t=%{{x:.3f}} s<extra></extra>"),
                           row=r, col=1)
     fig.update_layout(height=max(320, 210 * len(groups)), margin=dict(l=60, r=16, t=36, b=40),

@@ -27,11 +27,11 @@ GRID = "#EEECE8"
 ZERO = "#CBC7BF"
 
 SERIES = {
-    "meas": dict(color="#1D1F21", width=1.5),
-    "cmd": dict(color="#1F6F78", width=1.5, dash="dash"),
-    "imu_x": dict(color="#1F6F78", width=1.25),
-    "imu_y": dict(color="#C2702E", width=1.25),
-    "imu_z": dict(color="#6E5BA8", width=1.25),
+    "meas": dict(color="#1D1F21", width=3.0),        # Andy Nov 24 14:32: all plot lines ~2x (was 1.5)
+    "cmd": dict(color="#1F6F78", width=3.0, dash="dash"),   # was 1.5
+    "imu_x": dict(color="#1F6F78", width=2.5),
+    "imu_y": dict(color="#C2702E", width=2.5),
+    "imu_z": dict(color="#6E5BA8", width=2.5),
     # FSR 1..8, heel -> toe
     "fsr": ["#A9D3D7", "#8CC2C7", "#6FB0B6", "#529DA4",
             "#3A8890", "#28727A", "#1B5B62", "#10444A"],

@@ -79,7 +79,7 @@ def spec_and_endpoint():
           and ".tb-field #sMass { text-align: center; }" in css, ms)
     live = open(os.path.join(APP, "pages", "live.py"), encoding="utf-8").read()
     check("live cards: no header row (no title / legend chips above the plots)", 'className="card-head"' not in live.split("def _card", 1)[1].split("def layout", 1)[0])
-    check("spec: command traces dashed", s["plots"]["torque"]["series"][1]["dash"] == [5, 4]
+    check("spec: command traces dashed", s["plots"]["torque"]["series"][1]["dash"] == [8, 5]
           and s["plots"]["torque"]["series"][0]["dash"] is None)
     import flask
     app = types.SimpleNamespace(server=flask.Flask("t"))

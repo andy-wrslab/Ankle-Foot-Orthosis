@@ -368,6 +368,17 @@ def register(server, ctx) -> None:
         r = lk.press(str(b.get("field", "")), b.get("value"))
         return jsonify(r), (200 if r.get("ok") else 409)
 
+    @server.route("/api/console/advanced", methods=["POST"])
+    def api_console_advanced():  # type: ignore
+        # Advanced panel Confirm: {"adv": {key: value}, "guard": {field: value}} -> one 5435
+        # packet and one 5436 packet. Nothing in the panel is sent before this (Andy Nov 24).
+        b = body()
+        adv, guard = b.get("adv") or {}, b.get("guard") or {}
+        if not isinstance(adv, dict) or not isinstance(guard, dict) or not (adv or guard):
+            return jsonify({"ok": False, "msg": "nothing to confirm"}), 400
+        r = ctx.session.confirm_advanced(adv, guard)
+        return jsonify(r), (200 if r.get("ok") else 409)
+
     @server.route("/api/console/imucal", methods=["POST"])
     def api_console_imucal():  # type: ignore
         ic = getattr(ctx, "imu_cal", None)

@@ -291,9 +291,9 @@ def page():
     ctx.guard_link.stop()
     ctx.settings_link.stop()
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
-    check("page: Torque guard card in Advanced (hidden below 44 floats), checks before sending, posts /api/console/guard",
+    check("page: Torque guard card in Advanced (hidden below 44 floats), checks before staging, Confirm posts /api/console/advanced (Andy Nov 24)",
           'id="advGuard" hidden' in js and "fs.hidden = !gv.udp" in js and "var bad = guardCheck(f, v);" in js
-          and "post('/api/console/guard'" in js and "renderGuard(st);" in js)
+          and "post('/api/console/advanced', body)" in js and "renderGuard(st);" in js)
     api = open(os.path.join(APP, "pages", "console_api.py"), encoding="utf-8").read()
     check("api: /api/console/guard refuses a stalled echo and builds below 44 floats", '"/api/console/guard"' in api
           and "ctx.session.echo_stale()" in api and "Torque guard: not on this build" in api)

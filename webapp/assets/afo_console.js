@@ -5,7 +5,7 @@
 // committed field (Enter / leaving the field). Plots are Dash graphs.
 (function () {
     'use strict';
-    var S = {state: null, page: null, liveSub: 'gait', runs: null, selRun: null,
+    var S = {advPend: {}, state: null, page: null, liveSub: 'gait', runs: null, selRun: null,
              sigNames: [], lastPacketAt: 0, editing: {}, exportJob: null, lastSid: null};
     var POLL_MS = 500;
     var $ = function (id) { return document.getElementById(id); };
@@ -153,8 +153,12 @@
           '<dl class="kv" id="rigKv"></dl>' +
         '</div>' +
         '<div class="popover adv-pop top" id="advPop" role="dialog" aria-label="Advanced parameters" hidden>' +
-          '<div class="pop-head" title="Rarely changed · sent on Enter"><span class="card-title">Advanced</span></div>' +
+          '<div class="pop-head" title="Rarely changed · nothing is sent until you press Confirm"><span class="card-title">Advanced</span></div>' +
           '<div class="adv-groups">' + adv + '</div>' +
+          // Andy Nov 24 14:34: every Advanced change needs a Confirm (old -> new listed first)
+          '<div class="adv-confirm" id="advConfirm" hidden><ul class="adv-changes" id="advChanges"></ul>' +
+            '<div class="adv-confirm-act"><button class="btn" id="advCancel">Cancel</button>' +
+            '<button class="btn primary" id="advOk">Confirm</button></div></div>' +
         '</div>' +
         '<div class="popover side-pop" id="sidePop" role="dialog" aria-label="Foot side" hidden>' +
           '<div class="pop-head"><span class="card-title">Foot side</span></div>' +
@@ -511,6 +515,7 @@
         var advOn = advUdp || !!(st.target && st.target.connected);
         document.querySelectorAll('.adv-in').forEach(function (inp) {
             if (document.activeElement === inp || S.editing['adv-' + inp.getAttribute('data-k')]) { return; }
+            if (S.advPend['adv:' + inp.getAttribute('data-k')]) { inp.classList.add('adv-staged'); return; }   // waiting for Confirm
             var k = inp.getAttribute('data-k'), v = sv.values[k];
             if (k === 'fade_ms') {
                 // run 16c only: shown when the device echoes it (45 floats); unknown on run 16b / older
@@ -562,6 +567,7 @@
         document.querySelectorAll('.guard-in').forEach(function (inp) {
             var f = inp.getAttribute('data-g');
             if (document.activeElement === inp || S.editing['g-' + f]) { return; }
+            if (S.advPend['guard:' + f]) { inp.classList.add('adv-staged'); return; }   // waiting for Confirm
             inp.disabled = ro;
             inp.classList.toggle('adv-stale', !!gv.frozen);
             var t = guardFmt(f, (gv.values || {})[f]); if (inp.value !== t) { inp.value = t; }
@@ -847,6 +853,31 @@
             return 'Max target speed must be above the min (' + (+rb.sv_target_min) + ')'; }
         return '';
     }
+    function stageAdv(inp, kind, key, label, unit, value, old) {
+        var id = kind + ':' + key;
+        if (value === old) { delete S.advPend[id]; inp.classList.remove('adv-staged'); }
+        else { S.advPend[id] = {kind: kind, key: key, label: label, unit: unit, old: old, value: value}; inp.classList.add('adv-staged'); }
+        inp.value = value;
+        renderAdvPend();
+    }
+    function clearAdvPend() {
+        S.advPend = {};
+        document.querySelectorAll('.adv-staged').forEach(function (el) { el.classList.remove('adv-staged'); });
+        renderAdvPend();
+    }
+    function renderAdvPend() {
+        var box = $('advConfirm'), ul = $('advChanges'), ab = $('advBtn');
+        if (!box || !ul) { return; }
+        var ids = Object.keys(S.advPend);
+        box.hidden = !ids.length;
+        if (ab) { ab.classList.toggle('has-pending', ids.length > 0); }
+        ul.innerHTML = ids.map(function (id) {
+            var p = S.advPend[id], u = p.unit ? ' ' + esc(p.unit) : '';
+            return '<li><span class="ac-lab">' + esc(p.label) + '</span><span class="ac-val mono">' +
+                esc(p.old === '' ? '–' : p.old) + ' → <b>' + esc(p.value) + '</b>' + u + '</span></li>';
+        }).join('');
+        $('advOk').textContent = ids.length > 1 ? 'Confirm ' + ids.length : 'Confirm';
+    }
     function commitField(el, key, url, body) {
         S.editing[key] = true;
         var ck = (body && (body.key || body.name)) || ({sMass: 'weight', kPct: 'k_percent'})[key] || key;
@@ -869,27 +900,33 @@
     function bindChrome() {
         // session fields: sent on Enter or when leaving the field
         function onCommit(el, fn) {
+            // Andy Nov 24 14:33 ("i literally entered and clicked enter"): Enter ALWAYS sends, and so
+            // does leaving the field after typing in it, even when the number is the same as before
+            // (an unchanged 80 kg never reached the device). Escape still restores and sends nothing.
             var start = null;
-            el.addEventListener('focus', function () { start = el.value; });
-            el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { el.blur(); } if (e.key === 'Escape') { el.value = start; el.blur(); } });
-            el.addEventListener('blur', function () { if (el.value !== start && el.value.trim() !== '') { fn(el.value.trim()); } });
+            el.addEventListener('focus', function () { start = el.value; el._typed = false; el._enter = false; });
+            el.addEventListener('input', function () { el._typed = true; });
+            el.addEventListener('keydown', function (e) { if (e.key === 'Enter') { el._enter = true; el.blur(); } if (e.key === 'Escape') { el.value = start; el._typed = false; el._enter = false; el.blur(); } });
+            el.addEventListener('blur', function () {
+                var send = el._enter || el._typed || el.value !== start;
+                el._enter = el._typed = false;
+                if (send && el.value.trim() !== '') { fn(el.value.trim()); }
+            });
         }
         onCommit($('sPart'), function (v) { commitField($('sPart'), 'sPart', '/api/console/sid', {sid: v}); });
         onCommit($('sMass'), function (v) { commitField($('sMass'), 'sMass', '/api/console/value', {key: 'weight', value: v}); });
 
+        // Advanced (5435) and Torque guard (5436): an edit is only STAGED (highlighted, listed
+        // old -> new); Confirm sends all staged values, one packet per port (Andy Nov 24 14:34)
         document.querySelectorAll('.guard-in').forEach(function (inp) {
             var f = inp.getAttribute('data-g');
             onCommit(inp, function (v) {
                 if (inp.disabled) { return; }
                 var bad = guardCheck(f, v);
                 if (bad) { flash(inp, false, bad); if (typeof toast === 'function') { toast(bad, true); } return; }
-                S.editing['g-' + f] = true;
-                post('/api/console/guard', {field: f, value: Number(v)}).then(function (r) {
-                    S.editing['g-' + f] = false;
-                    if (!r.ok) { flash(inp, false, r.msg || 'Not sent'); if (typeof toast === 'function') { toast(r.msg || 'Not sent', true); } }
-                    else { inp.classList.add('send-pending'); }
-                    poll();
-                });
+                var g = GUARD.filter(function (x) { return x[0] === f; })[0] || [f, f, ''];
+                var gv = ((S.state || {}).session || {}).guard || {};
+                stageAdv(inp, 'guard', f, g[1], g[2], guardFmt(f, v), guardFmt(f, (gv.values || {})[f]));
             });
         });
         document.querySelectorAll('.adv-in').forEach(function (inp) {
@@ -897,11 +934,32 @@
             var k = inp.getAttribute('data-k');
             onCommit(inp, function (v) {
                 if (inp.disabled || inp.readOnly) { return; }
-                var bad = advCheck(k, v);           // run 15: the layout's ranges before sending
+                var bad = advCheck(k, v);           // run 15: the layout's ranges before staging
                 if (bad) { flash(inp, false, bad); if (typeof toast === 'function') { toast(bad, true); } return; }
-                commitField(inp, 'adv-' + k, '/api/console/value', {key: k, value: v});
+                var lab = k, unit = '';
+                ADV.forEach(function (sec) { sec[2].forEach(function (x) { if (x[0] === k) { lab = x[1]; unit = x[2]; } }); });
+                var rb = ((S.state || {}).session || {}).readback || {};
+                stageAdv(inp, 'adv', k, lab, unit, advFmt(k, v), advFmt(k, rb[k]));
             });
         });
+        $('advOk').addEventListener('click', function () {
+            var body = {adv: {}, guard: {}}, ids = Object.keys(S.advPend);
+            if (!ids.length) { return; }
+            ids.forEach(function (id) { var p = S.advPend[id]; body[p.kind][p.key] = Number(p.value); });
+            $('advOk').disabled = true;
+            post('/api/console/advanced', body).then(function (r) {
+                $('advOk').disabled = false;
+                if (!r.ok) {
+                    var m = 'Advanced not sent: ' + (r.msg || 'refused');
+                    if (typeof toast === 'function') { toast(m, true); } dockMsg(m, true);
+                    return;
+                }
+                clearAdvPend();
+                if (typeof toast === 'function') { toast('Advanced: sending ' + ids.length + (ids.length === 1 ? ' value' : ' values') + '…', false); }
+                poll();
+            });
+        });
+        $('advCancel').addEventListener('click', function () { clearAdvPend(); poll(); });
         // popovers
         var sb = $('statusBtn'), sp = $('statusPop'), ab = $('advBtn'), ap = $('advPop'), chip = $('sideChip');
         function toggle(btn, pop) { var open = pop.hidden; closeAll(); pop.hidden = !open; btn.setAttribute('aria-expanded', String(open)); }
@@ -1000,8 +1058,10 @@
         });
         // K %: one decimal, sent on Enter/blur; a change over 2 % with Motor ON asks once more
         var kp = $('kPct'), kc = $('kConfirm'), start = null;
-        kp.addEventListener('focus', function () { start = kp.value; });
-        kp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { kp.blur(); } if (e.key === 'Escape') { kp.value = start; kp.blur(); } });
+        // same commit rule as onCommit: Enter always sends, typing then leaving sends (Andy Nov 24)
+        kp.addEventListener('focus', function () { start = kp.value; kp._typed = false; kp._enter = false; });
+        kp.addEventListener('input', function () { kp._typed = true; });
+        kp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { kp._enter = true; kp.blur(); } if (e.key === 'Escape') { kp.value = start; kp._typed = false; kp._enter = false; kp.blur(); } });
         function sendK(v, confirmed) {
             S.editing.kPct = true;
             post('/api/console/value', {key: 'k_percent', value: v, confirmed: !!confirmed}).then(function (r) {
@@ -1015,7 +1075,11 @@
                 flash(kp, r.ok && r.state !== 'pending', r.msg); poll();
             });
         }
-        kp.addEventListener('blur', function () { if (kp.value !== start && kp.value.trim() !== '') { sendK(kp.value.trim(), false); } });
+        kp.addEventListener('blur', function () {
+            var send = kp._enter || kp._typed || kp.value !== start;
+            kp._enter = kp._typed = false;
+            if (send && kp.value.trim() !== '') { sendK(kp.value.trim(), false); }
+        });
         // Zero / Calibrate FSR: toggles; Reset SV: 200 ms pulse; Calibrate IMU: counter + 1.
         // No text change and no toast on success, only a message on an error or refusal.
         function dockAct(id, url, body) {

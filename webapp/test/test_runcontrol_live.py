@@ -13,6 +13,10 @@ import time
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP)
 os.chdir(APP)
+# Nov 24: a blanket test run stopped / started the REAL target through this file. It talks to the Speedgoat, so it only runs with an explicit opt-in (and Andy's OK for a Stop / Start).
+if os.environ.get("AFO_LIVE_TARGET_OK") != "1":
+    print("SKIP: live target test (stops and starts the Speedgoat app); set AFO_LIVE_TARGET_OK=1 to run")
+    sys.exit(0)
 from workers import MatlabWorker  # noqa: E402
 
 TEE_SUMMARY = r"C:\Users\Andy\Desktop\AFO\_claude_live\tee_summary.txt"

@@ -698,6 +698,48 @@ class SessionSetup:
             if f == field:
                 self.status[k] = {"state": state, "msg": msg, "at": time.time()}
 
+    def confirm_advanced(self, adv: Dict[str, Any], guard: Dict[str, Any]) -> Dict[str, Any]:
+        """Advanced panel Confirm (Andy Nov 24 14:34: every Advanced setting needs a confirm):
+        the edited 5435 values in ONE packet, then the edited 5436 values in ONE packet.
+        Everything is checked before anything is sent."""
+        out: Dict[str, Any] = {"ok": True, "sent": {}}
+        alk, glk = getattr(self.ctx, "adv_link", None), getattr(self.ctx, "guard_link", None)
+        if adv:
+            if alk is None or not self.adv_profile():
+                return {"ok": False, "msg": self.ADV_READONLY_MSG}
+            bad = [k for k in adv if k not in self.ADV_ECHO_COL]
+            if bad:
+                return {"ok": False, "msg": f"{bad[0]}: not an Advanced setting"}
+            for k in adv:
+                why = self.write_blocked(k)
+                if why:
+                    return {"ok": False, "msg": f"{self.spec(k)['label']}: {why}"}
+        if guard and (glk is None or not self.guard_profile()):
+            return {"ok": False, "msg": "Torque guard: not on this build"}
+        if self.echo_stale():
+            return {"ok": False, "msg": self.FROZEN_MSG}
+        # check both ports before sending either
+        for lk, vals in ((alk, {self.ADV_ECHO_COL[k]: v for k, v in adv.items()}), (glk, guard)):
+            bad = lk.check_many(vals) if vals else None
+            if bad:
+                return {"ok": False, "msg": f"{bad[0].replace('_', ' ')}: {bad[1]}", "field": bad[0]}
+        if adv:
+            r = alk.press_many({self.ADV_ECHO_COL[k]: v for k, v in adv.items()})
+            if not r.get("ok"):
+                return {"ok": False, "msg": r.get("msg") or "not sent"}
+            with self.lock:
+                for k, v in adv.items():
+                    self.values[k] = float(v)
+            self.audit("udp set (Advanced confirm)", f"{json.dumps(adv)} (5435 seq {r.get('seq')})")
+            out["sent"]["5435"] = r.get("fields")
+        if guard:
+            r = glk.press_many(guard)
+            if not r.get("ok"):
+                return {"ok": False, "msg": (r.get("msg") or "not sent") + (" (5435 part sent)" if adv else ""), "sent": out["sent"]}
+            self.audit("udp set (Advanced confirm)", f"{json.dumps(guard)} (5436 seq {r.get('seq')})")
+            out["sent"]["5436"] = r.get("fields")
+        return out
+
     def adv_link_adopted(self, st: Dict[str, float]) -> None:
         """5435: the device's Advanced values were adopted (first echo / back after a stall);
         refresh_echo shows them on the next poll. Nothing is sent."""

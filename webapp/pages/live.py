@@ -82,8 +82,8 @@ def live_spec() -> dict:
     dash, unit, decimals)."""
     def ser(label, src, style_key=None, color=None, width=None, unit="", dec=2):
         st = SERIES.get(style_key, {}) if style_key else {}
-        return {"label": label, "src": list(src), "color": color or st.get("color"), "width": width or st.get("width", 1.5),
-                "dash": [5, 4] if st.get("dash") else None, "unit": unit, "dec": dec}
+        return {"label": label, "src": list(src), "color": color or st.get("color"), "width": width or st.get("width", 3.0),
+                "dash": [8, 5] if st.get("dash") else None, "unit": unit, "dec": dec}
     plots = {
         "torque": {"group": "gait", "y": pad_range(-5, 15), "ylabel": "Torque (Nm)", "xlabels": False, "series": [
             ser("Measured", ("torque", None), "meas", unit="Nm"), ser("Command", ("demand_torque", None), "cmd", unit="Nm")]},
@@ -94,7 +94,7 @@ def live_spec() -> dict:
         plots[c["id"]] = {"group": "sensors", "y": pad_range(*c["y"]), "ylabel": c["title"] +
                           (f" ({c['card_unit']})" if c.get("card_unit") else ""),
                           "xlabels": i == len(SENSOR_CARDS) - 1, "series": [
-            ser(n, c["src"][k], color=c["colors"][k % len(c["colors"])], width=1.25, unit=c["unit"], dec=c["dec"])
+            ser(n, c["src"][k], color=c["colors"][k % len(c["colors"])], width=2.5, unit=c["unit"], dec=c["dec"])
             for k, n in enumerate(c["names"])]}
     for i, p in enumerate(TRAINING_PLOTS):
         dec = int(p["fmt"].strip(".f") or 2)

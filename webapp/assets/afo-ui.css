@@ -653,6 +653,11 @@ ul.pop-checklist li.unknown { color: var(--text-3); }
 /* Live sub-tabs (Gait | Sensors | Training) and the 2 s / 10 s window: one step larger (Andy 14:51) */
 #page-live > .toolbar .seg button { height: 30px; font-size: 16px; padding: 0 14px; }   /* 24 -> 30 px, 12 -> 16 px, 10 -> 14 px */
 #page-live > .toolbar .seg { align-items: center; }
+/* Live sub-tabs centred, the 2 s / 10 s window stays at the right (Andy Nov 24 14:29). Side columns
+   are 1fr with an auto minimum, so a narrow window pushes the tabs left instead of overlapping. */
+#page-live > .toolbar { display: grid; grid-template-columns: 1fr auto 1fr; }
+#page-live > .toolbar > .seg { grid-column: 2; }
+#page-live > .toolbar > .tb-right { grid-column: 3; justify-self: end; }
 /* focus ring only for keyboard focus (a mouse click left the teal ring on the selected tab) */
 button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:focus:not(:focus-visible),
 .side-chip:focus:not(:focus-visible), .status-btn:focus:not(:focus-visible), .lg:focus:not(:focus-visible),
@@ -671,3 +676,18 @@ button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:fo
 #sPart, #sMass, #kPct, .k-field .input, .adv-sec .input, .adv-grid .input, .adv-in { text-align: center; }
 /* fixed-width page columns centred (Andy 14:59): DAQ, Trials; the top bar and Live stay full width */
 .page:not(.live) > .narrow { margin-inline: auto; }
+/* Advanced popover alignment (Andy Nov 24 14:34): one label column | one fixed input+unit column
+   in every section, so inputs and units line up; a long label wraps to two lines instead of
+   pushing its input right */
+.adv-sec label { display: grid; grid-template-columns: minmax(0, 1fr) 152px; align-items: center; column-gap: var(--sp-2);
+                 white-space: normal; line-height: 16px; }
+.adv-sec label > span { width: 152px; justify-self: end; white-space: nowrap; }
+/* Advanced: staged edits wait for Confirm (old -> new list, Confirm / Cancel) */
+.adv-in.adv-staged, .guard-in.adv-staged { border-color: var(--caution); background: var(--caution-weak); }
+.adv-confirm { position: sticky; bottom: 0; display: flex; align-items: flex-end; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4);
+               border-top: 1px solid var(--border); background: var(--surface); }
+.adv-changes { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-width: 0; font-size: var(--fs-12); color: var(--text-2); }
+.adv-changes li { display: flex; gap: var(--sp-2); justify-content: space-between; line-height: 20px; }
+.adv-changes .ac-val { white-space: nowrap; }
+.adv-confirm-act { display: flex; gap: var(--sp-2); flex: none; }
+#advBtn.has-pending { box-shadow: inset 0 0 0 2px var(--caution); }

@@ -111,6 +111,14 @@ class SettingsLink:
         """Why a press of *field* = *value* is not sent, or None."""
         return None if self.valid(field, value) else f"{field} {value!r} is not a valid value"
 
+    def check_many(self, values: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+        """(field, why) for the first refused field of a batch, else None."""
+        for f, v in values.items():
+            why = self.check(f, v)
+            if why:
+                return f, why
+        return None
+
     def __init__(self, cfg: Dict[str, Any], echo_fn: Callable[[], tuple], view_only: bool = False,
                  on_status: Optional[Callable[[str, str, str], None]] = None, sender=None, start_thread: bool = True,
                  on_adopt: Optional[Callable[[Dict[str, float]], None]] = None):
@@ -234,6 +242,44 @@ class SettingsLink:
             self._send(pkt)
         self.on_status(field, "sending", "")
         return {"ok": True, "state": "sending", "msg": ""}
+
+    def press_many(self, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Advanced Confirm (Andy Nov 24 14:34): several user edits in ONE packet. Every field
+        is checked first; one bad field sends nothing. Confirmed / retried like a press."""
+        with self.lock:
+            if self.view_only:
+                return {"ok": False, "state": "error", "msg": "View-only console: settings are not sent from this app"}
+            if self.frozen:
+                return {"ok": False, "state": "error", "msg": FROZEN_MSG}
+            if self.state is None:
+                return {"ok": False, "state": "error", "msg": "Waiting for the device state (5433 echo)"}
+            if not values:
+                return {"ok": False, "state": "error", "msg": "nothing to send"}
+            for field in values:
+                if field not in self.FIELDS or field == self.COUNTER:
+                    return {"ok": False, "state": "error", "msg": f"{field}: not a setting on this port", "field": field}
+            bad = self.check_many(values)
+            if bad:
+                return {"ok": False, "state": "error", "msg": f"{bad[0]}: {bad[1]}", "field": bad[0]}
+            vals = {f: float(v) for f, v in values.items()}
+            now = time.time()
+            for f, v in vals.items():
+                self.pending[f] = {"value": v, "seqs": [], "t0": now, "last": now, "tries": 0}
+            try:
+                v = self._values()
+            except RuntimeError as exc:
+                for f in vals:
+                    self.pending.pop(f, None)
+                return {"ok": False, "state": "error", "msg": str(exc)}
+            v.update(vals)
+            pkt = self._packet(v)
+            for f in vals:
+                self.pending[f]["seqs"].append(pkt[2])
+                self.result[f] = {"state": "sending", "msg": "", "at": now}
+            self._send(pkt)
+        for f in vals:
+            self.on_status(f, "sending", "")
+        return {"ok": True, "state": "sending", "msg": "", "fields": sorted(vals), "seq": pkt[2]}
 
     def send_values(self, values: Dict[str, float]) -> Optional[tuple]:
         """After a PAGE-initiated Start: one packet with the page's values (side only when
@@ -480,6 +526,33 @@ class AdvLink(SettingsLink):
             lo = self.in_use("sv_target_min")
             if lo is not None and f <= lo:
                 return f"must be above the min target speed ({lo:g})"
+        return None
+
+    def check_many(self, values: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+        """A Confirm may change min AND max target speed together: the pair is checked with
+        the batch's values (the other one from the device when it is not in the batch)."""
+        pair = ("sv_target_min", "sv_target_max")
+        for f, v in values.items():
+            if f in pair:
+                r = self.RULES.get(f)
+                try:
+                    x = float(v)
+                except (TypeError, ValueError):
+                    return f, "not a number"
+                if r is None:
+                    return f, "not an Advanced value"
+                if not math.isfinite(x) or not (r["min"] <= x <= r["max"]):
+                    return f, f"{x:g} is outside {r['min']:g}..{r['max']:g}"
+                continue
+            why = self.check(f, v)
+            if why:
+                return f, why
+        if any(f in values for f in pair):
+            lo = float(values["sv_target_min"]) if "sv_target_min" in values else self.in_use("sv_target_min")
+            hi = float(values["sv_target_max"]) if "sv_target_max" in values else self.in_use("sv_target_max")
+            if lo is not None and hi is not None and lo >= hi:
+                f = "sv_target_min" if "sv_target_min" in values else "sv_target_max"
+                return f, f"min target speed ({lo:g}) must be below the max ({hi:g})"
         return None
 
     def _packet(self, values: Dict[str, float]):
