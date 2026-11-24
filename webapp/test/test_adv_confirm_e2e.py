@@ -125,6 +125,47 @@ def main():
     ctx.adv_link.stop(); ctx.guard_link.stop(); ctx.settings_link.stop()
 
 
+def run14_setparam():
+    """Cloud check of 1298455: on a run-14 build (18-float echo, no 5435) the Confirm must go the
+    old way, one setparam per value through MATLAB, as Enter did before the Confirm change."""
+    from test_run14_layout import Dev, make_session
+    from flask import Flask
+    from pages import console_api as CA
+    dev, calls = Dev(18), []
+    ctx, s = make_session(dev, calls)
+    dev.on = True
+    time.sleep(0.4)
+    check("run 14 (18 floats): no 5435 Advanced profile", not s.adv_profile())
+    srv = Flask("adv_confirm_r14")
+    CA.register(srv, ctx)
+    cl = srv.test_client()
+    calls.clear()
+    r = cl.post("/api/console/advanced", json={"adv": {"p_gain": 0.5, "i_gain": 0.6}})
+    j = r.get_json()
+    check("run 14 Confirm: accepted (not 'read-only on this build')", r.status_code == 200 and j.get("ok")
+          and sorted(j["sent"].get("setparam", [])) == ["i_gain", "p_gain"], (r.status_code, j))
+    sets = [c for c in calls if c[0] == "matlab" and c[1] == "set"]
+    check("run 14 Confirm: setparam AFO_r1/P = 0.5 and AFO_r1/I = 0.6 through MATLAB",
+          ("AFO_r1/P", "Value", 0.5) in [c[2] for c in sets] and ("AFO_r1/I", "Value", 0.6) in [c[2] for c in sets], calls)
+    check("run 14 Confirm: nothing on UDP 5435 / 5436 (only 5434 packets from the session link, if any)",
+          all(len(p) == 8 for p in dev.packets), dev.packets)
+    check("run 14 Confirm: both read back as confirmed", wait_state(s, "p_gain") and wait_state(s, "i_gain"),
+          {k: s.status.get(k) for k in ("p_gain", "i_gain")})
+    r = cl.post("/api/console/advanced", json={"adv": {"p_gain": 99}})
+    check("run 14 Confirm: an out-of-range value is refused", r.status_code == 409 and not r.get_json().get("ok"), r.get_json())
+    ctx.settings_link.stop()
+
+
+def wait_state(s, k, want="confirmed", t=2.0):
+    t0 = time.time()
+    while time.time() - t0 < t:
+        if (s.status.get(k) or {}).get("state") == want:
+            return True
+        time.sleep(0.02)
+    return False
+
+
 main()
+run14_setparam()
 print("\nFAILS:", FAILS)
 sys.exit(1 if FAILS else 0)

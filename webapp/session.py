@@ -704,6 +704,24 @@ class SessionSetup:
         Everything is checked before anything is sent."""
         out: Dict[str, Any] = {"ok": True, "sent": {}}
         alk, glk = getattr(self.ctx, "adv_link", None), getattr(self.ctx, "guard_link", None)
+        if adv and not guard and not self.adv_profile():
+            # builds without the 5435 echo (run <= 14): each confirmed value goes the old way
+            # (enter_value -> setparam through MATLAB), as an Enter did before the Confirm change
+            bad = [k for k in adv if k not in self.ADV_ECHO_COL]
+            if bad:
+                return {"ok": False, "msg": f"{bad[0]}: not an Advanced setting"}
+            msgs, sent = [], []
+            for k, v in adv.items():
+                before = self.status.get(k)
+                msgs.append(self.enter_value(k, v))
+                now = self.status.get(k)
+                # only a NEW status counts: a refused value leaves the old (e.g. confirmed) one
+                if now is not before and (now or {}).get("state") in ("sending", "pending", "confirmed"):
+                    sent.append(k)
+                else:
+                    return {"ok": False, "msg": msgs[-1], "sent": {"setparam": sent}}
+            self.audit("Advanced confirm (setparam)", json.dumps(adv))
+            return {"ok": True, "sent": {"setparam": sent}, "msg": "; ".join(m for m in msgs if m)}
         if adv:
             if alk is None or not self.adv_profile():
                 return {"ok": False, "msg": self.ADV_READONLY_MSG}
