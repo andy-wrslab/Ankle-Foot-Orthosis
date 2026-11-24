@@ -62,7 +62,7 @@ def e2e():
     tmp = tempfile.mkdtemp(prefix="afo_traxis_")
     cfg = yaml.safe_load(open(os.path.join(APP, "config.yaml"), encoding="utf-8"))
     cfg["udp"] = {"listen_host": "127.0.0.1", "listen_port": 15432, "send_host": "127.0.0.1",
-                  "send_port": 15990, "param_port": 15991}
+                  "send_port": 15990}
     cfg["dash"] = {"host": "127.0.0.1", "port": 18050}
     cfg["paths"]["log_dir"] = os.path.join(tmp, "logs")
     cfg["target"] = {"model": "AFO_r1"}

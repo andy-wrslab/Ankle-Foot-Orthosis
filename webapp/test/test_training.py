@@ -86,7 +86,7 @@ def main():
 
     sent = []
     cs = CommandState({}, os.path.join(tmpd, "last_command.json"), lambda *a, **k: sent.append(a),
-                      lambda *a, **k: None, lambda: sup.latest(max_age_s=0.5))
+                      lambda: sup.latest(max_age_s=0.5))
     cs.toggles.update({"motor": 1, "assist": 1, "k": 1})      # console thinks assist is ON; model has OFF
     t_end = time.time() + 3.0
     while time.time() < t_end:
@@ -98,7 +98,7 @@ def main():
     res["rate_hz_while_sending"] = sup.get_status().get("rate_hz")
     res["toggles_from_model"] = view["toggles"]
     res["mismatch_after_3_s"] = view["mismatch"]
-    res["model_params_echo"] = {k2: v for k2, v in view["model_params"].items() if v is not None}
+    res["no_params_in_view"] = "model_params" not in view and "params" not in view     # UDP 5430 removed (Nov 24)
     time.sleep(1.0)
     res["latest_after_silence_0_5"] = sup.latest(max_age_s=0.5)
     sup.shutdown()
@@ -110,8 +110,8 @@ def main():
         fails.append("toggle_source")
     if res["latest_after_silence_0_5"]:
         fails.append("stale_not_dropped")
-    if res["model_params_echo"]:
-        fails.append("param_echo_should_be_empty")
+    if not res["no_params_in_view"]:
+        fails.append("params_still_in_view")
     res["FAILS"] = fails
     os.makedirs(os.path.join(APP, "test", "e2e"), exist_ok=True)
     json.dump(res, open(os.path.join(APP, "test", "e2e", "console_results.json"), "w"), indent=1, default=str)

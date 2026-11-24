@@ -7,8 +7,6 @@ udp:
   # Where to send outbound control packets (Simulink UDP Receive block)
   send_host: "192.168.7.5"
   send_port: 5431
-  # Port for parameter/tuning packet (deadband, margin, step up/down, v_min)
-  param_port: 5430
   # Run 14: session settings packet '<8f' (magic 4134, version 1, seq, side, body mass,
   # assist mode, fixed K %, gyro_cal_request) to send_host, confirmed by the 18-float 5433 echo
   session_port: 5434
@@ -142,12 +140,3 @@ session:
   # never written to the Speedgoat, until this is set to true on purpose.
   target_writes_enabled: false
 
-commands:
-  # The 5 Parameters (epsilon up/down, step up/down, v_min) go out as '<5f' to
-  # udp.param_port (5430). As of 2026-11-19 no block in AFO.slx reads them and the
-  # model's receiver expects 6 singles, so the UI greys them out. Packet format is
-  # unchanged until it is decided in the Simulink thread.
-  params_used_by_model: false
-  # No parameter echo on UDP any more (console packet has none): parameters are
-  # confirmed by getparam read-back. Map a parameter to a console column here if one appears.
-  param_echo_columns: {}

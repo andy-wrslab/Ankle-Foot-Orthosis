@@ -258,7 +258,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="afo_soak_")
     cfg = yaml.safe_load(open(os.path.join(APP, "config.yaml"), encoding="utf-8"))
     cfg["udp"] = {"listen_host": "127.0.0.1", "listen_port": PORT_BUS, "send_host": "127.0.0.1",
-                  "send_port": PORT_CTL, "param_port": PORT_PRM}
+                  "send_port": PORT_CTL}
     cfg["dash"] = {"host": "127.0.0.1", "port": PORT_APP}
     cfg["paths"]["log_dir"] = os.path.join(tmp, "logs")
     cfg["target"] = {"model": "AFO_r1"}

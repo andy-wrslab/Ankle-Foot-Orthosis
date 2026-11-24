@@ -165,7 +165,7 @@ def shots(base, pages, prefix, w=1280, h=800, port=19251):
 def main():
     base = yaml.safe_load(open(os.path.join(APP, "config.yaml"), encoding="utf-8"))
     base["udp"] = {"listen_host": "127.0.0.1", "listen_port": 15434, "send_host": "127.0.0.1",
-                   "send_port": 15990, "param_port": 15991}
+                   "send_port": 15990}
     base["dash"] = {"host": "0.0.0.0", "port": PORT}
     cfgp = os.path.join(tempfile.mkdtemp(), "e2e.yaml")
     yaml.safe_dump(base, open(cfgp, "w"), sort_keys=False)

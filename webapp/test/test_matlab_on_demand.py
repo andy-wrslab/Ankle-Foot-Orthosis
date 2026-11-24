@@ -140,7 +140,7 @@ def udp_only():
                              on_status=s.adv_link_status, on_adopt=s.adv_link_adopted, sender=dev.recv)
     sent5431 = []
     cs = CommandState({"udp": {}}, os.path.join(tempfile.mkdtemp(), "last.json"),
-                      lambda cfg, *v, force=False: sent5431.append(v), lambda *a, **k: None,
+                      lambda cfg, *v, force=False: sent5431.append(v),
                       lambda: {k: dev.v[k] for k in ("cmd_motor", "cmd_assist", "cmd_k")})
     cs.frozen = s.link_frozen
     cs.echo_expected = lambda: True
@@ -189,7 +189,7 @@ def device_only():
     rb = {"cmd_motor": 0.0, "cmd_assist": 0.0, "cmd_k": 1.0}
     path = os.path.join(tempfile.mkdtemp(), "last.json")
     json.dump({"toggles": {"motor": 1, "assist": 1, "k": 0}}, open(path, "w"))     # 15:41 leftovers
-    cs = CommandState({"udp": {}}, path, lambda *a, **k: None, lambda *a, **k: None, lambda: dict(rb))
+    cs = CommandState({"udp": {}}, path, lambda *a, **k: None, lambda: dict(rb))
     cs.echo_expected = lambda: True
     v = cs.view()
     check("Motor / Assist / K show the device echo, not last_command.json", [v["toggles"][t]["value"] for t in ("motor", "assist", "k")]

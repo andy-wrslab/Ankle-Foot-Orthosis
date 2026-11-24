@@ -35,7 +35,7 @@ def make_cs(rb):
     tmp = tempfile.mkdtemp(prefix="afo_dock_")
     path = os.path.join(tmp, "last.json")
     cs = CommandState({"udp": {}}, path, lambda cfg, *v, force=False: sent.append((time.time(), v)),
-                      lambda *a, **k: None, lambda: dict(rb))
+                      lambda: dict(rb))
     return cs, sent, path
 
 

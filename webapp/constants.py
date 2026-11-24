@@ -19,4 +19,3 @@ N_WINDOW_SEC = 10
 SAMPLE_RATE_HZ = 1024
 # Width of the min/max display bins, anchored to absolute model time.
 BIN_WIDTH_SEC = 0.02
-PARAM_FMT = "<5f"

@@ -122,7 +122,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="afo_r5_")
     cfg = yaml.safe_load(open(os.path.join(APP, "config.yaml"), encoding="utf-8"))
     cfg["udp"] = {"listen_host": "127.0.0.1", "listen_port": 15432, "send_host": "127.0.0.1",
-                  "send_port": 15990, "param_port": 15991}
+                  "send_port": 15990}
     cfg["dash"] = {"host": "127.0.0.1", "port": 18050}
     cfg.setdefault("paths", {})["log_dir"] = os.path.join(tmp, "logs")
     lay = json.load(open(os.path.join(APP, "config", "console_udp_layout.json"), encoding="utf-8"))

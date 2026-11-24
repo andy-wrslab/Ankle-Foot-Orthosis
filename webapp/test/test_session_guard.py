@@ -30,7 +30,7 @@ def main():
     ctx.training = types.SimpleNamespace(latest=lambda max_age_s=1.0: dict(echo))
     ctx.jobs = types.SimpleNamespace(running=lambda k: None)
     ctx.commands = CommandState({}, os.path.join(tmp, "last.json"), lambda *a, **k: sent.append(a),
-                                lambda *a, **k: None, lambda: dict(echo))
+                                lambda: dict(echo))
     ctx.commands.toggles.update({"motor": 0, "assist": 0, "k": 0})
     s = SessionSetup(ctx)
     ctx.commands.guard = s.guard

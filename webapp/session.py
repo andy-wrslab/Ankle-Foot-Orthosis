@@ -864,13 +864,6 @@ class SessionSetup:
                          "source": "echo" if tgt is not None else None, "age_s": None,
                          "port": echo.get("_port") if tgt is not None else None,
                          "match": values_match(t, sent_t.get(t), tgt)})
-        sent_p = dict(getattr(cmd, "params", {}) or {})
-        for p, col in (getattr(cmd, "param_echo", {}) or {}).items():
-            tgt = echo.get(col)
-            rows.append({"name": p, "label": p.replace("_", " "), "entered": sent_p.get(p), "target": tgt,
-                         "source": "echo" if tgt is not None else None, "age_s": None,
-                         "port": echo.get("_port") if tgt is not None else None,
-                         "match": values_match(p, sent_p.get(p), tgt)})
         return rows
 
     def flush_pending(self, why: str = "running") -> None:

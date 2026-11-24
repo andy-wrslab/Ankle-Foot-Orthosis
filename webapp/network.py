@@ -7,7 +7,7 @@ import time
 import threading
 from typing import Dict, Any, List, Tuple
 
-from constants import CONTROL_FMT, SAMPLE_RATE_HZ, UPDATE_MS, N_WINDOW_SEC, PARAM_FMT, BIN_WIDTH_SEC
+from constants import CONTROL_FMT, SAMPLE_RATE_HZ, UPDATE_MS, N_WINDOW_SEC, BIN_WIDTH_SEC
 from state import snapshots
 from history import SignalHistory, DisplayHistory
 from health import DataHealth
@@ -253,33 +253,6 @@ def send_control_packet(
         except OSError as exc:
             if _logger.isEnabledFor(logging.DEBUG):
                 _logger.debug("control packet send failed: %s", exc)
-
-
-def send_param_packet(
-    cfg: Dict[str, Any],
-    epsilon_up: float,
-    epsilon_down: float,
-    step_up: float,
-    step_down: float,
-    v_min: float,
-) -> None:
-    """Send a 5-float packet with tuning parameters."""
-    payload = struct.pack(
-        PARAM_FMT,
-        float(epsilon_up),
-        float(epsilon_down),
-        float(step_up),
-        float(step_down),
-        float(v_min),
-    )
-    host = cfg["udp"]["send_host"]
-    port = cfg["udp"].get("param_port", 5430)
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        try:
-            sock.sendto(payload, (host, port))
-        except OSError as exc:
-            if _logger.isEnabledFor(logging.DEBUG):
-                _logger.debug("param packet send failed: %s", exc)
 
 
 def _zero_controls(cfg: Dict[str, Any]) -> None:

@@ -329,11 +329,6 @@ button.drive-badge:hover { filter: brightness(.96); }
 .adv-sec .input[readonly] { background: transparent; border-style: dashed; color: var(--text-2); }
 .adv-sec .sec-note { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-3); margin-left: 6px; }
 .adv-sec .sec-help { margin: 0; font-size: var(--fs-11); line-height: 16px; color: var(--text-3); white-space: normal; }
-/* UDP 5430 params: shown, greyed, not editable (no block reads them, Andy 12:32). */
-.adv-nc { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px dashed var(--sec-line, var(--border)); display: flex; flex-direction: column; gap: 4px; opacity: .7; }
-.adv-nc .nc-head { font-size: var(--fs-11); color: var(--text-3); }
-.adv-nc label { font-size: var(--fs-11); }
-.adv-nc .input { height: 24px; background: transparent; }
 @media (max-width: 760px) { .adv-groups { grid-template-columns: 1fr; } }
 .adv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: var(--sp-2) var(--sp-6); padding: var(--sp-4); }
 .adv-grid label { white-space: nowrap; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); font-size: var(--fs-12); color: var(--text-2); }

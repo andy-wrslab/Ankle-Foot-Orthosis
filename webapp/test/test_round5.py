@@ -55,8 +55,6 @@ class Job:
 class Cmd:
     def __init__(self):
         self.toggles = {"motor": 1, "assist": 1, "k": 1}
-        self.params = {"epsilon_up": 0.05}
-        self.param_echo = {"epsilon_up": "param_epsilon_up"}
 
     def view(self):
         return {"toggles": {"motor": {"value": 1}}}

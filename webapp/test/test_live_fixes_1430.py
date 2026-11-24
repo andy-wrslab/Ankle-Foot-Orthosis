@@ -5,7 +5,7 @@
   polls at 100 ms while something is sending and the toast turns to "... saved";
 - Zero: a 1 -> 0 pulse on 5431 field 0 with motor / assist / k unchanged, refused with
   Assist on; dock button with the tooltip;
-- Advanced: the UDP 5430 block hidden on AFO_r1; After Start checklist without marks;
+- Advanced: no UDP 5430 box (removed Nov 24); After Start checklist without marks;
 - no "UDP only · N packets/s" text on the Live toolbar.
 
     python test/test_live_fixes_1430.py
@@ -97,7 +97,7 @@ def zero():
     rb = {"cmd_motor": 1.0, "cmd_assist": 0.0, "cmd_k": 1.0}
     tmp = tempfile.mkdtemp(prefix="afo_zero_")
     cs = CommandState({"udp": {}}, os.path.join(tmp, "last.json"),
-                      lambda cfg, *v, force=False: sent.append((time.time(), v)), lambda *a, **k: None, lambda: dict(rb))
+                      lambda cfg, *v, force=False: sent.append((time.time(), v)), lambda: dict(rb))
     r = cs.pulse("zero")
     time.sleep(0.4)
     # Andy 15:06 "they should all just be toggle": Zero is a latched toggle (test_dock_buttons.py)
@@ -118,7 +118,7 @@ def zero():
 
 def page_static():
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
-    check("Advanced: UDP 5430 block hidden on AFO_r1", "nc.hidden = isBif;" in js and 'id="advNc"' in js)
+    check("Advanced: no UDP 5430 box any more (removed Nov 24)", 'id="advNc"' not in js and "adv-nc" not in js and "5430" not in js)
     check("After Start checklist: no check marks (colour only)", "\\u2713" not in js and "\\u25CB" not in js and "✓" not in js)
     css = open(os.path.join(APP, "assets", "afo-ui.css"), encoding="utf-8").read()
     check("checklist: open items amber", "ul.pop-checklist li.todo { color: var(--caution);" in css)

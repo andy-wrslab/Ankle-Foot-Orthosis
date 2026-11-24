@@ -20,8 +20,7 @@ zero / calibrate_pressure are latched toggles (Andy 15:06 "they should all just 
 a press sends the field = 1 and it stays 1 in every packet until pressed again (both act on the
 0 -> 1 edge in the model). reset_sv stays a ~200 ms 1 -> 0 pulse: the SV estimator resets on
 every tick while it is 1.
-Parameter packet (PARAM_FMT "<5f", to udp.param_port):
-    epsilon_up, epsilon_down, step_up, step_down, v_min
+UDP 5430 (the old 5-float parameter packet) is gone (Nov 24): nothing in the model read it.
 """
 from __future__ import annotations
 
@@ -38,28 +37,24 @@ MOMENTARY = ("zero", "calibrate", "reset")
 LATCHED: tuple = ()     # Andy 16:15 "why is zero a switch now?": Zero / Calibrate FSR are pulses again
 # 5433 echo of a latched field (zero has none: its lit state is the commanded one)
 LATCH_ECHO = {"calibrate": "cmd_calibrate_pressure"}
-PARAMS = ("epsilon_up", "epsilon_down", "step_up", "step_down", "v_min")
 # training stream (UDP 5433) columns = the commands actually latched in the model
 MODEL_KEYS = {"motor": "cmd_motor", "assist": "cmd_assist", "k": "cmd_k"}
-MODEL_PARAM_KEYS = {p: "param_" + p for p in PARAMS}
 
 _log = logging.getLogger("afo.commands")
 
 
 class CommandState:
     def __init__(self, cfg: Dict[str, Any], state_path: str,
-                 send_control: Callable[..., None], send_params: Callable[..., None],
+                 send_control: Callable[..., None],
                  readback: Callable[[], Dict[str, Any]]) -> None:
         self.cfg = cfg
         # view-only console (config console.view_only): nothing is ever sent to the target
         self.view_only = bool((cfg.get("console") or {}).get("view_only", False))
         self.path = state_path
         self.send_control = send_control
-        self.send_params = send_params
         self.readback = readback
         self.lock = threading.Lock()
         self.toggles: Dict[str, Optional[int]] = {t: None for t in TOGGLES}
-        self.params: Dict[str, Optional[float]] = {p: None for p in PARAMS}
         self.held: Dict[str, int] = {m: 0 for m in MOMENTARY}
         self.loaded_from_disk = False
         self.last_sent_at: Optional[float] = None
@@ -67,14 +62,6 @@ class CommandState:
         self.guard: Optional[Callable[[str], Optional[str]]] = None   # e.g. session setup: block Motor/Assist
         # run 14: the 5433 echo stalled -> the device keeps its settings and nothing is sent
         self.frozen: Optional[Callable[[], Optional[str]]] = None
-        ccfg = (cfg or {}).get("commands") or {}
-        # 2026-11-19: no block in AFO.slx reads the 5 parameters (and the model's
-        # receiver expects 6 singles while the console sends '<5f'), so the UI can
-        # grey them out. Packet format unchanged until decided in the Simulink thread.
-        self.params_used_by_model = bool(ccfg.get("params_used_by_model", False))
-        # console-packet column that echoes each parameter (none in the '<12f' console
-        # packet: parameters are confirmed by getparam). Configurable.
-        self.param_echo = dict(ccfg.get("param_echo_columns") or {})
         self._mismatch_since: Dict[str, float] = {}
         self.calibrate_busy_until = 0.0      # no lock any more (Calibrate FSR is a toggle); kept for the view
         self.last_pulse: Dict[str, Dict[str, Any]] = {}
@@ -89,10 +76,6 @@ class CommandState:
             for t in TOGGLES:
                 if d.get("toggles", {}).get(t) in (0, 1):
                     self.toggles[t] = int(d["toggles"][t])
-            for p in PARAMS:
-                v = d.get("params", {}).get(p)
-                if isinstance(v, (int, float)) and math.isfinite(v):
-                    self.params[p] = float(v)
             for m in LATCHED:
                 if d.get("held", {}).get(m) in (0, 1):
                     self.held[m] = int(d["held"][m])
@@ -106,7 +89,7 @@ class CommandState:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             tmp = self.path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as fp:
-                json.dump({"toggles": self.toggles, "params": self.params, "sent_at": self.last_sent_at,
+                json.dump({"toggles": self.toggles, "sent_at": self.last_sent_at,
                            "held": {m: self.held[m] for m in LATCHED}}, fp)
             os.replace(tmp, self.path)
         except OSError as exc:
@@ -163,45 +146,17 @@ class CommandState:
             out[t] = {"value": v, "source": src}
         return out
 
-    def model_params(self) -> Dict[str, Optional[float]]:
-        rb = self.readback() or {}
-        out = {}
-        for p, k in self.param_echo.items():
-            v = rb.get(k)
-            out[p] = float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
-        return out
-
     def mismatches(self) -> list:
-        """Model-latched commands that differ from this console's last sent state
-        for more than 1 s (e.g. another console, or a lost packet)."""
-        rb = self.readback() or {}
-        now = time.time()
-        found = []
-        # Motor / Assist / K never 'differ': the page shows the device echo (Andy 16:15)
-        pairs = [(p, self.params[p], rb.get(self.param_echo.get(p, ""))) for p in PARAMS]
-        for name, sent, model in pairs:
-            if sent is None or not isinstance(model, (int, float)) or not math.isfinite(model):
-                self._mismatch_since.pop(name, None)
-                continue
-            model_v = (1 if model >= 0.5 else 0) if name in TOGGLES else float(model)
-            differs = model_v != sent if name in TOGGLES else abs(model_v - sent) > 1e-4 * max(1.0, abs(sent))
-            if differs:
-                t0 = self._mismatch_since.setdefault(name, now)
-                if now - t0 > 1.0:
-                    found.append({"name": name, "sent": sent, "model": model_v})
-            else:
-                self._mismatch_since.pop(name, None)
-        return found
+        """Nothing 'differs' any more (Andy Nov 23 16:15): Motor / Assist / K show the device echo,
+        and the old 5430 parameters are gone (Nov 24). Kept for the view's shape."""
+        return []
 
     def view(self) -> Dict[str, Any]:
         with self.lock:
-            return {"toggles": self.resolved(), "params": dict(self.params), "model_params": self.model_params(),
+            return {"toggles": self.resolved(),
                     "calibrate_busy_s": 0.0, "latched": self.latched(),
                     "last_pulse": dict(self.last_pulse),
                     "mismatch": self.mismatches(), "held": dict(self.held),
-                    "params_used_by_model": self.params_used_by_model,
-                    "params_note": None if self.params_used_by_model else
-                    "not used by the current model (no block reads these parameters)",
                     "last_sent_at": self.last_sent_at, "loaded_from_disk": self.loaded_from_disk}
 
     VIEW_ONLY_MSG = "View-only console: commands are not sent from this app."
@@ -383,38 +338,3 @@ class CommandState:
             _log.info("user %s %s; sent with toggles %s", "pressed" if value else "released", name, cur)
             return {"ok": True, "msg": ""}
 
-    def set_param(self, field: str, value: Any, page_values: Dict[str, Any]) -> Dict[str, Any]:
-        """Send all 5 parameters: last sent, with only *field* changed. A parameter
-        this console never sent takes the value shown on the page."""
-        fz = self.frozen() if self.frozen else None
-        if fz:
-            return {"ok": False, "msg": fz}
-        try:
-            v = float(value)
-        except (TypeError, ValueError):
-            return {"ok": False, "msg": f"{field}: not a number, not sent"}
-        if not math.isfinite(v):
-            return {"ok": False, "msg": f"{field}: not a number, not sent"}
-        if self.view_only:
-            return {"ok": False, "msg": self.VIEW_ONLY_MSG}
-        with self.lock:
-            nxt = {}
-            model = self.model_params()
-            for p in PARAMS:
-                if p == field:
-                    nxt[p] = v
-                elif model.get(p) is not None:       # what the model actually holds
-                    nxt[p] = model[p]
-                elif self.params[p] is not None:
-                    nxt[p] = self.params[p]
-                else:
-                    try:
-                        nxt[p] = float(page_values.get(p))
-                    except (TypeError, ValueError):
-                        return {"ok": False, "msg": f"{p} is unknown and empty on the page; not sent"}
-            self.send_params(self.cfg, *[nxt[p] for p in PARAMS])
-            self.params = nxt
-            self.last_sent_at = time.time()
-            self._save()
-            _log.info("user changed %s -> %s; sent params %s", field, v, nxt)
-            return {"ok": True, "msg": f"{field} = {v:g} sent"}

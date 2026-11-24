@@ -42,7 +42,7 @@ class AppContext:
         self.trials = TrialStore(cfg, self.jobs, os.path.join(paths["cache_dir"], "trials"))
         self.runctl = RunControl(self)
         from commands import CommandState
-        from network import send_control_packet, send_param_packet
+        from network import send_control_packet
         self.training = TrainingSupervisor(cfg, APP_DIR, paths["log_dir"])
 
         def readback():
@@ -53,7 +53,7 @@ class AppContext:
             return rb
 
         self.commands = CommandState(cfg, os.path.join(paths["log_dir"], "last_command.json"),
-                                     send_control_packet, send_param_packet, readback)
+                                     send_control_packet, readback)
         from session import SessionSetup
         self.session = SessionSetup(self)
         from imu_cal import ImuCal

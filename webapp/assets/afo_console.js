@@ -67,7 +67,7 @@
             ['sv_target_min', 'Min target speed', 'm/s', 'Healthy participants 0.8, patients 0.5 m/s'],
             ['sv_target_max', 'Max target speed', 'm/s'],
             ['target_step_up', 'Target step up', 'm/s'],
-            ['target_step_down', 'Target step down', 'm/s']], true],
+            ['target_step_down', 'Target step down', 'm/s']]],
         ['When the target steps', 'RL mode only', [
             ['window_up', 'Step-up window', 'strides', 'Target goes up when at least 90 % of the last N strides had Uc = 1'],
             ['window_down', 'Step-down window', 'strides', 'Target can go down when at least 90 % of the last N strides had Uc not 1'],
@@ -112,12 +112,6 @@
                 return '<label' + (f[3] ? ' title="' + esc(f[3]) + '"' : '') + '>' + esc(f[1]) + '<span><input class="input mono adv-in" data-k="' +
                     f[0] + '"' + (f[4] ? ' data-ro="1" readonly' : '') + '>' + (f[2] ? ' ' + esc(f[2]) : '') + '</span></label>';
             }).join('');
-            if (sec[3]) {
-                rows += '<div class="adv-nc" id="advNc" title="UDP 5430 parameters: no block in this model reads them. Wiring them waits for a later round.">' +
-                    '<div class="nc-head">Not connected in this model · UDP 5430</div>' +
-                    ['epsilon up', 'epsilon down', 'step up', 'step down', 'v min'].map(function (n) {
-                        return '<label>' + n + '<span><input class="input mono" value="–" disabled></span></label>'; }).join('') + '</div>';
-            }
 
             return '<fieldset class="adv-sec"><legend' + (sec[1] ? ' title="' + esc(sec[1]) + '"' : '') + '>' + esc(sec[0]) +
                 '</legend>' + rows + '</fieldset>';
@@ -500,7 +494,6 @@
             if (mass && !S.editing.sMass && massOk) { mass.title = 'Confirmed by device (5433 echo)'; }
         }
         var gw = $('sGearWrap'), gear = $('sGear'), isBif = !!(st.model && st.model.bif);
-        var nc = $('advNc'); if (nc && nc.hidden !== isBif) { nc.hidden = isBif; }      // AFO_r1 does not use UDP 5430
         if (gw && gw.hidden === isBif) { gw.hidden = !isBif; setTimeout(topbarHeight, 0); }
         if (gear && isBif && document.activeElement !== gear && !S.editing.sGear) {
             var g = sv.values.bif_mass; var gt = g == null ? '' : String(+g); if (gear.value !== gt) { gear.value = gt; }
