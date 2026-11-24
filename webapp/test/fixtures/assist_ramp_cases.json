@@ -1,0 +1,378 @@
+[
+ {
+  "name": "RL starts high and stays at 8, step 1: 1..8, done at stride 8, then 8",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   8
+  ]
+ },
+ {
+  "name": "RL starts at 8 and drops to 4 by stride 4: 1, 2, 3, 4, done (live level, not the start level)",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    7
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    4
+   ],
+   [
+    "hs",
+    6
+   ],
+   [
+    "hs",
+    9
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   6,
+   9
+  ]
+ },
+ {
+  "name": "after the ramp, an RL jump goes straight through (3 -> 9)",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    3
+   ],
+   [
+    "hs",
+    3
+   ],
+   [
+    "hs",
+    3
+   ],
+   [
+    "hs",
+    9
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   3,
+   9
+  ]
+ },
+ {
+  "name": "Fixed K 5, step 0.5: 0.5 ... 5 over 10 strides",
+  "step": 0.5,
+  "events": [
+   "on",
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ]
+  ],
+  "applied": [
+   0,
+   0.5,
+   1,
+   1.5,
+   2,
+   2.5,
+   3,
+   3.5,
+   4,
+   4.5,
+   5,
+   5
+  ]
+ },
+ {
+  "name": "Assist off mid-ramp: 0 at once; on again restarts from the first step",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ],
+   "off",
+   [
+    "hs",
+    8
+   ],
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   3,
+   0,
+   0,
+   0,
+   1,
+   2
+  ]
+ },
+ {
+  "name": "Assist off after the ramp, then on: a new ramp",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    2
+   ],
+   [
+    "hs",
+    2
+   ],
+   [
+    "hs",
+    5
+   ],
+   "off",
+   "on",
+   [
+    "hs",
+    5
+   ],
+   [
+    "hs",
+    5
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   5,
+   0,
+   0,
+   1,
+   2
+  ]
+ },
+ {
+  "name": "step 0 = ramp off: the level at the first heel strike",
+  "step": 0.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    6
+   ]
+  ],
+  "applied": [
+   0,
+   8,
+   6
+  ]
+ },
+ {
+  "name": "level 0 at the start (RL 0): done at the first stride, applied 0, then follows RL",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    0
+   ],
+   [
+    "hs",
+    7
+   ]
+  ],
+  "applied": [
+   0,
+   0,
+   7
+  ]
+ },
+ {
+  "name": "level below the step (K 0.5, step 1): 0.5 at the first stride, done",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    0.5
+   ],
+   [
+    "hs",
+    0.5
+   ]
+  ],
+  "applied": [
+   0,
+   0.5,
+   0.5
+  ]
+ },
+ {
+  "name": "mode switch mid-ramp (RL 8 -> Fixed K 2): min with the new level, done when the cap meets it",
+  "step": 1.0,
+  "events": [
+   "on",
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    2
+   ],
+   [
+    "hs",
+    2
+   ]
+  ],
+  "applied": [
+   0,
+   1,
+   2,
+   2
+  ]
+ },
+ {
+  "name": "heel strikes while Assist is off: always 0",
+  "step": 1.0,
+  "events": [
+   [
+    "hs",
+    8
+   ],
+   [
+    "hs",
+    8
+   ]
+  ],
+  "applied": [
+   0,
+   0
+  ]
+ }
+]
