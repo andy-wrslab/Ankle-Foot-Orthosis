@@ -699,3 +699,23 @@ button:focus:not(:focus-visible), .btn:focus:not(:focus-visible), .seg button:fo
    plot's fixed width), right-aligned */
 .u-tip .u-tip-g b { white-space: pre; font-family: var(--font-num); }
 .u-tip .u-tip-t { white-space: pre; font-variant-numeric: tabular-nums; }
+/* Dock (Andy Nov 24 16:16-16:17): [Window 2 s | 10 s] left | Motor / Assist / K / Mode centred |
+   [Calibration Encoder IMU FSR SV] right. Equal 1fr side columns keep the group centred; the two
+   side sections mirror each other (same label style, same 36 px controls, same distance from the
+   edge). Below 1360 px the three parts stack, each centred, instead of overlapping. */
+.app > .dock { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); column-gap: var(--sp-4); }
+.app > .dock > .dock-left { grid-column: 1; display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+.app > .dock > .controls { grid-column: 2; }
+.app > .dock > .cal-sec { grid-column: 3; justify-self: end; }
+.win-sec, .cal-sec { display: flex; align-items: center; gap: var(--sp-2); flex: none; }
+.win-sec .cal-lbl, .cal-sec .cal-lbl { font-size: var(--fs-12); font-weight: 600; color: var(--text-3); letter-spacing: .05em;
+  text-transform: uppercase; margin-right: 2px; }
+.cal-sec .btn.act { height: var(--btn-md); padding: 0 12px; }
+.win-sec .seg { height: var(--btn-md); box-sizing: border-box; align-items: stretch; }
+.win-sec .seg button { height: auto; padding: 0 12px; }
+@media (max-width: 1360px) {
+  .app > .dock { grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-2); height: auto; }
+  .app > .dock > .dock-left, .app > .dock > .controls, .app > .dock > .cal-sec { grid-column: 1; justify-self: center; }
+  .app > .dock > .dock-left { flex-wrap: wrap; justify-content: center; }
+  .app > .dock > .controls { grid-row: 1; }
+}

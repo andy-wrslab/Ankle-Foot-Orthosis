@@ -196,7 +196,7 @@ def main():
 
     # 8) page wiring
     js = open(os.path.join(APP, "assets", "afo_console.js"), encoding="utf-8").read()
-    check("page: Calibrate IMU next to Calibrate FSR", "id=\"bImuCal\"" in js and "Calibrate FSR" in js
+    check("page: IMU next to FSR in the Calibration section", "id=\"bImuCal\"" in js and ">FSR</button>" in js
           and "/api/console/imucal" in js)
     print("\nFAILS:", FAILS)
     sys.exit(1 if FAILS else 0)

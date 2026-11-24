@@ -87,7 +87,7 @@ def page_static():
     check("Advanced Torque controller: no Spring stiffness row (P and I gain kept)", "'spring', 'Spring stiffness'" not in js
           and "['p_gain', 'Torque P gain', ''], ['i_gain', 'Torque I gain', '']]]" in js)
     order = [js.index('id="' + k + '"') for k in ("bZero", "bImuCal", "bCal", "bResetSV")]
-    check("dock order: Zero, Calibrate IMU, Calibrate FSR, Reset SV (Andy 15:02)", order == sorted(order), order)
+    check("dock order: Encoder (Zero), IMU, FSR, SV (Reset SV) in the Calibration section (Andy Nov 24 16:16)", order == sorted(order), order)
     ca = open(os.path.join(APP, "pages", "console_api.py"), encoding="utf-8").read()
     check("Rig status: 'MATLAB: not connected (connects on Start/Stop/Export)'",
           "MATLAB: not connected (connects on Start/Stop/Export)" in ca)

@@ -10,7 +10,7 @@
  * Pure ES3 (also runs in the JScript unit harness test/js/dock_actions_harness.js). */
 (function (root) {
     var PRESS_MS = 250;
-    var LABELS = {zero: 'Zero', imu: 'Calibrate IMU', cal: 'Calibrate FSR', reset: 'Reset SV'};
+    var LABELS = {zero: 'Encoder', imu: 'IMU', cal: 'FSR', reset: 'SV'};   // Calibration section (Andy Nov 24 16:16)
     var KEYS = ['zero', 'imu', 'cal', 'reset'];
 
     function cls(el, c, on) {

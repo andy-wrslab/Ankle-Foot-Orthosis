@@ -85,8 +85,8 @@ def hover():
     """Andy Nov 24 15:20: no units in any plot hover; values right-aligned in one column."""
     up = open(os.path.join(APP, "assets", "live_uplot.js"), encoding="utf-8").read()
     check("Live hover: no unit after the value", "(s.unit ? ' ' + s.unit : '')" not in up and "s.unit" not in up.split("function tooltipPlugin")[1].split("}};")[0])
-    check("Live hover: swatch | name | value grid, time header kept",
-          "'<div class=\"u-tip-t\">' + x.toFixed(3) + ' s</div><div class=\"u-tip-g\">'" in up
+    check("Live hover: swatch | name | value grid, no time line (Andy Nov 24 16:21)",
+          "var html = '<div class=\"u-tip-g\">';" in up and "u-tip-t" not in up
           and ".u-tip .u-tip-g { display: grid; grid-template-columns: 10px auto auto;" in css
           and ".u-tip .u-tip-g b { justify-self: end;" in css)
     import plot_style as P

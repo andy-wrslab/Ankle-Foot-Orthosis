@@ -138,7 +138,7 @@ def dtick_for(window_s: float) -> float:
 # the level in use (col 27), Uc is col 24. Fixed y ranges (8 % padding added).
 TRAINING_PLOTS = [
     {"id": "tr-assist", "title": "Assistance", "unit": "", "y": [0.0, 10.0], "columns": ["assistance_level"],
-     "names": ["Level in use"], "fmt": HOVER_FMT["assist"]},
+     "names": ["Assistance"], "fmt": HOVER_FMT["assist"]},   # hover label (Andy Nov 24 16:23; was "Level in use")
     {"id": "tr-uc", "title": "Uc", "unit": "", "y": [0.0, 1.0], "columns": ["uc"], "names": ["Uc"],
      "fmt": HOVER_FMT["uc"]},
 ]

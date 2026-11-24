@@ -207,7 +207,7 @@ def main():
             # Calibrate FSR is a momentary pulse (Andy 16:15): label unchanged, never lit
             ms3, txt, info = real_click(c, "#bCal")
             label = c.js("document.getElementById('bCal').textContent")
-            check(f"{view}: Calibrate FSR keeps its label (no busy text)", label == "Calibrate FSR", (label, txt, ms3))
+            check(f"{view}: FSR keeps its label (no busy text)", label == "FSR", (label, txt, ms3))
             c.pump(1.0)
             lit = c.js("document.getElementById('bCal').className")
             check(f"{view}: Calibrate FSR not lit after the press (momentary)", "lit" not in str(lit).split(), lit)

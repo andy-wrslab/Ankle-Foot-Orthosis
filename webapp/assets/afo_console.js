@@ -171,7 +171,17 @@
     }
 
     function dockHTML() {
+        // Andy Nov 24 16:16: Motor / Assist / K / Mode as one group centred in the dock; a
+        // compact Calibration section bottom-right (Encoder = Zero, IMU, FSR, SV = Reset SV;
+        // same ids, same pulses as the old four buttons); 16:17: the Window section bottom-left.
         return '' +
+        '<div class="dock-left">' +
+          // Andy Nov 24 16:17: the 2 s / 10 s window bottom-left, mirroring Calibration bottom-right
+          '<div class="win-sec" role="group" aria-label="Time window"><span class="cal-lbl">Window</span>' +
+            '<div class="seg" id="liveWin" role="group" aria-label="Time window"><button id="w2" aria-pressed="false">2 s</button>' +
+            '<button id="w10" aria-pressed="true">10 s</button></div></div>' +
+          '<span class="hint" id="dockMsg"></span>' +
+          '<button class="btn sm" id="unknownOff" hidden>Set unknown to OFF</button></div>' +
         '<div class="controls">' +
           '<button class="btn btn-toggle btn-motor" id="bMotor" data-drive="unknown">Motor <span class="pill unknown">?</span></button>' +
           '<button class="btn btn-toggle" id="bAssist">Assist <span class="pill unknown">?</span></button>' +
@@ -183,14 +193,11 @@
             '<button class="btn sm" id="kConfirm" hidden></button>' +
           '</div>' +
         '</div>' +
-        '<span class="hint" id="dockMsg"></span>' +
-        '<button class="btn sm" id="unknownOff" hidden>Set unknown to OFF</button>' +
-        '<span class="spacer"></span>' +
-        '<div class="actions">' +
-          '<button class="btn act momentary" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Zero</button>' +
-          '<button class="btn act momentary" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">Calibrate IMU</button>' +
-          '<button class="btn act momentary" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">Calibrate FSR</button>' +
-          '<button class="btn act momentary" id="bResetSV" title="Clears the stride-velocity buffers">Reset SV</button>' +
+        '<div class="actions cal-sec" role="group" aria-label="Calibration"><span class="cal-lbl">Calibration</span>' +
+          '<button class="btn act momentary" id="bZero" title="Zero: sets the current ankle angle and motor encoder position as zero (hold the ankle still in neutral, Assist off)">Encoder</button>' +
+          '<button class="btn act momentary" id="bImuCal" hidden title="Resets the IMU front end; the wearer holds still for 5 s">IMU</button>' +
+          '<button class="btn act momentary" id="bCal" title="30 s FSR (insole pressure) calibration: walk normally until it finishes">FSR</button>' +
+          '<button class="btn act momentary" id="bResetSV" title="Clears the stride-velocity buffers">SV</button>' +
         '</div>';
     }
 

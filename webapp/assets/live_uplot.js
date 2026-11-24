@@ -168,7 +168,7 @@
     }
     function tipHTML(ps, x, vals, shown) {
         var n = tipChars(ps);
-        var html = '<div class="u-tip-t">' + x.toFixed(3) + ' s</div><div class="u-tip-g">';
+        var html = '<div class="u-tip-g">';                                   // no time line (Andy Nov 24 16:21)
         for (var k = 0; k < ps.series.length; k++) {
             if (!shown[k]) { continue; }
             var s = ps.series[k];

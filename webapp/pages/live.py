@@ -139,17 +139,8 @@ def layout(ctx=None) -> html.Div:
                 html.Button("Sensors", id="pgSensors", **{"aria-pressed": "false"}),
                 html.Button("Training", id="pgTraining", **{"aria-pressed": "false"}),
             ]),
-            html.Span(className="tb-right", children=[
-                html.Div(className="seg", role="group", id="liveWin", **{"aria-label": "Time window"}, children=[
-                    html.Button("2 s", id="w2", **{"aria-pressed": "false"}),
-                    html.Button("10 s", id="w10", **{"aria-pressed": "true"}),
-                ]),
-                html.Div(className="seg", role="group", id="trWin", hidden=True, style={"display": "none"},
-                         **{"aria-label": "Time window"},
-                         children=[html.Button("30 s", **{"data-w": "30", "aria-pressed": "false"}),
-                                   html.Button("2 min", **{"data-w": "120", "aria-pressed": "true"}),
-                                   html.Button("5 min", **{"data-w": "300", "aria-pressed": "false"})]),
-            ]),
+            # the 2 s / 10 s window lives in the dock, bottom left (Andy Nov 24 16:17)
+            html.Span(className="tb-right"),
         ]),
         _card("torque", "Torque", "N·m", _legend([("Measured", "var(--s-meas)", False),
                                                   ("Command", "var(--s-cmd)", True)]), "gait"),

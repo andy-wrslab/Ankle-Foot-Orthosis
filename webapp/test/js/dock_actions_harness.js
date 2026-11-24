@@ -26,7 +26,7 @@ function st(o) {
     return {commands: {latched: {zero: o.zero || 0, calibrate: o.cal || 0}, toggles: {assist: {value: o.assist}}},
             imu_cal: {visible: o.imuVis !== false, enabled: o.imuEn !== false, state: o.imu || "idle", text: o.imuText || ""}};
 }
-var b = {zero: new Btn("Zero"), imu: new Btn("Calibrate IMU"), cal: new Btn("Calibrate FSR"), reset: new Btn("Reset SV")};
+var b = {zero: new Btn("Encoder"), imu: new Btn("IMU"), cal: new Btn("FSR"), reset: new Btn("SV")};
 var t = 100000;
 
 // 1. the 15:05 bug: a press must never leave `disabled` set once the hold time is over
@@ -48,28 +48,28 @@ check("zero: never lit (momentary), pressable with Assist off", !b.zero.classLis
 A.render(b, st({assist: 1}), t);
 check("zero: Assist on -> greyed (aria-disabled), not disabled",
       b.zero.getAttribute("aria-disabled") === "true" && b.zero.disabled === false, b.zero.attrs["aria-disabled"]);
-check("zero: label 'Zero' in every state", b.zero.textContent === "Zero", b.zero.textContent);
+check("zero: label 'Encoder' in every state", b.zero.textContent === "Encoder", b.zero.textContent);
 // 3. Calibrate FSR: never lit, never locked
 A.render(b, st({assist: 1, cal: 1}), t);
 check("cal: never lit (momentary), never locked", !b.cal.classList.contains("lit") && b.cal.getAttribute("aria-disabled") === "false", b.cal.attrs["aria-disabled"]);
-check("cal: label 'Calibrate FSR', no countdown", b.cal.textContent === "Calibrate FSR", b.cal.textContent);
+check("cal: label 'FSR', no countdown", b.cal.textContent === "FSR", b.cal.textContent);
 // 4. Calibrate IMU: momentary (Andy 15:22): never lit, not driven by bias_ready / busy
 A.render(b, st({assist: 0, imu: "busy", imuText: "Hold still 3 s"}), t);
 check("imu: NOT lit while the recal runs (busy), still pressable", !b.imu.classList.contains("lit") && b.imu.getAttribute("aria-disabled") === "false" && b.imu.disabled === false,
       b.imu.attrs["aria-disabled"]);
-check("imu: label 'Calibrate IMU' while running (no 'Hold still' / countdown)", b.imu.textContent === "Calibrate IMU", b.imu.textContent);
+check("imu: label 'IMU' while running (no 'Hold still' / countdown)", b.imu.textContent === "IMU", b.imu.textContent);
 A.render(b, st({assist: 0, imu: "done", imuText: "IMU ready"}), t);
-check("imu: unlit once IMU ready, label unchanged", !b.imu.classList.contains("lit") && b.imu.textContent === "Calibrate IMU", b.imu.textContent);
+check("imu: unlit once IMU ready, label unchanged", !b.imu.classList.contains("lit") && b.imu.textContent === "IMU", b.imu.textContent);
 A.render(b, st({assist: 1, imuEn: false}), t);
 check("imu: greyed when not enabled", b.imu.getAttribute("aria-disabled") === "true" && b.imu.disabled === false, b.imu.attrs["aria-disabled"]);
 A.render(b, st({assist: 0, imuVis: false}), t);
 check("imu: hidden when not visible", b.imu.hidden === true, b.imu.hidden);
 // 5. Reset SV: never lit, never locked, label fixed
 A.render(b, st({assist: 1}), t);
-check("reset: never lit or locked, label 'Reset SV'", !b.reset.classList.contains("lit") && b.reset.getAttribute("aria-disabled") === "false"
-      && b.reset.textContent === "Reset SV", b.reset.textContent);
+check("reset: never lit or locked, label 'SV'", !b.reset.classList.contains("lit") && b.reset.getAttribute("aria-disabled") === "false"
+      && b.reset.textContent === "SV", b.reset.textContent);
 // 6. a stale busy label from an old page version is put back
 b.cal.textContent = "Calibrating… 30 s"; b.cal.classList.add("busy");
 A.render(b, st({assist: 0}), t);
-check("cal: stale busy text and busy class cleared", b.cal.textContent === "Calibrate FSR" && !b.cal.classList.contains("busy"), b.cal.textContent);
+check("cal: stale busy text and busy class cleared", b.cal.textContent === "FSR" && !b.cal.classList.contains("busy"), b.cal.textContent);
 WScript.Echo("done");
